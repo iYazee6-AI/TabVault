@@ -9,9 +9,13 @@ const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L"];
 const byId = new Map();
 const consoleErrors = { worker: [], app: [] };
+
+// Seeded up front so a run that crashes or exits early still reports which
+// scenarios never got to run, instead of silently omitting them.
+for (const id of ORDER) byId.set(id, { id, status: "NOT RUN", evidence: "harness did not reach this scenario" });
 
 function record(id, status, evidence) {
   byId.set(id, { id, status, evidence });
@@ -49,6 +53,21 @@ async function waitForTextContains(page, selector, substr, timeout = 5000) {
   return page.$eval(selector, (el) => el.textContent);
 }
 
+function consoleErrorSnapshot() {
+  return { app: consoleErrors.app.length, worker: consoleErrors.worker.length };
+}
+function newConsoleErrorsSince(snap) {
+  return { app: consoleErrors.app.slice(snap.app), worker: consoleErrors.worker.slice(snap.worker) };
+}
+
+// A disconnected/crashed target throws various shapes of "gone" error
+// depending on exactly when in its lifecycle it died; this environment's
+// crash (see the note above scenario I-b) has been observed to produce all
+// of these phrasings from Playwright.
+function looksLikeDisconnect(err) {
+  return /closed|destroyed|crashed|disconnected/i.test((err && err.message) || String(err));
+}
+
 // Builds a fresh copy of the extension under e2e/.tmp/ext. No manifest changes
 // are needed: TabVault declares no host permissions, so nothing needs patching
 // for the harness (unlike FormKeeper, which needed a localhost host_permission).
@@ -71,10 +90,29 @@ function attachPageListeners(page) {
 async function main() {
   let server = null;
   let context = null;
-  let sw = null;
-  let extId = null;
   let ownPrefix = null;
   let appPage = null;
+
+  const attachedWorkers = new WeakSet();
+
+  // Always re-acquires a live service worker handle rather than trusting a
+  // handle captured once at launch: the extension's MV3 service worker can
+  // be torn down and respawned by Chrome (idle recycling, or as a side
+  // effect of the environment crash documented at scenario I-b), and a
+  // stale handle throws "Target ... closed" even though the browser itself
+  // is fine. Every chrome.* call in this file goes through this.
+  async function worker() {
+    let w = context.serviceWorkers()[0];
+    if (!w) w = await context.waitForEvent("serviceworker", { timeout: 10000 });
+    if (!attachedWorkers.has(w)) {
+      attachedWorkers.add(w);
+      w.on("console", (msg) => {
+        if (msg.type() === "error") consoleErrors.worker.push(msg.text());
+      });
+      w.on("pageerror", (err) => consoleErrors.worker.push(String(err)));
+    }
+    return w;
+  }
 
   // Launches (or relaunches) the persistent-context browser, loads the
   // extension, and opens the app page as a second tab of the harness's own
@@ -82,29 +120,81 @@ async function main() {
   // fixture window matters: chrome.windows.create defaults to focused:true,
   // so opening the app page any later would attach it (via
   // context.newPage()) to whichever fixture window was created most
-  // recently instead of the harness window.
+  // recently instead of the harness window. Assigns the outer context/
+  // ownPrefix/appPage directly rather than returning them, since every
+  // caller just wants those refreshed in place (including after a
+  // mid-scenario relaunch).
   async function launchAndOpenApp() {
-    const ctx = await chromium.launchPersistentContext(USER_DATA_DIR, {
+    context = await chromium.launchPersistentContext(USER_DATA_DIR, {
       headless: false,
       acceptDownloads: true,
       args: [`--disable-extensions-except=${EXT_DIR}`, `--load-extension=${EXT_DIR}`],
     });
 
-    let worker = ctx.serviceWorkers()[0];
-    if (!worker) worker = await ctx.waitForEvent("serviceworker", { timeout: 15000 });
-    worker.on("console", (msg) => {
-      if (msg.type() === "error") consoleErrors.worker.push(msg.text());
-    });
-    worker.on("pageerror", (err) => consoleErrors.worker.push(String(err)));
-    const id = new URL(worker.url()).host;
-    const prefix = `chrome-extension://${id}/`;
+    const w = await worker();
+    const id = new URL(w.url()).host;
+    ownPrefix = `chrome-extension://${id}/`;
 
-    const page = await ctx.newPage();
-    attachPageListeners(page);
-    await page.goto(`chrome-extension://${id}/app/index.html`);
-    await page.waitForSelector("#toolbar");
+    appPage = await context.newPage();
+    attachPageListeners(appPage);
+    await appPage.goto(`chrome-extension://${id}/app/index.html`);
+    await appPage.waitForSelector("#toolbar");
+  }
 
-    return { ctx, worker, id, prefix, page };
+  // Waits for the environment crash (see scenario I-b) to fully settle, then
+  // relaunches if the browser is actually gone. An immediate connectivity
+  // check right after a discard-triggering click can still read "connected"
+  // for a moment before the process actually dies (observed take ~150-300ms
+  // in standalone repros), so a bare check without first waiting can miss a
+  // disconnect that is already in progress.
+  async function settleAndRelaunchIfDisconnected(label) {
+    await new Promise((r) => setTimeout(r, 1500));
+    if (!(context.browser() && context.browser().isConnected())) {
+      console.log(`\nBrowser disconnected${label ? ` ${label}` : ""}; relaunching.\n`);
+      await context.close().catch(() => {});
+      await launchAndOpenApp();
+      return true;
+    }
+    return false;
+  }
+
+  // Exercises the exact chrome.tabs.discard() call restoreSession() makes
+  // (app/dialogs.js: chrome.tabs.discard(id).catch(() => {})), in isolation
+  // on a freshly created real tab, as supporting evidence when the real
+  // Restore flow couldn't be observed live. A standalone repro sweep showed
+  // discard()'s own resolved Tab object is reliably observable (8/8) --
+  // the crash instead hits any FOLLOW-UP call, so this reads discard()'s
+  // own return value directly rather than a separate chrome.tabs.get()/
+  // query() afterward, which reliably loses the race (failed 5/5 in that
+  // sweep, even issued a full 1.5 real seconds later). Even so, the crash's
+  // exact timing is racy enough that starting a fresh window+tabs from
+  // scratch can occasionally lose too (observed as Chrome's own "No tab
+  // with id" once a crash from a previous attempt was still underway), so
+  // this retries a few times, relaunching the browser in between.
+  async function runIsolatedDiscardCheck(oneUrl, twoUrl) {
+    let isolated = null;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 5 && !isolated; attempt++) {
+      try {
+        isolated = await (await worker()).evaluate(async (urls) => {
+          const w = await chrome.windows.create({ url: urls, focused: false });
+          await new Promise((r) => setTimeout(r, 500)); // let the fresh tabs finish navigating first
+          const tabs = (await chrome.tabs.query({ windowId: w.id })).sort((a, b) => a.index - b.index);
+          const nonFirst = tabs[1];
+          const after = await chrome.tabs.discard(nonFirst.id);
+          return { windowId: w.id, tabId: after.id, url: after.url, discarded: after.discarded };
+        }, [oneUrl, twoUrl]);
+        if (isolated.discarded !== true) {
+          lastErr = new Error(`attempt ${attempt}: discarded was not true: ${JSON.stringify(isolated)}`);
+          isolated = null;
+        }
+      } catch (e) {
+        lastErr = new Error(`attempt ${attempt}: ${e.message}`);
+      }
+      if (!isolated) await settleAndRelaunchIfDisconnected("during the isolated discard check retry loop");
+    }
+    if (!isolated) throw new Error(`isolated chrome.tabs.discard() did not report discarded=true in 5 attempts; last error: ${lastErr && lastErr.message}`);
+    return isolated;
   }
 
   try {
@@ -122,19 +212,20 @@ async function main() {
     // no serviceworker event ever fires). Playwright's own managed Chromium
     // (installed via `npx playwright install chromium`) honors the unpacked
     // extension flags normally, so it is used here instead of channel: "chrome".
-    ({ ctx: context, worker: sw, id: extId, prefix: ownPrefix, page: appPage } = await launchAndOpenApp());
+    await launchAndOpenApp();
 
     const oneUrl = `${BASE}/one.html`;
     const twoUrl = `${BASE}/two.html`;
     const threeUrl = `${BASE}/three.html`;
 
-    function expectedCounts() {
-      return sw.evaluate(async (prefix) => {
+    async function expectedCounts() {
+      const w = await worker();
+      return w.evaluate(async (prefix) => {
         const windows = await chrome.windows.getAll({ populate: true });
         let winCount = 0;
         let tabCount = 0;
-        for (const w of windows) {
-          const tabs = (w.tabs || []).filter((t) => !String(t.url || t.pendingUrl || "").startsWith(prefix));
+        for (const win of windows) {
+          const tabs = (win.tabs || []).filter((t) => !String(t.url || t.pendingUrl || "").startsWith(prefix));
           if (tabs.length === 0) continue;
           winCount++;
           tabCount += tabs.length;
@@ -151,15 +242,15 @@ async function main() {
     // Fixtures: two windows created directly via the service worker, with
     // window B's "two" tab placed in a blue "Grp" group.
     // ---------------------------------------------------------------
-    const winB = await sw.evaluate((urls) => chrome.windows.create({ url: urls }), [oneUrl, twoUrl]);
-    let tabsB = await sw.evaluate((id) => chrome.tabs.query({ windowId: id }), winB.id);
+    const winB = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls }), [oneUrl, twoUrl]);
+    let tabsB = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winB.id);
     tabsB.sort((a, b) => a.index - b.index);
     const oneInB = tabsB.find((t) => t.url.endsWith("one.html"));
     const twoInB = tabsB.find((t) => t.url.endsWith("two.html"));
-    const grpGroupId = await sw.evaluate((tabId) => chrome.tabs.group({ tabIds: [tabId] }), twoInB.id);
-    await sw.evaluate((gid) => chrome.tabGroups.update(gid, { title: "Grp", color: "blue" }), grpGroupId);
+    const grpGroupId = await (await worker()).evaluate((tabId) => chrome.tabs.group({ tabIds: [tabId] }), twoInB.id);
+    await (await worker()).evaluate((gid) => chrome.tabGroups.update(gid, { title: "Grp", color: "blue" }), grpGroupId);
 
-    const winC = await sw.evaluate((urls) => chrome.windows.create({ url: urls }), [threeUrl, oneUrl]);
+    const winC = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls }), [threeUrl, oneUrl]);
 
     await appPage.evaluate(() => window.TabVaultApp.refresh());
     await appPage.waitForSelector(".window");
@@ -205,6 +296,10 @@ async function main() {
       assert(countsText === `1 of ${expected.tabCount} tabs`, `counts text after search = "${countsText}"`);
       const visibleRows = await appPage.$$eval("#grid .tab", (nodes) => nodes.length);
       assert(visibleRows === 1, `expected 1 visible tab row, got ${visibleRows}`);
+      const visibleTabId = await appPage.$eval("#grid .tab", (el) => el.dataset.tab);
+      const threeTabsNow = await (await worker()).evaluate((url) => chrome.tabs.query({ url }), threeUrl);
+      assert(threeTabsNow.length === 1, `expected exactly one three.html tab at this point, found ${threeTabsNow.length}`);
+      assert(Number(visibleTabId) === threeTabsNow[0].id, `visible row's data-tab (${visibleTabId}) is not the three.html tab (${threeTabsNow[0].id})`);
 
       await appPage.focus("#search");
       await appPage.keyboard.press("Escape");
@@ -212,7 +307,7 @@ async function main() {
       const countsAfter = await appPage.$eval("#counts", (el) => el.textContent);
       assert(countsAfter === `${expected.winCount} windows · ${expected.tabCount} tabs`, `counts after Escape = "${countsAfter}"`);
 
-      record("B", "PASS", `search "three" -> counts="${countsText}", visible rows=${visibleRows}; Escape -> search cleared, counts="${countsAfter}"`);
+      record("B", "PASS", `search "three" -> counts="${countsText}", visible row data-tab=${visibleTabId} (matches three.html tab ${threeTabsNow[0].id}); Escape -> search cleared, counts="${countsAfter}"`);
     } catch (e) {
       record("B", "FAIL", e.message);
     }
@@ -225,7 +320,7 @@ async function main() {
       await appPage.click(`.tab[data-tab="${oneInB.id}"] input[type=checkbox]`);
       await appPage.selectOption("#move-target", String(winC.id));
       const moved = await waitFor(async () => {
-        const t = await sw.evaluate((id) => chrome.tabs.get(id), oneInB.id);
+        const t = await (await worker()).evaluate((id) => chrome.tabs.get(id), oneInB.id);
         return t.windowId === winC.id ? t : null;
       });
       assert(moved.windowId === winC.id, `tab did not move: ${JSON.stringify(moved)}`);
@@ -240,12 +335,12 @@ async function main() {
     try {
       await appPage.locator(`.tab[data-tab="${twoInB.id}"]`).dragTo(appPage.locator(`.window[data-window="${winC.id}"] .whead`));
       const moved = await waitFor(async () => {
-        const t = await sw.evaluate((id) => chrome.tabs.get(id), twoInB.id);
+        const t = await (await worker()).evaluate((id) => chrome.tabs.get(id), twoInB.id);
         return t.windowId === winC.id && t.groupId === -1 ? t : null;
       });
       assert(moved.windowId === winC.id, `tab did not move to window C: ${JSON.stringify(moved)}`);
       assert(moved.groupId === -1, `tab still grouped after drag: ${JSON.stringify(moved)}`);
-      const winBGone = await sw.evaluate((id) => chrome.windows.get(id).then(() => false, () => true), winB.id);
+      const winBGone = await (await worker()).evaluate((id) => chrome.windows.get(id).then(() => false, () => true), winB.id);
       record("D", "PASS", `dragged tab ${twoInB.id} (two.html) onto window ${winC.id}: windowId=${moved.windowId}, groupId=${moved.groupId} (ungrouped). Source window ${winB.id} auto-closed=${winBGone}`);
     } catch (e) {
       record("D", "FAIL", e.message);
@@ -255,7 +350,7 @@ async function main() {
     // E. Select two tabs, Close
     // ---------------------------------------------------------------
     try {
-      const tabsC = await sw.evaluate((id) => chrome.tabs.query({ windowId: id }), winC.id);
+      const tabsC = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winC.id);
       const threeTab = tabsC.find((t) => t.url.endsWith("three.html"));
       const oneTabs = tabsC.filter((t) => t.url.endsWith("one.html")).sort((a, b) => a.id - b.id);
       const toClose = oneTabs[0];
@@ -266,7 +361,8 @@ async function main() {
       await appPage.click("#sel-close");
 
       await waitFor(async () => {
-        const stillThere = await sw.evaluate((ids) => Promise.all(ids.map((id) => chrome.tabs.get(id).then(() => true, () => false))), [threeTab.id, toClose.id]);
+        const w = await worker();
+        const stillThere = await w.evaluate((ids) => Promise.all(ids.map((id) => chrome.tabs.get(id).then(() => true, () => false))), [threeTab.id, toClose.id]);
         return stillThere.every((x) => x === false);
       });
       record("E", "PASS", `closed tabs ${threeTab.id} (three.html) and ${toClose.id} (one.html); both gone per chrome.tabs.get`);
@@ -279,7 +375,7 @@ async function main() {
     // ---------------------------------------------------------------
     try {
       await appPage.evaluate(() => window.TabVaultApp.refresh());
-      const tabsC = await sw.evaluate((id) => chrome.tabs.query({ windowId: id }), winC.id);
+      const tabsC = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winC.id);
       assert(tabsC.length === 2, `expected exactly 2 tabs in window C before grouping, got ${tabsC.length}: ${JSON.stringify(tabsC.map((t) => t.url))}`);
 
       await clearSelection();
@@ -295,7 +391,7 @@ async function main() {
       await appPage.selectOption('.group select[title="Color"]', "blue");
 
       const groups = await waitFor(async () => {
-        const gs = await sw.evaluate(() => chrome.tabGroups.query({ title: "Renamed" }));
+        const gs = await (await worker()).evaluate(() => chrome.tabGroups.query({ title: "Renamed" }));
         return gs.length === 1 && gs[0].color === "blue" ? gs : null;
       });
       record("F", "PASS", `grouped tabs ${tabsC.map((t) => t.id).join(",")}, renamed to "Renamed", set color blue; chrome.tabGroups.query confirms ${JSON.stringify(groups)}`);
@@ -307,7 +403,7 @@ async function main() {
     // G. Duplicates
     // ---------------------------------------------------------------
     try {
-      await sw.evaluate(({ windowId, url }) => Promise.all([1, 2].map(() => chrome.tabs.create({ windowId, url, active: false }))), { windowId: winC.id, url: oneUrl });
+      await (await worker()).evaluate(({ windowId, url }) => Promise.all([1, 2].map(() => chrome.tabs.create({ windowId, url, active: false }))), { windowId: winC.id, url: oneUrl });
       await appPage.evaluate(() => window.TabVaultApp.refresh());
 
       await appPage.click("#btn-dupes");
@@ -316,31 +412,33 @@ async function main() {
       assert(headerText.includes("1 duplicated URL"), `duplicates header = "${headerText}"`);
       const rowCount = await appPage.$$eval("#dialog table tr", (rows) => rows.length - 1); // minus header row
       assert(rowCount === 3, `expected 3 duplicate rows, got ${rowCount}`);
+      const closeCount = rowCount - 1;
 
-      await appPage.click('#dialog button:has-text("Close")');
+      await appPage.click(`#dialog button:has-text("Close ${closeCount} duplicates")`);
       const remaining = await waitFor(async () => {
-        const tabs = await sw.evaluate((url) => chrome.tabs.query({ url }), oneUrl);
+        const tabs = await (await worker()).evaluate((url) => chrome.tabs.query({ url }), oneUrl);
         return tabs.length === 1 ? tabs : null;
       });
-      record("G", "PASS", `header="${headerText}", duplicate rows=${rowCount}; after "Close 2 duplicates" exactly ${remaining.length} one.html tab remains (id=${remaining[0].id})`);
+      record("G", "PASS", `header="${headerText}", duplicate rows=${rowCount}; clicked "Close ${closeCount} duplicates" -> exactly ${remaining.length} one.html tab remains (id=${remaining[0].id})`);
     } catch (e) {
       record("G", "FAIL", e.message);
     }
 
     // Close the harness window's leftover blank tab (Playwright's initial
     // about:blank tab) before exporting. This makes window C's clone the
-    // *only* window Import has to restore, which matters for scenario I: the
-    // chrome.tabs.discard() environment crash described there happens 1-2
-    // real seconds after the call, so discardTab must be the last step of
-    // the last window restored, or "Import complete" never renders because a
-    // later window's steps get interrupted by the crash first.
+    // *only* window Import has to restore, which matters for scenario I-b:
+    // the chrome.tabs.discard() environment crash there interrupts whatever
+    // window's steps are in progress when it hits, so a second window's
+    // createWindow step -- and the "Import complete" screen -- would never
+    // happen if the discard-requiring window weren't the only (and so also
+    // the last) one restored.
     {
-      const appTab = (await sw.evaluate((prefix) => chrome.tabs.query({ url: prefix + "*" }), ownPrefix))[0];
-      const blanks = await sw.evaluate(
+      const appTab = (await (await worker()).evaluate((prefix) => chrome.tabs.query({ url: prefix + "*" }), ownPrefix))[0];
+      const blanks = await (await worker()).evaluate(
         ({ windowId, appTabId }) => chrome.tabs.query({ windowId }).then((tabs) => tabs.filter((t) => t.id !== appTabId).map((t) => t.id)),
         { windowId: appTab.windowId, appTabId: appTab.id }
       );
-      if (blanks.length) await sw.evaluate((ids) => chrome.tabs.remove(ids), blanks);
+      if (blanks.length) await (await worker()).evaluate((ids) => chrome.tabs.remove(ids), blanks);
       await appPage.evaluate(() => window.TabVaultApp.refresh());
     }
 
@@ -374,6 +472,7 @@ async function main() {
       const gotTabs = exportedJson.windows.reduce((n, w) => n + w.tabs.length, 0);
       assert(gotWindows === expected.winCount, `exported window count ${gotWindows} != live ${expected.winCount}`);
       assert(gotTabs === expected.tabCount, `exported tab count ${gotTabs} != live ${expected.tabCount}`);
+      assert(gotWindows === 1, `expected exactly 1 exported window (the harness's blank tab was closed above), got ${gotWindows}`);
 
       await appPage.click("#dialog-backdrop", { position: { x: 5, y: 5 } }).catch(() => {});
       record("H", "PASS", `downloaded "${suggested}", schema=${exportedJson.schema}, app.name="${exportedJson.app.name}", windows=${gotWindows}, tabs=${gotTabs} (matches live ${JSON.stringify(expected)})`);
@@ -382,151 +481,195 @@ async function main() {
     }
 
     // ---------------------------------------------------------------
-    // I. Import
+    // I-a / I-b. Import
     //
     // NOTE ON ENVIRONMENT LIMITATION (see e2e/README.md for the full
     // writeup): calling chrome.tabs.discard() from the extension while
     // Playwright's Chromium is CDP-attached disconnects the entire browser
-    // process, typically within ~150ms of the click that triggers it --
-    // faster than the process even finishes writing its own profile
-    // Preferences file to disk. This was isolated with several standalone
-    // repro scripts making a bare chrome.tabs.discard() call directly (no
-    // Import, no TabVault code involved at all): an active tab opened via
-    // context.newPage(), a background tab created purely via
-    // chrome.tabs.create with no Playwright Page object, and one inside a
-    // tab group -- all crash identically. Racing it was tried three ways
-    // (a tight sequential poll, an 80-wide concurrent burst of reads issued
-    // the instant the click returns, and a MutationObserver running
-    // entirely in-page so no Node<->CDP round trip is needed until the
-    // final read) and a full-session-restore-on-relaunch recovery was also
-    // tried; none observed a single post-click chrome.* result. This is a
-    // genuine Playwright/Chromium defect, not a TabVault bug or a harness
-    // bug in the usual sense, and not something this task's "fix genuine
-    // extension bugs" allowance covers.
+    // process, typically within ~150-300ms of the call. This was isolated
+    // with several standalone repro scripts making a bare
+    // chrome.tabs.discard() call directly (no Import, no TabVault code
+    // involved at all): an active tab opened via context.newPage(), a
+    // background tab created purely via chrome.tabs.create with no
+    // Playwright Page object, and one inside a tab group -- all crash
+    // identically. Racing it live was tried four ways (a tight sequential
+    // poll, an 80-wide concurrent burst of reads issued the instant a
+    // click's promise resolves, a MutationObserver running entirely in-page
+    // so no Node<->CDP round trip is needed until the final read, and a
+    // full-session-restore-on-relaunch recovery) and none reliably observed
+    // a post-click chrome.* result. This is a genuine Playwright/Chromium
+    // defect, not a TabVault bug or a harness bug in the usual sense.
     //
-    // So this scenario verifies what IS observable, split in two parts:
-    //   1. The real Import UI flow end-to-end up to and including the
-    //      click: file picked via #import-file, the "choose windows to
-    //      restore" screen lists the exported window(s), and the click on
-    //      "Restore selected windows" is delivered.
-    //   2. Immediately after the (expected) disconnect, a fresh browser
-    //      (same profile dir, so chrome.storage.local survives) is used to
-    //      exercise the EXACT same chrome.tabs.discard() call restoreSession
-    //      makes for a non-first tab, on newly created real tabs, reading
-    //      the result back via chrome.tabs.get() in the same round trip --
-    //      the one pattern proven to reliably observe discarded===true in
-    //      every standalone repro. This is the identical browser API call
-    //      (chrome.tabs.discard(id).catch(() => {})) app/dialogs.js makes;
-    //      it just isn't chained onto the crash-prone multi-step Restore
-    //      flow, since nothing can observe that flow's outcome live here.
-    // Full step-by-step plan generation for this exact shape (a window with
-    // a non-first tab in a group) -- createWindow, createTab, groupTabs,
-    // updateGroup, discardTab in order -- is independently covered by the
+    // Task 8's settings.lazyRestore (app/dialogs.js, lib/restore-plan.js)
+    // gives this harness a way to test Import for real without hitting that
+    // crash at all: with lazy loading off, restoreSession() makes no
+    // chrome.tabs.discard() calls. So:
+    //   I-a (must PASS): lazy loading OFF. The real Restore flow is driven
+    //     to completion and its outcome is verified live and for real --
+    //     restored windows, tab URLs in order, pinned state, the recreated
+    //     group's title/color, and the result dialog's reported counts.
+    //   I-b (PASS or LIMITED, never silently skipped): lazy loading back ON
+    //     (the default), so this exercises the actual discardTab step and
+    //     therefore the actual crash. If the browser survives, the same
+    //     kind of live discarded=true assertion I-a makes for URLs/groups is
+    //     required to pass here too. If it doesn't (the expected outcome in
+    //     this environment), the part is marked LIMITED -- not PASS, not
+    //     silently green -- with the isolated discard check (which exercises
+    //     the identical chrome.tabs.discard() call outside the crash-prone
+    //     multi-step flow) run as supporting evidence, and the browser is
+    //     relaunched so J, K, L can continue.
+    // Full step-by-step plan generation, including that `discard: false`
+    // emits no discardTab steps at all, is independently covered by the
     // already-passing unit test test/restore-plan.test.js.
     // ---------------------------------------------------------------
-    let importUiOk = false;
-    let importUiEvidence = "";
+
+    async function setLazyRestore(wanted) {
+      await appPage.click("#btn-settings");
+      await appPage.waitForSelector("#dialog h2");
+      const lazyCheckbox = appPage.locator("#dialog label", { hasText: "lazy" }).locator("input[type=checkbox]");
+      if (wanted) await lazyCheckbox.check();
+      else await lazyCheckbox.uncheck();
+      await appPage.click('#dialog button:has-text("Save")');
+      await waitFor(async () => {
+        const stored = await (await worker()).evaluate(() => chrome.storage.local.get("settings"));
+        const lazy = stored.settings && stored.settings.lazyRestore !== false;
+        return lazy === wanted;
+      });
+    }
+
+    // ---------------------------------------------------------------
+    // I-a. Import with lazy loading OFF: real, live restore verification
+    // ---------------------------------------------------------------
     try {
       assert(exportedFilePath, "no exported file from scenario H to import");
+      await setLazyRestore(false);
+
+      const beforeIds = (await (await worker()).evaluate(() => chrome.windows.getAll())).map((w) => w.id);
+      const errSnap = consoleErrorSnapshot();
+
       await appPage.setInputFiles("#import-file", exportedFilePath);
       await appPage.waitForSelector("#dialog h2");
-      const chooseText = await waitForTextContains(appPage, "#dialog h2", "choose windows to restore");
+      await waitForTextContains(appPage, "#dialog h2", "choose windows to restore");
       const rows = await appPage.$$eval("#dialog .list label", (nodes) => nodes.map((n) => n.textContent));
       assert(rows.length === exportedJson.windows.length, `import dialog listed ${rows.length} window row(s), expected ${exportedJson.windows.length}: ${JSON.stringify(rows)}`);
       await appPage.click('#dialog button:has-text("Restore selected windows")');
-      importUiOk = true;
-      importUiEvidence = `file "${path.basename(exportedFilePath)}" selected via #import-file; dialog "${chooseText}" listed window row(s) ${JSON.stringify(rows)}; clicked "Restore selected windows".`;
-    } catch (e) {
-      importUiEvidence = `UI flow failed: ${e.message}`;
-    }
+      await waitForTextContains(appPage, "#dialog h2", "complete", 15000);
 
-    // The chrome.tabs.discard() call made by restoreSession() is expected to
-    // have disconnected the browser process shortly after the click above
-    // (see note) -- typically within 150-300ms, the tail end of
-    // restoreSession() actually running. Wait for that to settle before
-    // checking connectivity: an immediate check can still read "connected"
-    // a moment before the process actually goes away, which would skip the
-    // relaunch and then fail the isolated check below against the same
-    // dying handle instead. Relaunching (same profile directory, so
-    // chrome.storage.local -- settings and snapshots -- survives) gives J,
-    // K, L and the isolated discard check below a live browser to run
-    // against.
-    if (importUiOk) await new Promise((r) => setTimeout(r, 1500));
-    const stillConnected = context.browser() && context.browser().isConnected();
-    if (!stillConnected) {
-      console.log("\nBrowser disconnected after Import, as expected in this environment (see e2e/README.md). Relaunching to continue.\n");
-      await context.close().catch(() => {});
-      ({ ctx: context, worker: sw, id: extId, prefix: ownPrefix, page: appPage } = await launchAndOpenApp());
-    }
+      const newErrors = newConsoleErrorsSince(errSnap);
+      assert(newErrors.app.length === 0 && newErrors.worker.length === 0, `console errors appeared during restore: ${JSON.stringify(newErrors)}`);
 
-    try {
-      assert(importUiOk, importUiEvidence);
+      const resultText = await appPage.$eval("#dialog", (el) => el.textContent);
+      assert(resultText.includes("Restored 1 windows and 2 tabs."), `result dialog did not report the expected restored counts: "${resultText}"`);
+      assert(!resultText.includes("tabs load when you open them"), `result dialog still claims lazy loading, but it was off: "${resultText}"`);
+      await appPage.click("#dialog-backdrop", { position: { x: 5, y: 5 } }).catch(() => {});
 
-      // Part 2: the same chrome.tabs.discard() call, on a real background
-      // tab in a real window. A standalone repro sweep showed
-      // chrome.tabs.discard()'s own resolved Tab object is reliably
-      // observable (8/8) -- the crash instead hits any FOLLOW-UP call (a
-      // separate chrome.tabs.get()/query() afterward failed 5/5, even
-      // issued 1.5 real seconds later, well past the ~200ms this
-      // environment's crash normally takes). So the discard() call's own
-      // return value -- the same shape chrome.tabs.query would report for
-      // that tab immediately after -- is what's read here; no second call
-      // is made that could lose the race. Even so, the crash's exact timing
-      // is racy enough that starting the isolated window+tabs from scratch
-      // can occasionally lose (observed as Chrome's own "No tab with id"
-      // once a crash was already underway from a previous attempt), so this
-      // retries a few times, relaunching the browser in between.
-      let isolated = null;
-      let lastErr = null;
-      for (let attempt = 1; attempt <= 5 && !isolated; attempt++) {
-        try {
-          isolated = await sw.evaluate(async (urls) => {
-            const w = await chrome.windows.create({ url: urls, focused: false });
-            await new Promise((r) => setTimeout(r, 500)); // let the fresh tabs finish navigating first
-            const tabs = (await chrome.tabs.query({ windowId: w.id })).sort((a, b) => a.index - b.index);
-            const nonFirst = tabs[1];
-            const after = await chrome.tabs.discard(nonFirst.id);
-            return { windowId: w.id, tabId: after.id, url: after.url, discarded: after.discarded };
-          }, [oneUrl, twoUrl]);
-          if (isolated.discarded !== true) {
-            lastErr = new Error(`attempt ${attempt}: discarded was not true: ${JSON.stringify(isolated)}`);
-            isolated = null;
-          }
-        } catch (e) {
-          lastErr = new Error(`attempt ${attempt}: ${e.message}`);
-        }
-        if (!isolated) {
-          await new Promise((r) => setTimeout(r, 1500));
-          if (!(context.browser() && context.browser().isConnected())) {
-            await context.close().catch(() => {});
-            ({ ctx: context, worker: sw, id: extId, prefix: ownPrefix, page: appPage } = await launchAndOpenApp());
-          }
-        }
-      }
-      assert(isolated, `isolated chrome.tabs.discard() did not report discarded=true in 5 attempts; last error: ${lastErr && lastErr.message}`);
+      const newWindows = await (await worker()).evaluate(async (beforeIdsArg) => {
+        const beforeSet = new Set(beforeIdsArg);
+        const windows = await chrome.windows.getAll({ populate: true });
+        return windows.filter((w) => !beforeSet.has(w.id));
+      }, beforeIds);
+      assert(newWindows.length === 1, `expected exactly 1 new window, got ${newWindows.length}: ${JSON.stringify(newWindows.map((w) => w.id))}`);
+      const newWin = newWindows[0];
+      const tabs = newWin.tabs.slice().sort((a, b) => a.index - b.index);
+
+      const expectedTabs = exportedJson.windows[0].tabs;
+      const actualUrls = tabs.map((t) => t.url);
+      const expectedUrls = expectedTabs.map((t) => t.url);
+      assert(JSON.stringify(actualUrls) === JSON.stringify(expectedUrls), `restored URLs in order ${JSON.stringify(actualUrls)} != expected ${JSON.stringify(expectedUrls)}`);
+
+      const actualPinned = tabs.map((t) => Boolean(t.pinned));
+      const expectedPinned = expectedTabs.map((t) => Boolean(t.pinned));
+      assert(JSON.stringify(actualPinned) === JSON.stringify(expectedPinned), `restored pinned state ${JSON.stringify(actualPinned)} != expected ${JSON.stringify(expectedPinned)}`);
+
+      const discardedTabs = tabs.filter((t) => t.discarded);
+      assert(discardedTabs.length === 0, `a tab was discarded even though lazy loading was off: ${JSON.stringify(tabs.map((t) => ({ id: t.id, discarded: t.discarded })))}`);
+
+      const expectedGroup = exportedJson.windows[0].groups[0];
+      assert(expectedGroup, "fixture export unexpectedly has no group to check against");
+      const groups = await (await worker()).evaluate((windowId) => chrome.tabGroups.query({ windowId }), newWin.id);
+      assert(groups.length === 1, `expected exactly 1 restored group, got ${groups.length}: ${JSON.stringify(groups)}`);
+      assert(groups[0].title === expectedGroup.title, `restored group title "${groups[0].title}" != expected "${expectedGroup.title}"`);
+      assert(groups[0].color === expectedGroup.color, `restored group color "${groups[0].color}" != expected "${expectedGroup.color}"`);
 
       record(
-        "I",
+        "I-a",
         "PASS",
-        `${importUiEvidence} The browser disconnected immediately after (documented environment limitation, not a TabVault bug -- see the comment above and e2e/README.md), so the outcome of that specific click cannot be observed live here. Verified instead: (1) restoreSession()'s exact discardTab call -- chrome.tabs.discard(id).catch(()=>{}) -- reliably sets discarded=true on a real tab, confirmed via the resolved Tab object chrome.tabs.discard() itself returns (id=${isolated.tabId} in window ${isolated.windowId}): ${JSON.stringify(isolated)}; (2) the full step sequence (createWindow, createTab, groupTabs, updateGroup, discardTab) for a window shaped like this one is independently covered by the already-passing test/restore-plan.test.js.`
+        `lazy loading off; import dialog listed ${rows.length} window row(s); result dialog: "${resultText.trim().replace(/\s+/g, " ")}"; new window ${newWin.id} has URLs in order ${JSON.stringify(actualUrls)} (expected ${JSON.stringify(expectedUrls)}), pinned ${JSON.stringify(actualPinned)}, 0 discarded tabs, group ${JSON.stringify(groups[0])} (expected title "${expectedGroup.title}" color "${expectedGroup.color}"); 0 new console errors.`
       );
     } catch (e) {
-      record("I", "FAIL", `${e.message}${importUiEvidence ? ` (import UI evidence: ${importUiEvidence})` : ""}`);
+      record("I-a", "FAIL", e.message);
     }
 
-    // The isolated discard check above also crashes the browser (that is
-    // the whole point of it), but exits its retry loop as soon as it has
-    // read a successful result -- which can happen on the very first
-    // attempt, whose own connectivity check can still read "connected" for
-    // a moment (the disconnect takes ~150-250ms to fully happen, same as
-    // after the main Import click above). Give it time to settle, then
-    // check for real, before moving on to J, K, L.
-    await new Promise((r) => setTimeout(r, 1500));
-    if (!(context.browser() && context.browser().isConnected())) {
-      console.log("\nBrowser still disconnected after the isolated discard check; relaunching to continue with J, K, L.\n");
-      await context.close().catch(() => {});
-      ({ ctx: context, worker: sw, id: extId, prefix: ownPrefix, page: appPage } = await launchAndOpenApp());
+    // ---------------------------------------------------------------
+    // I-b. Import with lazy loading back ON: the real discardTab step, which
+    // is expected to crash this environment (see the note above)
+    // ---------------------------------------------------------------
+    try {
+      assert(exportedFilePath, "no exported file from scenario H to import");
+      await setLazyRestore(true);
+
+      const beforeIds = (await (await worker()).evaluate(() => chrome.windows.getAll())).map((w) => w.id);
+      const errSnap = consoleErrorSnapshot();
+
+      await appPage.setInputFiles("#import-file", exportedFilePath);
+      await appPage.waitForSelector("#dialog h2");
+      await waitForTextContains(appPage, "#dialog h2", "choose windows to restore");
+      await appPage.click('#dialog button:has-text("Restore selected windows")');
+
+      let crashed = false;
+      let v = null;
+      try {
+        v = await (await worker()).evaluate(async (beforeIdsArg) => {
+          const beforeSet = new Set(beforeIdsArg);
+          const windows = await chrome.windows.getAll({ populate: true });
+          const newWindows = windows.filter((w) => !beforeSet.has(w.id));
+          const discardFlags = [];
+          for (const w of newWindows) {
+            const tabs = w.tabs.slice().sort((a, b) => a.index - b.index);
+            for (let i = 1; i < tabs.length; i++) discardFlags.push({ id: tabs[i].id, index: i, discarded: tabs[i].discarded });
+          }
+          return { newWindowCount: newWindows.length, discardFlags };
+        }, beforeIds);
+      } catch (e) {
+        if (looksLikeDisconnect(e)) crashed = true;
+        else throw e;
+      }
+      if (!crashed && !(context.browser() && context.browser().isConnected())) crashed = true;
+
+      const newErrors = newConsoleErrorsSince(errSnap);
+      const hadConsoleErrors = newErrors.app.length > 0 || newErrors.worker.length > 0;
+
+      if (hadConsoleErrors) {
+        record("I-b", "FAIL", `console errors appeared between the Restore click and the outcome (this overrides what would otherwise be a LIMITED environment-crash result): ${JSON.stringify(newErrors)}`);
+      } else if (crashed) {
+        let isolatedEvidence;
+        try {
+          await settleAndRelaunchIfDisconnected("after the real Restore click with lazy loading on (expected)");
+          const isolated = await runIsolatedDiscardCheck(oneUrl, twoUrl);
+          isolatedEvidence = `Isolated chrome.tabs.discard() on a fresh real tab reliably reported discarded=true: ${JSON.stringify(isolated)}.`;
+        } catch (e) {
+          isolatedEvidence = `Isolated discard check (supporting evidence) also failed: ${e.message}`;
+        }
+        record("I-b", "LIMITED", `chrome.tabs.discard crashes Playwright's Chromium in this environment; discard verified in isolation. ${isolatedEvidence}`);
+      } else {
+        assert(v.newWindowCount > 0, "browser survived but no new windows appeared after import");
+        assert(v.discardFlags.length > 0, "browser survived but there were no non-first tabs to check discard on");
+        const allDiscarded = v.discardFlags.every((d) => d.discarded);
+        if (allDiscarded) {
+          record("I-b", "PASS", `browser survived the real Restore click with lazy loading on; ${v.newWindowCount} new window(s), non-first tabs report discarded=true: ${JSON.stringify(v.discardFlags)}; 0 new console errors.`);
+        } else {
+          record("I-b", "FAIL", `browser survived but not all non-first tabs were discarded: ${JSON.stringify(v.discardFlags)}`);
+        }
+      }
+    } catch (e) {
+      record("I-b", "FAIL", e.message);
     }
+
+    // Whichever path I-b took, make sure the browser is alive before J/K/L:
+    // the crashed branch above already relaunches, but the isolated check's
+    // own last (successful) attempt could itself be moments from crashing
+    // again, same as after the main Restore click.
+    await settleAndRelaunchIfDisconnected("after scenario I-b");
 
     // ---------------------------------------------------------------
     // J. Snapshot now / delete / keep-unkeep
@@ -537,7 +680,7 @@ async function main() {
 
       await appPage.click('#dialog button:has-text("Snapshot now")');
       const snap1 = await waitFor(async () => {
-        const { snapshots = [] } = await sw.evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
         return snapshots.find((s) => s.reason === "manual" && s.pinned) || null;
       });
       await waitForTextContains(appPage, `[data-snapshot="${snap1.id}"]`, "manual");
@@ -549,19 +692,19 @@ async function main() {
 
       await appPage.click(`[data-snapshot="${snap1.id}"] button:has-text("Delete")`);
       await waitFor(async () => (await appPage.$(`[data-snapshot="${snap1.id}"]`)) === null);
-      const gone = await sw.evaluate((id) => chrome.storage.local.get("snapshots").then((r) => !(r.snapshots || []).some((s) => s.id === id)), snap1.id);
+      const gone = await (await worker()).evaluate((id) => chrome.storage.local.get("snapshots").then((r) => !(r.snapshots || []).some((s) => s.id === id)), snap1.id);
       assert(gone, "deleted snapshot still present in storage");
 
       await appPage.click('#dialog button:has-text("Snapshot now")');
       const snap2 = await waitFor(async () => {
-        const { snapshots = [] } = await sw.evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
         return snapshots.find((s) => s.reason === "manual" && s.pinned) || null;
       });
       await waitForTextContains(appPage, `[data-snapshot="${snap2.id}"]`, "manual");
 
       await appPage.click(`[data-snapshot="${snap2.id}"] button:has-text("Unkeep")`);
       await waitFor(async () => {
-        const { snapshots = [] } = await sw.evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
         const s = snapshots.find((x) => x.id === snap2.id);
         return s && s.pinned === false;
       });
@@ -569,7 +712,7 @@ async function main() {
 
       await appPage.click(`[data-snapshot="${snap2.id}"] button:has-text("Keep")`);
       await waitFor(async () => {
-        const { snapshots = [] } = await sw.evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
         const s = snapshots.find((x) => x.id === snap2.id);
         return s && s.pinned === true;
       });
@@ -621,19 +764,25 @@ async function main() {
     // K. Change-driven snapshot (slow, kept last)
     // ---------------------------------------------------------------
     try {
-      const before = await sw.evaluate(async () => (await chrome.storage.local.get("snapshots")).snapshots || []);
+      const before = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapshots")).snapshots || []);
       const countBefore = before.length;
 
-      // winC no longer necessarily exists (I's Import, and the relaunch
-      // after it, both start fresh window state), so pick whatever window is
+      // winC no longer necessarily exists (Import, and any relaunch after
+      // it, both start fresh window state), so pick whatever window is
       // currently open rather than relying on an earlier fixture id.
-      const anyWindow = (await sw.evaluate(() => chrome.windows.getAll()))[0];
-      await sw.evaluate(({ windowId, url }) => chrome.tabs.create({ windowId, url, active: false }), { windowId: anyWindow.id, url: threeUrl });
+      const anyWindow = (await (await worker()).evaluate(() => chrome.windows.getAll()))[0];
+      await (await worker()).evaluate(({ windowId, url }) => chrome.tabs.create({ windowId, url, active: false }), { windowId: anyWindow.id, url: threeUrl });
 
       console.log("K: waiting 40s for the change-driven snapshot alarm...");
       await new Promise((r) => setTimeout(r, 40000));
 
-      const after = await sw.evaluate(async () => (await chrome.storage.local.get("snapshots")).snapshots || []);
+      // Re-acquire the worker explicitly here: this is the one spot in the
+      // run where 40 real seconds pass with no chrome.* activity at all, so
+      // if the service worker were ever going to idle out and respawn on
+      // its own, this is where it would happen. worker() already does this
+      // re-acquisition on every call, but the wait is called out here since
+      // this is specifically the scenario it matters most for.
+      const after = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapshots")).snapshots || []);
       assert(after.length >= countBefore + 1, `snapshot count did not increase: before=${countBefore}, after=${after.length}`);
       const newest = after.slice().sort((a, b) => b.takenAt - a.takenAt)[0];
       assert(newest.reason === "change", `newest snapshot reason = "${newest.reason}"`);
@@ -645,16 +794,26 @@ async function main() {
 
     if (appPage && !appPage.isClosed()) await appPage.close().catch(() => {});
   } finally {
-    const results = ORDER.map((id) => byId.get(id)).filter(Boolean);
-    const failed = results.filter((r) => r.status !== "PASS");
+    const results = ORDER.map((id) => byId.get(id));
+    const passed = results.filter((r) => r.status === "PASS");
+    const failed = results.filter((r) => r.status === "FAIL");
+    const limited = results.filter((r) => r.status === "LIMITED");
+    const notRun = results.filter((r) => r.status === "NOT RUN");
+    const failedForExit = [...failed, ...notRun];
+
     try {
       fs.mkdirSync(ROOT, { recursive: true });
       fs.writeFileSync(path.join(ROOT, "results.json"), JSON.stringify({ results, consoleErrors }, null, 2));
 
+      const summaryLine =
+        `${results.length} scenarios, ${passed.length} passed, ${failed.length} failed, ${limited.length} environment-limited` +
+        (notRun.length ? `, ${notRun.length} not run` : "") +
+        ".";
+
       const lines = [];
       lines.push("# TabVault e2e run");
       lines.push("");
-      lines.push(`Run at ${new Date().toISOString()}. ${results.length} scenarios, ${results.length - failed.length} passed, ${failed.length} failed.`);
+      lines.push(`Run at ${new Date().toISOString()}. ${summaryLine}`);
       lines.push("");
       lines.push("| Scenario | Status |");
       lines.push("|---|---|");
@@ -679,6 +838,7 @@ async function main() {
 
       console.log("\n\n=== SUMMARY ===");
       for (const r of results) console.log(`${r.id}: ${r.status}`);
+      console.log(`\n${summaryLine}`);
       console.log(`\nReport: ${path.join(ROOT, "report.md")}`);
     } catch (reportErr) {
       console.error("Failed to write e2e results/report (continuing to teardown):", reportErr);
@@ -687,8 +847,8 @@ async function main() {
     if (context) await context.close().catch(() => {});
     if (server) await new Promise((resolve) => server.close(() => resolve()));
 
-    if (failed.length > 0) {
-      console.error(`\n${failed.length} scenario(s) FAILED: ${failed.map((r) => r.id).join(", ")}`);
+    if (failedForExit.length > 0) {
+      console.error(`\n${failedForExit.length} scenario(s) FAILED or did not run: ${failedForExit.map((r) => `${r.id} (${r.status})`).join(", ")}`);
       process.exitCode = 1;
     }
   }
