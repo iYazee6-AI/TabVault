@@ -13,6 +13,7 @@
     cursor: null,
     collapsedWindows: new Set(),
     lastClicked: null,
+    editing: false,
   };
 
   // ---- data ------------------------------------------------------------------
@@ -76,7 +77,7 @@
       draggable: "true", title: t.url, dataset: { tab: String(t.id), window: String(w.id) },
     });
     const icon = el("img", { src: t.favIconUrl || "../icons/icon16.png", alt: "" });
-    icon.addEventListener("error", () => { icon.src = "../icons/icon16.png"; });
+    icon.addEventListener("error", () => { icon.src = "../icons/icon16.png"; }, { once: true });
     const text = el("div", { class: "text" }, el("span", { class: "ttitle" }, t.title || t.url), el("span", { class: "turl" }, t.url));
     const badges = [];
     if (t.pinned) badges.push("📌");
@@ -94,7 +95,7 @@
       e.dataTransfer.setData("text/plain", JSON.stringify({ tabIds: ids }));
       e.dataTransfer.effectAllowed = "move";
     });
-    row.addEventListener("dragover", (e) => { e.preventDefault(); row.classList.add("dragover"); });
+    row.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.add("dragover"); });
     row.addEventListener("dragleave", () => row.classList.remove("dragover"));
     row.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.remove("dragover"); dropTabs(e, { windowId: w.id, index: t.index, groupId: t.groupId }); });
     return row;
@@ -111,16 +112,21 @@
       el("select", { title: "Color", onchange: (e) => chrome.tabGroups.update(g.id, { color: e.target.value }) }, ...Object.keys(GROUP_COLORS).map((c) => el("option", { value: c, selected: c === g.color ? "" : null }, c))),
       el("button", { title: "Ungroup", onclick: () => chrome.tabs.ungroup(tabs.map((t) => t.id)) }, "⊟"));
     sec.append(head, ...tabs.map((t) => tabRow(w, t)));
-    sec.addEventListener("dragover", (e) => { e.preventDefault(); sec.classList.add("drop"); });
+    sec.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.add("drop"); });
     sec.addEventListener("dragleave", () => sec.classList.remove("drop"));
     sec.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.remove("drop"); dropTabs(e, { windowId: w.id, index: -1, groupId: g.id }); });
     return sec;
   }
 
   function renameGroup(g, titleEl) {
+    state.editing = true;
     const input = el("input", { type: "text", value: g.title });
-    const done = async () => { await chrome.tabGroups.update(g.id, { title: input.value.trim() }); };
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") done(); if (e.key === "Escape") render(); });
+    const done = async () => { await chrome.tabGroups.update(g.id, { title: input.value.trim() }); state.editing = false; render(); };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") done();
+      if (e.key === "Escape") { state.editing = false; render(); }
+    });
     input.addEventListener("blur", done);
     titleEl.replaceWith(input);
     input.focus(); input.select();
@@ -154,15 +160,18 @@
   }
 
   function closeWindow(w) {
+    const full = state.session.windows.find((x) => x.id === w.id) || w;
     const head = document.querySelector(`.window[data-window="${w.id}"] .whead`);
-    const confirmBtn = el("button", { class: "danger", onclick: () => chrome.windows.remove(w.id) }, `Close ${w.tabs.length} tabs`);
+    const confirmBtn = el("button", { class: "danger", onclick: () => chrome.windows.remove(w.id) }, `Close ${full.tabs.length} tabs`);
     const cancel = el("button", { onclick: () => render() }, "Cancel");
     head.replaceChildren(confirmBtn, cancel);
   }
 
   function render() {
+    if (state.editing) return;
     const grid = $("grid");
     const scroll = { left: grid.scrollLeft, top: grid.scrollTop };
+    const colScroll = new Map([...document.querySelectorAll(".window")].map((c) => [c.dataset.window, c.querySelector(".tabs")?.scrollTop || 0]));
     const filtered = TV.filterSession(state.session, state.query);
     grid.replaceChildren();
     if (filtered.windows.length === 0) {
@@ -171,6 +180,10 @@
       for (const w of filtered.windows) grid.append(windowColumn(w));
     }
     grid.scrollLeft = scroll.left; grid.scrollTop = scroll.top;
+    for (const col of document.querySelectorAll(".window")) {
+      const tabs = col.querySelector(".tabs");
+      if (tabs && colScroll.has(col.dataset.window)) tabs.scrollTop = colScroll.get(col.dataset.window);
+    }
     const total = TV.countTabs(state.session);
     $("counts").textContent = state.query ? `${filtered.count} of ${total} tabs` : `${state.session.windows.length} windows · ${total} tabs`;
     renderSelbar();
@@ -219,20 +232,34 @@
     try { data = JSON.parse(e.dataTransfer.getData("text/plain")); } catch { return; }
     const ids = (data && data.tabIds) || [];
     if (!ids.length) return;
-    await moveTabs(ids, target.windowId, target.index);
-    if (target.groupId !== null && target.groupId !== undefined) await chrome.tabs.group({ tabIds: ids, groupId: target.groupId });
-    else await chrome.tabs.ungroup(ids).catch(() => {});
-    toast(`Moved ${ids.length} tab${ids.length === 1 ? "" : "s"}`);
+    try {
+      await moveTabs(ids, target.windowId, target.index);
+      if (target.groupId !== null && target.groupId !== undefined) await chrome.tabs.group({ tabIds: ids, groupId: target.groupId });
+      else await chrome.tabs.ungroup(ids).catch(() => {});
+      toast(`Moved ${ids.length} tab${ids.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      console.warn("TabVault move failed", err);
+      toast(`Could not move: ${err.message || err}`);
+    }
   }
   async function groupSelection() {
     const ids = selection();
     if (!ids.length) return;
-    const byWindow = new Map();
-    for (const w of state.session.windows) for (const t of w.tabs) if (state.selected.has(t.id)) { if (!byWindow.has(w.id)) byWindow.set(w.id, []); byWindow.get(w.id).push(t.id); }
-    for (const [windowId, tabIds] of byWindow) await chrome.tabs.group({ tabIds, createProperties: { windowId } });
-    toast("Grouped");
+    try {
+      const byWindow = new Map();
+      for (const w of state.session.windows) for (const t of w.tabs) if (state.selected.has(t.id)) { if (!byWindow.has(w.id)) byWindow.set(w.id, []); byWindow.get(w.id).push(t.id); }
+      for (const [windowId, tabIds] of byWindow) await chrome.tabs.group({ tabIds, createProperties: { windowId } });
+      toast("Grouped");
+    } catch (err) {
+      console.warn("TabVault group failed", err);
+      toast(`Could not group: ${err.message || err}`);
+    }
   }
-  async function forEachSelected(fn) { for (const id of selection()) { try { await fn(id); } catch (e) { console.warn("TabVault action failed", id, e); } } }
+  async function forEachSelected(fn) {
+    let failed = 0;
+    for (const id of selection()) { try { await fn(id); } catch (e) { failed++; console.warn("TabVault action failed", id, e); } }
+    if (failed) toast(`${failed} action${failed === 1 ? "" : "s"} failed; see console`);
+  }
 
   function toast(text) {
     const t = $("toast");
@@ -253,7 +280,7 @@
 
   // ---- keyboard ----------------------------------------------------------------------
   function visibleTabs() {
-    const rows = [...document.querySelectorAll("#grid .tab")];
+    const rows = [...document.querySelectorAll("#grid .tab")].filter((r) => r.offsetParent !== null);
     return rows.map((r) => ({ id: Number(r.dataset.tab), windowId: Number(r.dataset.window), el: r }));
   }
   function moveCursor(delta) {
@@ -295,7 +322,19 @@
   function wire() {
     $("search").addEventListener("input", (e) => { state.query = e.target.value; render(); });
     $("search").addEventListener("keydown", (e) => { if (e.key === "Enter") { const r = visibleTabs()[0]; if (r) focusTab(r.id, r.windowId); } });
-    $("move-target").addEventListener("change", async (e) => { const v = e.target.value; if (!v) return; await moveTabs(selection(), v); e.target.value = ""; toast("Moved"); });
+    $("move-target").addEventListener("change", async (e) => {
+      const v = e.target.value;
+      if (!v) return;
+      try {
+        await moveTabs(selection(), v);
+        toast("Moved");
+      } catch (err) {
+        console.warn("TabVault move failed", err);
+        toast(`Could not move: ${err.message || err}`);
+      } finally {
+        e.target.value = "";
+      }
+    });
     $("sel-group").addEventListener("click", groupSelection);
     $("sel-ungroup").addEventListener("click", () => chrome.tabs.ungroup(selection()));
     $("sel-pin").addEventListener("click", () => forEachSelected((id) => chrome.tabs.update(id, { pinned: true })));
@@ -316,6 +355,10 @@
     if (chrome.tabGroups) events.push(chrome.tabGroups.onCreated, chrome.tabGroups.onUpdated, chrome.tabGroups.onRemoved, chrome.tabGroups.onMoved);
     for (const ev of events) ev.addListener(scheduleRefresh);
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applySettings);
+
+    document.addEventListener("dragend", () => {
+      for (const node of document.querySelectorAll(".drop, .dragover")) node.classList.remove("drop", "dragover");
+    });
   }
 
   window.TabVaultApp = {
