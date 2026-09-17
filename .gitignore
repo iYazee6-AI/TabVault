@@ -1,0 +1,18 @@
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Packed extension artifacts
+*.crx
+*.pem
+*.zip
+
+# SDD scratch
+.superpowers/
+
+# Dependencies and e2e artifacts
+node_modules/
+e2e/.tmp/
+
+# Store packages
+dist/
