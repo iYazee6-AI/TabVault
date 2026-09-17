@@ -9,5 +9,8 @@
     "pack": "node tools/pack.js",
     "icons": "node tools/make-icons.js"
   },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  },
   "license": "MIT"
 }
