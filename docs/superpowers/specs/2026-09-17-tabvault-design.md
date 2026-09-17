@@ -237,3 +237,10 @@ the steps and reports progress.
 - No network requests, no host permissions, no telemetry.
 - Restore creates tabs discarded, so restored pages do not load or run until
   the user opens them.
+
+## Deviations recorded during implementation
+
+- The change debounce uses a single `chrome.alarms` alarm re-armed on every
+  change (an MV3 service worker cannot keep a 30-second `setTimeout` alive),
+  so the `alarms` permission is declared and the debounce minimum is 30 s.
+  No periodic snapshots are taken.
