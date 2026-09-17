@@ -14,6 +14,8 @@
     collapsedWindows: new Set(),
     lastClicked: null,
     editing: false,
+    confirmClose: null,
+    renderPending: false,
   };
 
   // ---- data ------------------------------------------------------------------
@@ -83,7 +85,7 @@
     if (t.pinned) badges.push("📌");
     if (t.audible && !t.muted) badges.push("🔊");
     if (t.muted) badges.push("🔇");
-    const close = el("button", { class: "close", title: "Close tab", onclick: (e) => { e.stopPropagation(); chrome.tabs.remove(t.id); } }, "×");
+    const close = el("button", { class: "close", title: "Close tab", onclick: (e) => { e.stopPropagation(); chrome.tabs.remove(t.id).catch((err) => toast(`Could not close: ${err.message || err}`)); } }, "×");
     row.append(el("input", { type: "checkbox", checked: state.selected.has(t.id) ? "" : null, onclick: (e) => { e.stopPropagation(); toggleSelect(t.id, e.shiftKey, w); } }), icon, text, el("span", { class: "badge" }, badges.join(" ")), close);
     row.addEventListener("click", (e) => {
       if (e.ctrlKey || e.metaKey) { toggleSelect(t.id, false, w); return; }
@@ -105,12 +107,12 @@
     const sec = el("div", { class: `group${g.collapsed ? " collapsed" : ""}`, style: `--gcolor:${GROUP_COLORS[g.color] || "#999"}` });
     const title = el("span", { class: "gtitle" }, g.title || "(unnamed group)");
     const head = el("div", { class: "ghead" },
-      el("button", { title: g.collapsed ? "Expand" : "Collapse", onclick: () => chrome.tabGroups.update(g.id, { collapsed: !g.collapsed }) }, g.collapsed ? "▸" : "▾"),
+      el("button", { title: g.collapsed ? "Expand" : "Collapse", onclick: () => chrome.tabGroups.update(g.id, { collapsed: !g.collapsed }).catch((e) => toast(`Could not collapse: ${e.message || e}`)) }, g.collapsed ? "▸" : "▾"),
       title,
       el("span", { class: "badge" }, String(tabs.length)),
       el("button", { title: "Rename", onclick: () => renameGroup(g, title) }, "✎"),
-      el("select", { title: "Color", onchange: (e) => chrome.tabGroups.update(g.id, { color: e.target.value }) }, ...Object.keys(GROUP_COLORS).map((c) => el("option", { value: c, selected: c === g.color ? "" : null }, c))),
-      el("button", { title: "Ungroup", onclick: () => chrome.tabs.ungroup(tabs.map((t) => t.id)) }, "⊟"));
+      el("select", { title: "Color", onchange: (e) => chrome.tabGroups.update(g.id, { color: e.target.value }).catch((err) => toast(`Could not recolor: ${err.message || err}`)) }, ...Object.keys(GROUP_COLORS).map((c) => el("option", { value: c, selected: c === g.color ? "" : null }, c))),
+      el("button", { title: "Ungroup", onclick: () => chrome.tabs.ungroup(tabs.map((t) => t.id)).catch((e) => toast(`Could not ungroup: ${e.message || e}`)) }, "⊟"));
     sec.append(head, ...tabs.map((t) => tabRow(w, t)));
     sec.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.add("drop"); });
     sec.addEventListener("dragleave", () => sec.classList.remove("drop"));
@@ -145,14 +147,23 @@
   }
 
   function windowColumn(w) {
-    const col = el("div", { class: `window${w.incognito ? " incognito" : ""}${state.collapsedWindows.has(w.id) ? " collapsed" : ""}`, dataset: { window: String(w.id) } });
-    const head = el("div", { class: "whead" },
-      el("button", { title: "Collapse", onclick: () => { state.collapsedWindows.has(w.id) ? state.collapsedWindows.delete(w.id) : state.collapsedWindows.add(w.id); render(); } }, state.collapsedWindows.has(w.id) ? "▸" : "▾"),
-      el("span", { class: "title", title: windowTitle(w) }, (w.incognito ? "🕶 " : "") + windowTitle(w)),
-      el("span", { class: "count" }, String(w.tabs.length)),
-      el("button", { title: "Select all in window", onclick: () => { for (const t of w.tabs) state.selected.add(t.id); render(); } }, "☑"),
-      el("button", { title: "Focus window", onclick: () => chrome.windows.update(w.id, { focused: true }) }, "⤴"),
-      el("button", { class: "danger", title: "Close window", onclick: () => closeWindow(w) }, "×"));
+    const dropTarget = w.type === "normal";
+    const col = el("div", { class: `window${w.incognito ? " incognito" : ""}${state.collapsedWindows.has(w.id) ? " collapsed" : ""}${dropTarget ? "" : " nodrop"}`, dataset: { window: String(w.id) } });
+    let head;
+    if (state.confirmClose === w.id) {
+      const full = state.session.windows.find((x) => x.id === w.id) || w;
+      const confirmBtn = el("button", { class: "danger", onclick: () => { chrome.windows.remove(w.id); state.confirmClose = null; } }, `Close ${full.tabs.length} tabs`);
+      const cancel = el("button", { onclick: () => { state.confirmClose = null; render(); } }, "Cancel");
+      head = el("div", { class: "whead" }, confirmBtn, cancel);
+    } else {
+      head = el("div", { class: "whead" },
+        el("button", { title: "Collapse", onclick: () => { state.collapsedWindows.has(w.id) ? state.collapsedWindows.delete(w.id) : state.collapsedWindows.add(w.id); render(); } }, state.collapsedWindows.has(w.id) ? "▸" : "▾"),
+        el("span", { class: "title", title: windowTitle(w) }, (w.incognito ? "🕶 " : "") + windowTitle(w)),
+        el("span", { class: "count" }, String(w.tabs.length)),
+        el("button", { title: "Select all in window", onclick: () => { for (const t of w.tabs) state.selected.add(t.id); render(); } }, "☑"),
+        el("button", { title: "Focus window", onclick: () => chrome.windows.update(w.id, { focused: true }) }, "⤴"),
+        el("button", { class: "danger", title: "Close window", onclick: () => { state.confirmClose = w.id; render(); } }, "×"));
+    }
     const body = el("div", { class: "tabs" });
     // Render in index order, wrapping consecutive tabs of a group in a section.
     let i = 0;
@@ -165,22 +176,22 @@
       body.append(groupSection(w, g, members));
     }
     col.append(head, body);
-    col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("drop"); });
-    col.addEventListener("dragleave", () => col.classList.remove("drop"));
-    col.addEventListener("drop", (e) => { e.preventDefault(); col.classList.remove("drop"); dropTabs(e, { windowId: w.id, index: -1, groupId: null }); });
+    if (dropTarget) {
+      col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("drop"); });
+      col.addEventListener("dragleave", () => col.classList.remove("drop"));
+      col.addEventListener("drop", (e) => { e.preventDefault(); col.classList.remove("drop"); dropTabs(e, { windowId: w.id, index: -1, groupId: null }); });
+    }
     return col;
-  }
-
-  function closeWindow(w) {
-    const full = state.session.windows.find((x) => x.id === w.id) || w;
-    const head = document.querySelector(`.window[data-window="${w.id}"] .whead`);
-    const confirmBtn = el("button", { class: "danger", onclick: () => chrome.windows.remove(w.id) }, `Close ${full.tabs.length} tabs`);
-    const cancel = el("button", { onclick: () => render() }, "Cancel");
-    head.replaceChildren(confirmBtn, cancel);
   }
 
   function render() {
     if (state.editing) return;
+    const active = document.activeElement;
+    if (active && active.tagName === "SELECT" && (active.closest("#grid") || active.closest("#selbar"))) {
+      state.renderPending = true;
+      return;
+    }
+    state.renderPending = false;
     const grid = $("grid");
     const scroll = { left: grid.scrollLeft, top: grid.scrollTop };
     const colScroll = new Map([...document.querySelectorAll(".window")].map((c) => [c.dataset.window, c.querySelector(".tabs")?.scrollTop || 0]));
@@ -201,13 +212,17 @@
     renderSelbar();
   }
 
+  let lastMoveTargetKey = null;
   function renderSelbar() {
     const n = state.selected.size;
     $("selbar").hidden = n === 0;
     $("selcount").textContent = `${n} selected`;
+    const key = state.session.windows.map((w) => `${w.id}:${w.tabs.length}`).join("|");
+    if (key === lastMoveTargetKey) return;
+    lastMoveTargetKey = key;
     const sel = $("move-target");
     sel.replaceChildren(el("option", { value: "" }, "Move to…"), el("option", { value: "new" }, "New window"),
-      ...state.session.windows.map((w) => el("option", { value: String(w.id) }, `${windowTitle(w).slice(0, 40)} (${w.tabs.length})`)));
+      ...state.session.windows.filter((w) => w.type === "normal").map((w) => el("option", { value: String(w.id) }, `${windowTitle(w).slice(0, 40)} (${w.tabs.length})`)));
   }
 
   // ---- selection ---------------------------------------------------------------
@@ -231,13 +246,23 @@
     await chrome.tabs.update(tabId, { active: true });
     await chrome.windows.update(windowId, { focused: true });
   }
+  function windowForTab(id) {
+    return state.session.windows.find((w) => w.tabs.some((t) => t.id === id)) || null;
+  }
+  // Returns true if the move actually happened; false if it was refused (incognito/normal mismatch).
   async function moveTabs(ids, windowId, index = -1) {
+    const incognitoFlags = new Set(ids.map((id) => Boolean((windowForTab(id) || {}).incognito)));
+    if (incognitoFlags.size > 1) { toast("Cannot move incognito and normal tabs together"); return false; }
+    const sourceIncognito = [...incognitoFlags][0] || false;
     if (windowId === "new") {
-      const w = await chrome.windows.create({ tabId: ids[0] });
+      const w = await chrome.windows.create({ tabId: ids[0], incognito: sourceIncognito });
       if (ids.length > 1) await chrome.tabs.move(ids.slice(1), { windowId: w.id, index: -1 });
-      return;
+      return true;
     }
+    const targetWindow = state.session.windows.find((w) => w.id === Number(windowId));
+    if (targetWindow && Boolean(targetWindow.incognito) !== sourceIncognito) { toast("Cannot move tabs between incognito and normal windows"); return false; }
     await chrome.tabs.move(ids, { windowId: Number(windowId), index });
+    return true;
   }
   async function dropTabs(e, target) {
     let data;
@@ -245,7 +270,8 @@
     const ids = (data && data.tabIds) || [];
     if (!ids.length) return;
     try {
-      await moveTabs(ids, target.windowId, target.index);
+      const moved = await moveTabs(ids, target.windowId, target.index);
+      if (!moved) return;
       if (target.groupId !== null && target.groupId !== undefined) await chrome.tabs.group({ tabIds: ids, groupId: target.groupId });
       else await chrome.tabs.ungroup(ids).catch(() => {});
       toast(`Moved ${ids.length} tab${ids.length === 1 ? "" : "s"}`);
@@ -318,7 +344,7 @@
     const inField = e.target.matches("input, select, textarea");
     if (!$("dialog-backdrop").hidden) { if (e.key === "Escape") closeDialog(); return; }
     if (e.key === "/" && !inField) { e.preventDefault(); $("search").focus(); $("search").select(); return; }
-    if (e.key === "Escape") { if (inField) e.target.blur(); state.query = ""; $("search").value = ""; state.selected.clear(); render(); return; }
+    if (e.key === "Escape") { if (inField) e.target.blur(); state.query = ""; $("search").value = ""; state.selected.clear(); state.confirmClose = null; render(); return; }
     if (inField) return;
     if (e.key === "?") { openDialog("help"); return; }
     if (e.key === "ArrowDown") { e.preventDefault(); moveCursor(1); }
@@ -327,7 +353,7 @@
     if (e.key === "ArrowLeft") { e.preventDefault(); moveCursorWindow(-1); }
     if (e.key === "Enter" && state.cursor !== null) { const r = visibleTabs().find((x) => x.id === state.cursor); if (r) focusTab(r.id, r.windowId); }
     if (e.key === " " && state.cursor !== null) { e.preventDefault(); state.selected.has(state.cursor) ? state.selected.delete(state.cursor) : state.selected.add(state.cursor); render(); }
-    if (e.key === "Delete" && state.selected.size) { chrome.tabs.remove(selection()); }
+    if (e.key === "Delete" && state.selected.size) { chrome.tabs.remove(selection()).catch((err) => toast(`Could not close: ${err.message || err}`)); }
   });
 
   // ---- wiring -------------------------------------------------------------------------
@@ -338,8 +364,8 @@
       const v = e.target.value;
       if (!v) return;
       try {
-        await moveTabs(selection(), v);
-        toast("Moved");
+        const moved = await moveTabs(selection(), v);
+        if (moved) toast("Moved");
       } catch (err) {
         console.warn("TabVault move failed", err);
         toast(`Could not move: ${err.message || err}`);
@@ -348,20 +374,31 @@
       }
     });
     $("sel-group").addEventListener("click", groupSelection);
-    $("sel-ungroup").addEventListener("click", () => chrome.tabs.ungroup(selection()));
+    $("sel-ungroup").addEventListener("click", () => chrome.tabs.ungroup(selection()).catch((e) => toast(`Could not ungroup: ${e.message || e}`)));
     $("sel-pin").addEventListener("click", () => forEachSelected((id) => chrome.tabs.update(id, { pinned: true })));
     $("sel-unpin").addEventListener("click", () => forEachSelected((id) => chrome.tabs.update(id, { pinned: false })));
     $("sel-discard").addEventListener("click", () => forEachSelected((id) => chrome.tabs.discard(id)));
-    $("sel-close").addEventListener("click", () => chrome.tabs.remove(selection()));
+    $("sel-close").addEventListener("click", () => chrome.tabs.remove(selection()).catch((e) => toast(`Could not close: ${e.message || e}`)));
     $("sel-clear").addEventListener("click", clearSelection);
     $("btn-dupes").addEventListener("click", () => openDialog("duplicates"));
     $("btn-export").addEventListener("click", () => openDialog("export"));
     $("btn-import").addEventListener("click", () => $("import-file").click());
-    $("import-file").addEventListener("change", async (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) openDialog("import", await f.text()); });
+    $("import-file").addEventListener("change", async (e) => {
+      const f = e.target.files[0];
+      e.target.value = "";
+      if (!f) return;
+      if (f.size > 50 * 1024 * 1024) { toast("File is too large to import (limit 50 MB)"); return; }
+      openDialog("import", await f.text());
+    });
     $("btn-snapshots").addEventListener("click", () => openDialog("snapshots"));
     $("btn-settings").addEventListener("click", () => openDialog("settings"));
     $("btn-help").addEventListener("click", () => openDialog("help"));
     $("dialog-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(); });
+
+    for (const container of [$("grid"), $("selbar")]) {
+      container.addEventListener("change", () => { if (state.renderPending) render(); });
+      container.addEventListener("blur", () => { if (state.renderPending) render(); }, true);
+    }
 
     const events = [chrome.tabs.onCreated, chrome.tabs.onRemoved, chrome.tabs.onUpdated, chrome.tabs.onMoved, chrome.tabs.onAttached, chrome.tabs.onDetached, chrome.tabs.onActivated, chrome.tabs.onReplaced, chrome.windows.onCreated, chrome.windows.onRemoved, chrome.windows.onFocusChanged];
     if (chrome.tabGroups) events.push(chrome.tabGroups.onCreated, chrome.tabGroups.onUpdated, chrome.tabGroups.onRemoved, chrome.tabGroups.onMoved);
