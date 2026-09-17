@@ -121,11 +121,23 @@
   function renameGroup(g, titleEl) {
     state.editing = true;
     const input = el("input", { type: "text", value: g.title });
-    const done = async () => { await chrome.tabGroups.update(g.id, { title: input.value.trim() }); state.editing = false; render(); };
+    let settled = false;
+    const done = async () => {
+      if (settled) return;
+      settled = true;
+      try {
+        await chrome.tabGroups.update(g.id, { title: input.value.trim() });
+      } catch (e) {
+        toast(`Could not rename: ${(e && e.message) || e}`);
+      } finally {
+        state.editing = false;
+        render();
+      }
+    };
     input.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Enter") done();
-      if (e.key === "Escape") { state.editing = false; render(); }
+      if (e.key === "Escape") { settled = true; state.editing = false; render(); }
     });
     input.addEventListener("blur", done);
     titleEl.replaceWith(input);
