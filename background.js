@@ -66,8 +66,18 @@ async function takeSnapshot(reason) {
   });
 }
 
+// chrome.storage.session (Chrome 102+, no extra permission) tracks when the current
+// run of changes started, so a steady stream of activity cannot re-arm the debounce
+// forever: past a cap, the already-pending alarm is left to fire instead of being pushed out.
 async function scheduleSnapshot() {
   const settings = await getSettings();
+  const now = Date.now();
+  const { pendingSince } = await chrome.storage.session.get("pendingSince");
+  if (pendingSince === undefined) {
+    await chrome.storage.session.set({ pendingSince: now });
+  } else if (now - pendingSince > Math.max(10 * settings.debounceSeconds * 1000, 300000)) {
+    return; // max wait exceeded: let the pending alarm fire rather than re-creating it
+  }
   const minutes = Math.max(0.5, settings.debounceSeconds / 60);
   await chrome.alarms.create(ALARM, { delayInMinutes: minutes }); // re-creating replaces the pending alarm
 }
@@ -79,9 +89,19 @@ for (const ev of [chrome.tabs.onCreated, chrome.tabs.onRemoved, chrome.tabs.onMo
 chrome.tabs.onUpdated.addListener((_id, info) => { if (info.url || info.pinned !== undefined || info.groupId !== undefined || info.mutedInfo !== undefined) onChange(); });
 if (chrome.tabGroups) for (const ev of [chrome.tabGroups.onCreated, chrome.tabGroups.onRemoved, chrome.tabGroups.onUpdated, chrome.tabGroups.onMoved]) ev.addListener(onChange);
 
-chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === ALARM) takeSnapshot("change").catch((e) => console.warn("TabVault snapshot failed", e)); });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== ALARM) return;
+  chrome.storage.session.remove("pendingSince").catch(() => {})
+    .then(() => takeSnapshot("change"))
+    .catch((e) => console.warn("TabVault snapshot failed", e));
+});
 chrome.runtime.onStartup.addListener(() => { takeSnapshot("startup").catch(() => {}); });
-chrome.runtime.onInstalled.addListener(() => { takeSnapshot("startup").catch(() => {}); });
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get("storageVersion").then(({ storageVersion }) => {
+    if (storageVersion === undefined) return chrome.storage.local.set({ storageVersion: 1 });
+  }).catch(() => {});
+  takeSnapshot("startup").catch(() => {});
+});
 
 // ---- messages from the page ------------------------------------------------
 function safeRespond(sendResponse, payload) { try { sendResponse(payload); } catch { /* page closed */ } }

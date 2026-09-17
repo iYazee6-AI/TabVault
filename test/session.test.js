@@ -49,6 +49,20 @@ test("stripVolatile removes fields that change without user intent", () => {
   assert.equal(s.windows[0].tabs[0].active, true, "input untouched");
 });
 
+test("buildSession trims oversized data: favicons but keeps short ones and non-data urls", () => {
+  const longData = "data:image/png;base64," + "A".repeat(2048);
+  const shortData = "data:image/png;base64,AAAA";
+  const w = win({ id: 1, tabs: [
+    tab({ id: 1, favIconUrl: longData }),
+    tab({ id: 2, favIconUrl: shortData }),
+    tab({ id: 3, favIconUrl: "https://example.com/favicon.ico" }),
+  ] });
+  const s = S.buildSession({ windows: [w], groups: [] });
+  assert.equal(s.windows[0].tabs[0].favIconUrl, "");
+  assert.equal(s.windows[0].tabs[1].favIconUrl, shortData);
+  assert.equal(s.windows[0].tabs[2].favIconUrl, "https://example.com/favicon.ico");
+});
+
 test("stripVolatile is order-independent: a focus change alone must not change the comparable result", () => {
   const w1 = win({ id: 1, tabs: [tab({ id: 11, url: "https://a.com/" })] });
   const w2 = win({ id: 2, tabs: [tab({ id: 21, url: "https://b.com/" })] });
