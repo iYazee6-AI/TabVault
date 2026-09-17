@@ -48,3 +48,11 @@ test("stripVolatile removes fields that change without user intent", () => {
   assert.equal(v.windows[0].tabs[0].url, s.windows[0].tabs[0].url);
   assert.equal(s.windows[0].tabs[0].active, true, "input untouched");
 });
+
+test("stripVolatile is order-independent: a focus change alone must not change the comparable result", () => {
+  const w1 = win({ id: 1, tabs: [tab({ id: 11, url: "https://a.com/" })] });
+  const w2 = win({ id: 2, tabs: [tab({ id: 21, url: "https://b.com/" })] });
+  const a = S.buildSession({ windows: [{ ...w1, focused: true }, w2], groups: [] });
+  const b = S.buildSession({ windows: [w1, { ...w2, focused: true }], groups: [] });
+  assert.equal(JSON.stringify(S.stripVolatile(a)), JSON.stringify(S.stripVolatile(b)));
+});

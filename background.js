@@ -12,7 +12,7 @@ async function getSettings() {
 
 // ---- open the page -------------------------------------------------------
 async function openPage() {
-  const existing = await chrome.tabs.query({ url: PAGE_URL });
+  const existing = await chrome.tabs.query({ url: PAGE_URL + "*" });
   if (existing.length) {
     const t = existing[0];
     await chrome.tabs.update(t.id, { active: true });
@@ -75,7 +75,8 @@ async function scheduleSnapshot() {
 function onChange() { scheduleSnapshot().catch((e) => console.warn("TabVault schedule failed", e)); }
 
 for (const ev of [chrome.tabs.onCreated, chrome.tabs.onRemoved, chrome.tabs.onMoved, chrome.tabs.onAttached, chrome.tabs.onDetached, chrome.windows.onCreated, chrome.windows.onRemoved]) ev.addListener(onChange);
-chrome.tabs.onUpdated.addListener((_id, info) => { if (info.url || info.pinned !== undefined || info.groupId !== undefined || info.title) onChange(); });
+// Title changes are deliberately not a trigger: live titles (counters, timers) would re-arm the debounce forever. Titles are captured on the next structural change.
+chrome.tabs.onUpdated.addListener((_id, info) => { if (info.url || info.pinned !== undefined || info.groupId !== undefined || info.mutedInfo !== undefined) onChange(); });
 if (chrome.tabGroups) for (const ev of [chrome.tabGroups.onCreated, chrome.tabGroups.onRemoved, chrome.tabGroups.onUpdated, chrome.tabGroups.onMoved]) ev.addListener(onChange);
 
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === ALARM) takeSnapshot("change").catch((e) => console.warn("TabVault snapshot failed", e)); });
