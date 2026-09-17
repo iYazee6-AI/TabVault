@@ -36,7 +36,7 @@
       }
       const toClose = () => groups.flatMap((g) => g.tabs.map((x) => x.tab.id).filter((id) => id !== keep.get(g.url)));
       box.append(list, el("div", { class: "row" },
-        el("button", { class: "primary", onclick: async () => { const ids = toClose(); await chrome.tabs.remove(ids); toast(`Closed ${ids.length} duplicate${ids.length === 1 ? "" : "s"}`); closeDialog(); } }, `Close ${toClose().length} duplicates`),
+        el("button", { class: "primary", onclick: async () => { const ids = toClose(); try { await chrome.tabs.remove(ids); toast(`Closed ${ids.length} duplicate${ids.length === 1 ? "" : "s"}`); closeDialog(); } catch (e) { toast(`Could not close: ${e.message || e}`); } } }, `Close ${toClose().length} duplicates`),
         el("button", { onclick: closeDialog }, "Cancel")));
     };
     draw();
@@ -59,6 +59,7 @@
     const screen = { width: window.screen.availWidth, height: window.screen.availHeight };
     const { steps, skipped } = TV.planRestore(session, { selectedWindowIds, allowIncognito, screen });
     const ids = new Map();
+    const failedWindows = new Set();
     const result = { windows: 0, tabs: 0, errors: [], skipped };
     for (const step of steps) {
       try {
@@ -67,7 +68,14 @@
             const opts = { url: step.url, incognito: step.incognito, focused: false };
             if (step.bounds) Object.assign(opts, step.bounds);
             else if (step.state === "maximized" || step.state === "fullscreen") opts.state = step.state;
-            const w = await chrome.windows.create(opts);
+            let w;
+            try {
+              w = await chrome.windows.create(opts);
+            } catch (e) {
+              failedWindows.add(step.ref);
+              result.errors.push(`window ${step.ref}: ${(e && e.message) || e}`);
+              break;
+            }
             ids.set(step.ref, w.id);
             ids.set(step.firstTabRef, w.tabs[0].id);
             result.windows++; result.tabs++;
@@ -75,12 +83,14 @@
             break;
           }
           case "createTab": {
+            if (failedWindows.has(step.windowRef) || ids.get(step.windowRef) === undefined) break;
             const t = await chrome.tabs.create({ windowId: ids.get(step.windowRef), url: step.url, active: false, index: step.index });
             ids.set(step.ref, t.id);
             result.tabs++;
             break;
           }
           case "updateTab": {
+            if (ids.get(step.ref) === undefined) break;
             const patch = {};
             if (step.pinned) patch.pinned = true;
             if (step.muted) patch.muted = true;
@@ -88,14 +98,17 @@
             break;
           }
           case "groupTabs": {
+            if (failedWindows.has(step.windowRef) || ids.get(step.windowRef) === undefined) break;
             const gid = await chrome.tabs.group({ tabIds: step.tabRefs.map((r) => ids.get(r)).filter((x) => x !== undefined), createProperties: { windowId: ids.get(step.windowRef) } });
             ids.set(step.groupRef, gid);
             break;
           }
           case "updateGroup":
+            if (ids.get(step.groupRef) === undefined) break;
             await chrome.tabGroups.update(ids.get(step.groupRef), { title: step.title, color: step.color, collapsed: step.collapsed });
             break;
           case "discardTab":
+            if (ids.get(step.ref) === undefined) break;
             await chrome.tabs.discard(ids.get(step.ref)).catch(() => {});
             break;
           default: break;
@@ -124,7 +137,14 @@
     const go = el("button", { class: "primary" }, "Restore selected windows");
     go.addEventListener("click", async () => {
       go.disabled = true;
-      const r = await restoreSession(session, [...chosen], (p) => { status.textContent = p; });
+      let r;
+      try {
+        r = await restoreSession(session, [...chosen], (p) => { status.textContent = p; });
+      } catch (e) {
+        status.textContent = `Restore failed: ${e.message || e}`;
+        go.disabled = false;
+        return;
+      }
       const lines = [`Restored ${r.windows} windows and ${r.tabs} tabs (tabs load when you open them).`];
       for (const s of r.skipped) lines.push(`Skipped window ${s.windowId}: ${s.reason}`);
       for (const e of r.errors) lines.push(`Error: ${e}`);
@@ -150,7 +170,12 @@
           el("button", { class: "danger", onclick: async () => { await chrome.runtime.sendMessage({ type: "deleteSnapshot", id: s.id }); draw(); } }, "Delete")));
       }
       box.replaceChildren(el("h2", {}, "Snapshots"),
-        el("div", { class: "row" }, el("button", { class: "primary", onclick: async () => { const r = await chrome.runtime.sendMessage({ type: "snapshotNow" }); toast(r && r.ok ? "Snapshot saved" : `Snapshot failed: ${r && r.error}`); draw(); } }, "Snapshot now"), el("span", { class: "muted" }, `${snapshots.length} stored`)),
+        el("div", { class: "row" }, el("button", { class: "primary", onclick: async () => {
+          const r = await chrome.runtime.sendMessage({ type: "snapshotNow" });
+          if (r && r.skipped) toast("Nothing to snapshot (no other windows open)");
+          else toast(r && r.ok ? "Snapshot saved" : `Snapshot failed: ${r && r.error}`);
+          draw();
+        } }, "Snapshot now"), el("span", { class: "muted" }, `${snapshots.length} stored`)),
         list, el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close")));
     };
     await draw();
