@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>TabVault</title>
+  <style>
+    :root {
+      --bg: #f4f6f8; --surface: #ffffff; --surface-2: #eef1f5; --ink: #172026; --ink-2: #5a6b7a; --line: #d9e0e7;
+      --accent: #0f766e; --accent-ink: #ffffff; --accent-soft: #d7f0ec; --danger: #b42318; --danger-soft: #fde7e5;
+      --row: 30px;
+    }
+    :root[data-theme="dark"], :root[data-theme="system"].dark {
+      --bg: #0f1418; --surface: #161d23; --surface-2: #1f2830; --ink: #e6edf3; --ink-2: #9fb0bf; --line: #2b3640;
+      --accent: #2dd4bf; --accent-ink: #062521; --accent-soft: #123b36; --danger: #f97066; --danger-soft: #3a1512;
+    }
+    :root[data-density="compact"] { --row: 24px; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; display: flex; flex-direction: column; overflow: hidden; }
+    button { font: inherit; color: inherit; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    button.danger { color: var(--danger); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    input[type=text], input[type=search], input[type=number], select { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+    #toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    #toolbar .brand { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    #toolbar .brand img { width: 18px; height: 18px; }
+    #search { flex: 1; min-width: 200px; }
+    #counts { color: var(--ink-2); white-space: nowrap; }
+    #selbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--accent-soft); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    #selbar[hidden] { display: none; }
+    #grid { flex: 1; display: flex; gap: 12px; padding: 12px; overflow: auto; align-items: flex-start; }
+    .window { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; width: 320px; flex: 0 0 320px; display: flex; flex-direction: column; max-height: 100%; }
+    .window.drop { outline: 2px solid var(--accent); }
+    .window.incognito .whead { background: #3b3b52; color: #fff; }
+    .whead { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; background: var(--surface-2); }
+    .whead .title { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .whead .count { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+    .whead button { padding: 2px 6px; }
+    .tabs { overflow: auto; padding: 4px 0; }
+    .window.collapsed .tabs { display: none; }
+    .group { margin: 4px 6px; border-left: 4px solid var(--gcolor, #999); border-radius: 4px; background: color-mix(in srgb, var(--gcolor, #999) 10%, var(--surface)); }
+    .group.drop { outline: 2px solid var(--accent); }
+    .ghead { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-weight: 600; font-size: 12px; }
+    .ghead .gtitle { flex: 1; }
+    .group.collapsed .tab { display: none; }
+    .tab { display: flex; align-items: center; gap: 6px; height: var(--row); padding: 0 8px; cursor: pointer; border-radius: 4px; margin: 0 4px; }
+    .tab:hover { background: var(--surface-2); }
+    .tab.selected { background: var(--accent-soft); }
+    .tab.cursor { outline: 1px solid var(--accent); }
+    .tab.active .ttitle { font-weight: 600; }
+    .tab.discarded .ttitle { color: var(--ink-2); font-style: italic; }
+    .tab img { width: 16px; height: 16px; flex: none; }
+    .tab .ttitle { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tab .turl { display: none; color: var(--ink-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    :root[data-show-urls="true"] .tab { height: auto; padding: 3px 8px; } :root[data-show-urls="true"] .tab .text { display: flex; flex-direction: column; min-width: 0; flex: 1; } :root[data-show-urls="true"] .tab .turl { display: block; }
+    .tab .badge { font-size: 10px; color: var(--ink-2); }
+    .tab .close { visibility: hidden; padding: 0 5px; line-height: 1; }
+    .tab:hover .close { visibility: visible; }
+    .tab.dragover { box-shadow: inset 0 2px 0 var(--accent); }
+    #empty { margin: auto; color: var(--ink-2); text-align: center; }
+    #dialog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; }
+    #dialog-backdrop[hidden] { display: none; }
+    #dialog { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; width: min(720px, 92vw); max-height: 88vh; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    #dialog h2 { margin: 0; font-size: 16px; }
+    #dialog table { border-collapse: collapse; width: 100%; } #dialog td, #dialog th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    #dialog .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #dialog .muted { color: var(--ink-2); }
+    #dialog .list { max-height: 50vh; overflow: auto; }
+    #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    #toast.on { opacity: 1; }
+    kbd { font: 11px ui-monospace, monospace; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <span class="brand"><img src="../icons/icon48.png" alt="">TabVault</span>
+    <input type="search" id="search" placeholder="Search tabs  ( / )" autocomplete="off" />
+    <span id="counts"></span>
+    <button id="btn-dupes">Find duplicates</button>
+    <button id="btn-export">Export</button>
+    <button id="btn-import">Import</button>
+    <button id="btn-snapshots">Snapshots</button>
+    <button id="btn-settings">Settings</button>
+    <button id="btn-help" title="Keyboard shortcuts">?</button>
+    <input type="file" id="import-file" accept="application/json,.json" hidden />
+  </div>
+  <div id="selbar" hidden>
+    <span id="selcount"></span>
+    <select id="move-target"><option value="">Move to…</option></select>
+    <button id="sel-group">Group</button>
+    <button id="sel-ungroup">Ungroup</button>
+    <button id="sel-pin">Pin</button>
+    <button id="sel-unpin">Unpin</button>
+    <button id="sel-discard">Discard</button>
+    <button id="sel-close" class="danger">Close</button>
+    <button id="sel-clear">Clear selection</button>
+  </div>
+  <div id="grid"></div>
+  <div id="dialog-backdrop" hidden><div id="dialog" role="dialog" aria-modal="true"></div></div>
+  <div id="toast"></div>
+  <script src="../lib/session.js"></script>
+  <script src="../lib/search.js"></script>
+  <script src="../lib/dedupe.js"></script>
+  <script src="../lib/snapshots.js"></script>
+  <script src="../lib/exporters.js"></script>
+  <script src="../lib/restore-plan.js"></script>
+  <script src="app.js"></script>
+  <script src="dialogs.js"></script>
+</body>
+</html>
