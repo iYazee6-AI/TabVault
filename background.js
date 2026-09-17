@@ -3,7 +3,7 @@ importScripts("lib/session.js", "lib/snapshots.js");
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
 const ALARM = "tabvault-snapshot";
-const DEFAULT_SETTINGS = { debounceSeconds: 30, keepSnapshots: 20, ignoreHash: true, theme: "system", showUrls: false, density: "comfortable" };
+const DEFAULT_SETTINGS = { debounceSeconds: 30, keepSnapshots: 20, ignoreHash: true, theme: "system", showUrls: false, density: "comfortable", lazyRestore: true };
 
 async function getSettings() {
   const { settings = {} } = await chrome.storage.local.get("settings");

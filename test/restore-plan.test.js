@@ -41,6 +41,14 @@ test("incognito windows are skipped unless allowed; maximized windows get no bou
   assert.equal(allowed.steps[0].bounds, null);
 });
 
+test("discard: false emits no discardTab steps and is otherwise identical", () => {
+  const withDiscard = planRestore(session, { selectedWindowIds: [1], allowIncognito: false, screen: { width: 1920, height: 1080 } });
+  const withoutDiscard = planRestore(session, { selectedWindowIds: [1], allowIncognito: false, screen: { width: 1920, height: 1080 }, discard: false });
+  assert.deepEqual(withoutDiscard.skipped, withDiscard.skipped);
+  assert.ok(!withoutDiscard.steps.some((s) => s.op === "discardTab"), "no discardTab steps when discard is false");
+  assert.deepEqual(withoutDiscard.steps, withDiscard.steps.filter((s) => s.op !== "discardTab"), "steps are otherwise identical");
+});
+
 test("a window whose tabs are all pinned opens with its first tab", () => {
   const s = { schema: 1, windows: [{ id: 3, state: "normal", incognito: false, bounds: { left: 0, top: 0, width: 100, height: 100 }, groups: [], tabs: [{ id: 31, index: 0, url: "https://p.com/", pinned: true, muted: false, groupId: null }] }] };
   const { steps } = planRestore(s, { selectedWindowIds: [3], allowIncognito: true, screen: null });

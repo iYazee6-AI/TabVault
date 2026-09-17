@@ -14,7 +14,7 @@ TabVault is a Manifest V3 Chrome extension that puts every window and tab into o
 - Automatic snapshots: taken after your tabs stop changing for a while (debounced), and on browser startup — not on a fixed timer
 - Manual "Snapshot now", with the option to keep a snapshot so it's never rotated out
 - Export the current session, or any snapshot, to a JSON file; import and restore selected windows from a file
-- Restored tabs load lazily: only the first tab of each window loads immediately, the rest open discarded and load when you click them
+- Restored tabs load lazily by default: only the first tab of each window loads immediately, the rest open discarded and load when you click them (configurable in Settings)
 - Light/dark/system theme, compact density, and an option to show URLs under titles
 
 ## Installing (load unpacked)
@@ -36,7 +36,11 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 - **Duplicates** — click **Find duplicates** to see tabs that share a URL (optionally ignoring `#hash`), pick which copy of each to keep, and close the rest with one click.
 - **Snapshots** — click **Snapshots** to browse automatic and manual snapshots, restore one (into new windows), export it to a file, keep it so it's never rotated away, or delete it. **Snapshot now** takes one immediately.
 - **Export** — click **Export** to download the current session (all windows, tabs, groups, pinned state and positions) as a JSON file.
-- **Import** — click **Import**, pick a previously exported (or snapshot-exported) JSON file, choose which of its windows to restore, and click **Restore selected windows**. Each window reopens with the same tabs, groups and pinned state; only the first tab in each window loads right away.
+- **Import** — click **Import**, pick a previously exported (or snapshot-exported) JSON file, choose which of its windows to restore, and click **Restore selected windows**. Each window reopens with the same tabs, groups and pinned state; with the **Settings** → "Load restored tabs only when opened (lazy)" option on (the default), only the first tab in each window loads right away and the rest load the next time you click them.
+
+## Settings
+
+Available from the **Settings** button: the snapshot debounce (how many seconds of no tab changes before an automatic snapshot is taken) and how many snapshots to keep; whether duplicate-finding ignores the URL `#hash`; theme (system/light/dark) and density (comfortable/compact); whether URLs are shown under titles; and **"Load restored tabs only when opened (lazy)"**, which controls whether Import/Restore loads only the first tab of each restored window immediately (the rest open discarded, loading on click) or loads every restored tab right away. It's on by default.
 
 ## Keyboard shortcuts
 
@@ -80,7 +84,7 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 
 Everything lives in `chrome.storage.local` (the `unlimitedStorage` permission removes the usual ~10 MB cap, since sessions with many tabs and snapshots can grow):
 
-- **`settings`** — theme, density, whether URLs are shown, the snapshot debounce (seconds) and how many snapshots to keep, and whether duplicate-finding ignores `#hash`. A few hundred bytes.
+- **`settings`** — theme, density, whether URLs are shown, the snapshot debounce (seconds) and how many snapshots to keep, whether duplicate-finding ignores `#hash`, and whether restored tabs load lazily. A few hundred bytes.
 - **`snapshots`** — an array of past sessions, newest first, each with its own full window/tab/group snapshot. Automatic snapshots beyond the configured "keep" count are rotated out oldest-first; snapshots you've explicitly kept are never rotated out. Typical size is a few KB per snapshot for a normal session, so tens to low hundreds of KB for a full history.
 
 Nothing is written outside of `chrome.storage.local`; there is no server, account or sync involved (see [Privacy](#privacy)).
@@ -88,7 +92,7 @@ Nothing is written outside of `chrome.storage.local`; there is no server, accoun
 ## Limitations
 
 - **Incognito** — TabVault can only see and restore incognito windows if it's explicitly allowed to run in incognito (`chrome://extensions` → TabVault → **Allow in Incognito**). Without that, incognito windows are skipped on export/import.
-- **Restored tabs load lazily** — only the first tab in each restored window loads immediately; the rest are created discarded and load the next time you click them, to avoid restoring dozens of tabs' worth of network traffic and memory at once.
+- **Restored tabs** — with lazy loading on (the default; **Settings** → "Load restored tabs only when opened (lazy)"), restored tabs load when opened: only the first tab in each restored window loads immediately, and the rest are created discarded and load the next time you click them, to avoid restoring dozens of tabs' worth of network traffic and memory at once. Turning the option off loads every restored tab immediately instead.
 - **Chrome and Edge only** — TabVault uses `chrome.tabGroups` and other Chromium-only APIs; it does not run on Firefox or Safari.
 - **No history search** — TabVault only shows tabs that are currently open. It does not search browser history or bookmarks.
 

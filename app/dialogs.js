@@ -57,10 +57,11 @@
   async function restoreSession(session, selectedWindowIds, onProgress) {
     const allowIncognito = await chrome.extension.isAllowedIncognitoAccess();
     const screen = { width: window.screen.availWidth, height: window.screen.availHeight };
-    const { steps, skipped } = TV.planRestore(session, { selectedWindowIds, allowIncognito, screen });
+    const discard = App.getSettings().lazyRestore !== false;
+    const { steps, skipped } = TV.planRestore(session, { selectedWindowIds, allowIncognito, screen, discard });
     const ids = new Map();
     const failedWindows = new Set();
-    const result = { windows: 0, tabs: 0, errors: [], skipped };
+    const result = { windows: 0, tabs: 0, errors: [], skipped, discard };
     for (const step of steps) {
       try {
         switch (step.op) {
@@ -145,7 +146,7 @@
         go.disabled = false;
         return;
       }
-      const lines = [`Restored ${r.windows} windows and ${r.tabs} tabs (tabs load when you open them).`];
+      const lines = [`Restored ${r.windows} windows and ${r.tabs} tabs${r.discard ? " (tabs load when you open them)" : ""}.`];
       for (const s of r.skipped) lines.push(`Skipped window ${s.windowId}: ${s.reason}`);
       for (const e of r.errors) lines.push(`Error: ${e}`);
       box.replaceChildren(el("h2", {}, `${title} complete`), ...lines.map((l) => el("p", {}, l)), el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close")));
@@ -190,6 +191,7 @@
     const theme = el("select", {}, ...["system", "light", "dark"].map((t) => el("option", { value: t, selected: t === s.theme ? "" : null }, t)));
     const urls = el("input", { type: "checkbox", checked: s.showUrls ? "" : null });
     const density = el("select", {}, ...["comfortable", "compact"].map((d) => el("option", { value: d, selected: d === s.density ? "" : null }, d)));
+    const lazy = el("input", { type: "checkbox", checked: s.lazyRestore !== false ? "" : null });
     const err = el("p", { class: "muted" });
     box.replaceChildren(el("h2", {}, "Settings"),
       el("label", { class: "row" }, "Snapshot after tabs stop changing for ", debounce, " seconds (30–600)"),
@@ -198,12 +200,13 @@
       el("label", { class: "row" }, "Theme ", theme),
       el("label", { class: "row" }, urls, " Show URLs under titles"),
       el("label", { class: "row" }, "Density ", density),
+      el("label", { class: "row" }, lazy, " Load restored tabs only when opened (lazy)"),
       err,
       el("div", { class: "row" }, el("button", { class: "primary", onclick: async () => {
         const d = Number(debounce.value), k = Number(keep.value);
         if (!Number.isInteger(d) || d < 30 || d > 600) { err.textContent = "Debounce must be a whole number between 30 and 600."; return; }
         if (!Number.isInteger(k) || k < 5 || k > 200) { err.textContent = "Keep must be a whole number between 5 and 200."; return; }
-        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value });
+        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked });
         toast("Settings saved"); closeDialog();
       } }, "Save"), el("button", { onclick: closeDialog }, "Cancel")));
   };
