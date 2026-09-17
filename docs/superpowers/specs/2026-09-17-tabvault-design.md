@@ -118,7 +118,7 @@ restore. The result dialog reports windows and tabs restored and skipped.
 
 ### Settings
 
-Debounce seconds (default 30, 5 to 600), snapshots to keep (default 20),
+Debounce seconds (default 30, 30 to 600), snapshots to keep (default 20),
 ignore hash in duplicate detection (default on), theme (system, light,
 dark), show URLs under titles (default off), tab row density.
 
@@ -138,7 +138,6 @@ lib/restore-plan.js    planRestore(session, options) -> ordered steps (pure)
 lib/search.js          filter(session, query) (pure)
 lib/dedupe.js          findDuplicates(session, { ignoreHash }) (pure)
 lib/snapshots.js       shouldSkip(prev, next), rotate(list, keep) (pure)
-lib/chrome-api.js      thin promise wrappers around chrome.* used by page and worker
 test/                  node --test with a fake chrome API
 test-pages/            simple pages the e2e opens as tabs
 e2e/                   Playwright harness, npm run e2e
@@ -151,12 +150,12 @@ plain `<script>` tags; the worker with `importScripts`.
 ### Permissions
 
 ```
-"permissions": ["tabs", "tabGroups", "storage", "unlimitedStorage"]
+"permissions": ["tabs", "tabGroups", "storage", "unlimitedStorage", "alarms"]
 ```
 
 No host permissions. `tabs` shows the "read your browsing history" warning
-at install; it is required to read titles and URLs. No `alarms` (snapshots
-are event-driven). No `downloads` (anchor download).
+at install; it is required to read titles and URLs. `alarms` is used only
+to debounce change snapshots. No `downloads` (anchor download).
 
 ### Data model
 
@@ -244,3 +243,23 @@ the steps and reports progress.
   change (an MV3 service worker cannot keep a 30-second `setTimeout` alive),
   so the `alarms` permission is declared and the debounce minimum is 30 s.
   No periodic snapshots are taken.
+- Tab title changes are deliberately not a snapshot trigger: live titles
+  (counters, timers) would re-arm the debounce forever. Titles are
+  captured on the next structural change instead.
+- Settings gained a `lazyRestore` option (default on) controlling whether
+  Import/Restore discards non-first tabs so they load only when opened,
+  or loads every restored tab immediately.
+- The change-snapshot debounce has a max-wait cap, tracked via
+  `chrome.storage.session`'s `pendingSince`: once a run of changes has
+  been pending longer than `max(10x debounce, 5 minutes)`, the pending
+  alarm is left to fire instead of being pushed out again, so a
+  continuously changing session still gets snapshotted eventually.
+- `chrome.storage.local` carries a `storageVersion` (set to `1` on
+  install if absent) for future migrations, and `lib/session.js` drops
+  `data:` favicon URLs longer than 2048 characters (stored as `""`) so
+  inlined icons cannot bloat stored/exported sessions.
+- If `chrome.windows.create` rejects when restoring a window, the
+  restore retries once with `url` omitted (keeping bounds/state/
+  incognito/focused); a retry success still counts the window but
+  leaves its first-tab ref unmapped and records one error line, so the
+  rest of that window's tabs are still created.

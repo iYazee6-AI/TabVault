@@ -36,7 +36,7 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 - **Duplicates** — click **Find duplicates** to see tabs that share a URL (optionally ignoring `#hash`), pick which copy of each to keep, and close the rest with one click.
 - **Snapshots** — click **Snapshots** to browse automatic and manual snapshots, restore one (into new windows), export it to a file, keep it so it's never rotated away, or delete it. **Snapshot now** takes one immediately.
 - **Export** — click **Export** to download the current session (all windows, tabs, groups, pinned state and positions) as a JSON file.
-- **Import** — click **Import**, pick a previously exported (or snapshot-exported) JSON file, choose which of its windows to restore, and click **Restore selected windows**. Each window reopens with the same tabs, groups and pinned state; with the **Settings** → "Load restored tabs only when opened (lazy)" option on (the default), only the first tab in each window loads right away and the rest load the next time you click them.
+- **Import** — click **Import**, pick a previously exported (or snapshot-exported) JSON file (up to 50 MB), choose which of its windows to restore, and click **Restore selected windows**. Each window reopens with the same tabs, groups and pinned state; with the **Settings** → "Load restored tabs only when opened (lazy)" option on (the default), only the first tab in each window loads right away and the rest load the next time you click them.
 
 ## Settings
 
@@ -105,6 +105,14 @@ npm run e2e        # end-to-end tests against a real, unpacked build of the exte
 ```
 
 `npm run e2e` needs Playwright's own bundled Chromium (`npx playwright install chromium` once) — the machine's installed Chrome refuses to honor `--load-extension`. See `e2e/README.md` for how the harness is put together and a documented environment limitation around `chrome.tabs.discard()` under that Chromium build.
+
+### Manual checks before release
+
+A few things the automated tests can't (fully) cover, worth checking by hand in real Chrome before shipping:
+
+- `Alt+Shift+T` actually opens TabVault — it may collide with Chrome's own focus-the-toolbar shortcut on Windows, so confirm at `chrome://extensions/shortcuts` and rebind if needed.
+- Restore with `file://` tabs in the exported/imported session (these need "Allow access to file URLs" in `chrome://extensions` to reopen correctly).
+- Lazy restore (Settings → "Load restored tabs only when opened (lazy)") in real, non-automated Chrome, since `npm run e2e`'s `chrome.tabs.discard()` coverage is limited by a Playwright/Chromium environment defect (see `e2e/README.md`).
 
 ## Privacy
 
