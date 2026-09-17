@@ -62,6 +62,7 @@
     const ids = new Map();
     const failedWindows = new Set();
     const result = { windows: 0, tabs: 0, errors: [], skipped, discard };
+    let discardFailures = 0;
     for (const step of steps) {
       try {
         switch (step.op) {
@@ -73,8 +74,20 @@
             try {
               w = await chrome.windows.create(opts);
             } catch (e) {
-              failedWindows.add(step.ref);
-              result.errors.push(`window ${step.ref}: ${(e && e.message) || e}`);
+              const message = (e && e.message) || e;
+              const retryOpts = { ...opts };
+              delete retryOpts.url;
+              try {
+                w = await chrome.windows.create(retryOpts);
+              } catch (e2) {
+                failedWindows.add(step.ref);
+                result.errors.push(`window ${step.ref}: ${(e2 && e2.message) || e2}`);
+                break;
+              }
+              ids.set(step.ref, w.id);
+              result.errors.push(`tab ${step.firstTabRef}: ${message}`);
+              result.windows++;
+              onProgress(`Window ${result.windows}…`);
               break;
             }
             ids.set(step.ref, w.id);
@@ -110,7 +123,7 @@
             break;
           case "discardTab":
             if (ids.get(step.ref) === undefined) break;
-            await chrome.tabs.discard(ids.get(step.ref)).catch(() => {});
+            await chrome.tabs.discard(ids.get(step.ref)).catch(() => { discardFailures++; });
             break;
           default: break;
         }
@@ -118,6 +131,7 @@
         result.errors.push(`${step.op} ${step.ref || ""}: ${(e && e.message) || e}`);
       }
     }
+    if (discardFailures) result.errors.push(`${discardFailures} tab(s) could not be unloaded`);
     return result;
   }
 

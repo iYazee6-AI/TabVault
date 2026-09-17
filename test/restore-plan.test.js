@@ -49,6 +49,13 @@ test("discard: false emits no discardTab steps and is otherwise identical", () =
   assert.deepEqual(withoutDiscard.steps, withDiscard.steps.filter((s) => s.op !== "discardTab"), "steps are otherwise identical");
 });
 
+test("fitBounds requires finite left/top/width/height: non-finite values produce null bounds", () => {
+  const s = { schema: 1, windows: [{ id: 4, state: "normal", incognito: false, bounds: { left: "abc", top: 0, width: 800, height: 600 }, groups: [], tabs: [{ id: 41, index: 0, url: "https://q.com/", pinned: false, muted: false, groupId: null }] }] };
+  const { steps } = planRestore(s, { selectedWindowIds: [4], allowIncognito: true, screen: { width: 1920, height: 1080 } });
+  assert.equal(steps[0].op, "createWindow");
+  assert.equal(steps[0].bounds, null);
+});
+
 test("a window whose tabs are all pinned opens with its first tab", () => {
   const s = { schema: 1, windows: [{ id: 3, state: "normal", incognito: false, bounds: { left: 0, top: 0, width: 100, height: 100 }, groups: [], tabs: [{ id: 31, index: 0, url: "https://p.com/", pinned: true, muted: false, groupId: null }] }] };
   const { steps } = planRestore(s, { selectedWindowIds: [3], allowIncognito: true, screen: null });
