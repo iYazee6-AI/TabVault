@@ -1,0 +1,13 @@
+{
+  "name": "tabvault",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome extension: every window and tab in one page, with snapshots, export and restore.",
+  "scripts": {
+    "test": "node --test",
+    "e2e": "node e2e/run.js",
+    "pack": "node tools/pack.js",
+    "icons": "node tools/make-icons.js"
+  },
+  "license": "MIT"
+}
