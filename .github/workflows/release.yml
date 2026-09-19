@@ -1,0 +1,91 @@
+name: Release build
+
+# Manual only: Actions → "Release build" → Run workflow.
+# Version = manifest major.minor.patch + this run's number (e.g. 1.0.0.7), a
+# four-segment version Chrome and the Web Store accept. The stamp happens in
+# the runner only; nothing is committed back. Output: a workflow artifact and
+# a GitHub Release "v<version>" with the store zip attached.
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "Release notes (leave empty to auto-generate from commits)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Unit tests
+        run: |
+          if node -e "process.exit(require('./package.json').scripts && require('./package.json').scripts.test ? 0 : 1)"; then
+            npm test
+          else
+            echo "no test script; skipping"
+          fi
+
+      - name: Stamp build version
+        id: stamp
+        run: |
+          base=$(node -p "require('./manifest.json').version.split('.').slice(0,3).join('.')")
+          version="$base.${{ github.run_number }}"
+          node -e '
+            const fs = require("fs");
+            const v = process.argv[1];
+            for (const f of ["manifest.json", "package.json"]) {
+              if (!fs.existsSync(f)) continue;
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+            }
+            console.log("stamped", v);
+          ' "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        run: npm run pack
+
+      - name: Show the zip
+        run: |
+          ls -la dist
+          if [ -f tools/list-zip.js ]; then node tools/list-zip.js dist/*.zip; fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-${{ steps.stamp.outputs.version }}
+          path: dist/*.zip
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.stamp.outputs.version }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          tag="v$VERSION"
+          title="${{ github.event.repository.name }} $VERSION"
+          if [ -n "$NOTES" ]; then
+            gh release create "$tag" dist/*.zip --target "$GITHUB_SHA" --title "$title" --notes "$NOTES"
+          else
+            gh release create "$tag" dist/*.zip --target "$GITHUB_SHA" --title "$title" --generate-notes
+          fi
+          echo "Released $tag: https://github.com/${{ github.repository }}/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
