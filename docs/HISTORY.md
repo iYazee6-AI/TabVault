@@ -24,3 +24,16 @@ Eight tasks, subagent-driven, a review per task. Rulings that changed the plan:
 - Parked at merge: see CLAUDE.md follow-ups.
 
 Result: 23 unit tests, 13 e2e scenarios (I-b PASS or LIMITED depending on the environment crash).
+
+## 2026-09-19 — Chrome Web Store submission kit
+
+- Added `docs/store/listing.md`, `PRIVACY.md`, five 1280x800 screenshots and the
+  440x280 promo tile, all captured from the real extension by
+  `tools/screenshots.js` (fixture server on port 8771, mapped to
+  `*.example.com`; 8765 stays e2e's).
+- Shipped-code change, required by the store: the manifest `description` was
+  135 characters, over the 132-character limit the dashboard enforces on the
+  listing summary. Trimmed to 126 ("... with snapshots and export.").
+- Data disclosure decided as "Web history" only: tab URLs and titles are stored
+  locally; no host permissions and no content scripts, so page content is never
+  readable and "Website content" is not ticked.

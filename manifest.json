@@ -3,7 +3,7 @@
   "name": "TabVault",
   "version": "1.0.0",
   "minimum_chrome_version": "120",
-  "description": "Every window and tab in one page. Search, move, group, clean duplicates, and keep your session safe with snapshots, export and restore.",
+  "description": "Every window and tab in one page. Search, move, group, clean duplicates, and keep your session safe with snapshots and export.",
   "permissions": ["tabs", "tabGroups", "storage", "unlimitedStorage", "alarms"],
   "background": { "service_worker": "background.js" },
   "action": { "default_title": "Open TabVault" },

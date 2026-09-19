@@ -18,7 +18,14 @@ Tab Manager v2 (MIT) but written from scratch.
 npm test        # node --test over lib/ with a fake chrome API
 npm run e2e     # Playwright harness, real extension in Chromium
 npm run pack    # dist/tabvault-<version>.zip
+npm run screenshots  # re-captures docs/store/ screenshots + promo tile (port 8771)
 ```
+
+## Store kit
+
+Chrome Web Store submission is prepared in `docs/store/listing.md` (paste-ready
+listing, permission justifications, checklists) and `PRIVACY.md` (policy; the
+contact email is still the `<your contact email>` placeholder).
 
 ## Rules that are not obvious from the code
 

@@ -13,6 +13,7 @@ Thumbs.db
 # Dependencies and e2e artifacts
 node_modules/
 e2e/.tmp/
+tools/.tmp/
 
 # Store packages
 dist/
