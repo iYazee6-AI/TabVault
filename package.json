@@ -12,7 +12,7 @@
     "icons": "node tools/make-icons.js"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "eslint": "^9.39.5",
     "eslint-plugin-security": "^3.0.1",
     "globals": "^15.15.0",
