@@ -1,0 +1,32 @@
+# Dependabot keeps the dev toolchain and the pinned Actions current.
+# Minor and patch bumps are grouped into a single PR per ecosystem per week so
+# that six extension repos do not produce thirty separate pull requests; major
+# bumps still arrive on their own, because they need reading.
+version: 2
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

@@ -4,6 +4,7 @@
   "private": true,
   "description": "Chrome extension: every window and tab in one page, with snapshots, export and restore.",
   "scripts": {
+    "lint": "eslint .",
     "test": "node --test",
     "e2e": "node e2e/run.js",
     "pack": "node tools/pack.js",
@@ -11,6 +12,10 @@
     "icons": "node tools/make-icons.js"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-plugin-security": "^3.0.1",
+    "globals": "^15.15.0",
     "playwright": "^1.63.0"
   },
   "license": "MIT"

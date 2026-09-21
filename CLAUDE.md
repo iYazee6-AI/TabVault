@@ -21,6 +21,31 @@ npm run pack    # dist/tabvault-<version>.zip
 npm run screenshots  # re-captures docs/store/ screenshots + promo tile (port 8771)
 ```
 
+## Quality gates
+
+Three commands, and they are the same three the release workflow runs:
+
+```
+npm run lint    # eslint 9 flat config: @eslint/js recommended + eslint-plugin-security
+npm test        # node --test
+npm run pack    # dist/tabvault-<version>.zip
+```
+
+CI also runs two scanners that need no local install beyond Docker:
+
+```
+docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest detect --source /repo --no-banner --redact
+docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed /repo
+```
+
+`npm run lint` is clean here (0 errors; the remaining
+`security/detect-object-injection` and `detect-non-literal-fs-filename` output
+is warnings, which never fail the run), so the CI lint step is a hard gate — a
+new error breaks the release build. Keep it that way: there is no `innerHTML`
+or `insertAdjacentHTML` anywhere in this repo, and the house rules in
+`eslint.config.js` exist to keep it so. Do not silence a finding to make the
+run green.
+
 ## Store kit
 
 Chrome Web Store submission is prepared in `docs/store/listing.md` (paste-ready

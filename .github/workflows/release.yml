@@ -28,10 +28,43 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      # Secret scan, before the build gets anywhere near a release asset.
+      # gitleaks/gitleaks-action@v2 is the usual choice, but it is only free
+      # for public repositories - on a private repo it wants a GITLEAKS_LICENSE
+      # secret. The official image has no such restriction, so it is used here
+      # and this step keeps working if the repo ever goes private.
+      - name: Gitleaks (secret scan)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest detect --source /repo --no-banner --redact
+
+      # Dependency CVEs across the lockfile, plus vendored files that
+      # `npm audit` never sees. HIGH/CRITICAL only, and only where a fix has
+      # actually shipped, so the gate stays actionable.
+      - name: Trivy (filesystem vulnerability scan)
+        uses: aquasecurity/trivy-action@v0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+
       - name: Node 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      # eslint + eslint-plugin-security. --ignore-scripts keeps Playwright
+      # from downloading browsers the release build never uses.
+      - name: Install dev dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Lint
+        # `npm run lint` is clean in this repo, so a new finding is a
+        # hard failure.
+        run: npm run lint
 
       - name: Unit tests
         run: |
