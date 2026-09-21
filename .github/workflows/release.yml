@@ -101,7 +101,7 @@ jobs:
           if [ -f tools/list-zip.js ]; then node tools/list-zip.js dist/*.zip; fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ github.event.repository.name }}-${{ steps.stamp.outputs.version }}
           path: dist/*.zip
