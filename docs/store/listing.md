@@ -13,9 +13,9 @@ Dashboard (https://chrome.google.com/webstore/devconsole).
    agreement, and pay the one-time registration fee.
 3. In **Account** (left sidebar):
    - **Publisher display name**: `<your name or company>`
-   - **Contact email**: `iyazee6@gmail.com` → click **Verify email** and
+   - **Contact email**: `iyazee6+store@gmail.com` → click **Verify email** and
      confirm the link Google sends.
-4. Fill in `iyazee6@gmail.com` in `PRIVACY.md`, commit, and push. The
+4. Fill in `iyazee6+store@gmail.com` in `PRIVACY.md`, commit, and push. The
    policy URL will be
    `https://github.com/iYazee6-AI/TabVault/blob/main/PRIVACY.md`.
    That URL only resolves if the repository is **public** — check it in an
