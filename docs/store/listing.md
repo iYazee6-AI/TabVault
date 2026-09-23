@@ -23,6 +23,13 @@ Dashboard (https://chrome.google.com/webstore/devconsole).
    private, either make it public or host the same text somewhere public and
    use that address instead.
 
+**Learned on the first submission (2026-09-23).** The developer account is
+active. The contact email in this kit is `iyazee6+store@gmail.com`; the
+Developer Dashboard's own contact-email field must be a verified address and
+may refuse a plus-address, in which case use the plain Gmail address there
+and keep the plus-address in `PRIVACY.md`. The privacy policy URL only works
+once the repository is public.
+
 ## 1. Pre-submission checklist
 
 - [ ] `npm test` passes (23 tests).
@@ -66,6 +73,12 @@ what goes in — `manifest.json`, `background.js`, `app/`, `lib/`, `icons/` and
 nothing else (no `docs/`, `test/`, `e2e/`, `tools/` or `node_modules/`) — but
 the local zip carries the un-stamped three-segment version, so do not upload
 it.
+
+The zip written by `npm run pack` is the same package the Release workflow
+builds; uploading the local one is fine when the workflow is slow or broken.
+Since 2026-09-23 the workflow runs Trivy from the pinned image
+`aquasec/trivy:0.74.0` (the `trivy-action` step died when upstream deleted
+the `setup-trivy` tag it depended on).
 
 ## 3. Create the item and upload
 
@@ -144,6 +157,13 @@ extension running in Chromium, using example pages served locally on port
 | Homepage URL | `https://github.com/iYazee6-AI/TabVault` |
 | Support URL | `https://github.com/iYazee6-AI/TabVault/issues` |
 | Mature content | `No` |
+
+**Screenshot format rule (the dashboard's words):** up to 5, 1280x800 or
+640x400, JPEG or 24-bit PNG with no alpha channel, at least one required.
+Every screenshot and the promo tile in this folder is an 8-bit RGB PNG with
+no alpha (verified 2026-09-23). If they are ever regenerated, check the PNG
+colour type is 2 (RGB), not 6 (RGBA): Playwright writes RGBA by default, and
+`sharp(file).flatten({ background: '#ffffff' }).removeAlpha().png()` fixes it.
 
 ## 5. Privacy tab
 
@@ -229,6 +249,14 @@ Certifications (tick all three):
      you edit either.
    - **Screenshot quality.** All five are 1280×800 PNGs of the real UI, which
      is what the store expects; do not crop or rescale them.
+
+**If the dashboard says "Unable to publish" with a list**, every line maps
+to the Privacy practices tab: "single purpose description" is the first
+block of section 5; "a justification for <permission>" is that permission's
+row in the table (one text box per permission); "a justification for remote
+code use" is the Remote code block (choose No; if a text box still shows,
+paste the justification); "certify that your data usage complies" is the
+three certification checkboxes. Save draft after filling them, then Submit.
 
 ## 8. Publishing an update later
 
