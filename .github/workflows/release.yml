@@ -42,14 +42,9 @@ jobs:
       # `npm audit` never sees. HIGH/CRITICAL only, and only where a fix has
       # actually shipped, so the gate stays actionable.
       - name: Trivy (filesystem vulnerability scan)
-        uses: aquasecurity/trivy-action@v0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: 1
+        # Pinned image rather than trivy-action: the action's internal
+        # setup-trivy tag was deleted upstream and broke every run.
+        run: docker run --rm -v "$PWD:/repo" aquasec/trivy:0.74.0 fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
 
       - name: Node 22
         uses: actions/setup-node@v4
