@@ -94,4 +94,4 @@ with an updated effective date.
 
 ## Contact
 
-Questions about this policy: <your contact email>
+Questions about this policy: iyazee6@gmail.com
