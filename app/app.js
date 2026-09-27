@@ -328,17 +328,28 @@
         el("button", { type: "button", onclick: () => $("import-file").click() }, "Import")));
   }
 
-  let lastMoveTargetKey = null;
+  function selectedTabs() {
+    return state.session.windows.flatMap((w) => w.tabs).filter((t) => state.selected.has(t.id));
+  }
+
   function renderSelbar() {
+    const tabs = selectedTabs();
     const n = state.selected.size;
     $("selbar").hidden = n === 0;
+    if (n === 0) {
+      $("move-menu").hidden = true;
+      $("move-btn").setAttribute("aria-expanded", "false");
+      return;
+    }
     $("selcount").textContent = `${n} selected`;
-    const key = state.session.windows.map((w) => `${w.id}:${w.tabs.length}:${w.windowName || ""}`).join("|");
-    if (key === lastMoveTargetKey) return;
-    lastMoveTargetKey = key;
-    const sel = $("move-target");
-    sel.replaceChildren(el("option", { value: "" }, "Move to…"), el("option", { value: "new" }, "New window"),
-      ...state.session.windows.filter((w) => w.type === "normal").map((w) => el("option", { value: String(w.id) }, `${windowLabel(w).slice(0, 40)} (${w.tabs.length})`)));
+    $("sel-pin").textContent = tabs.length && tabs.every((t) => t.pinned) ? "Unpin" : "Pin";
+    $("sel-group").textContent = tabs.length && tabs.every((t) => t.groupId !== null) ? "Ungroup" : "Group";
+  }
+
+  // Built when the menu opens, so the targets stay put while it is open.
+  function fillMoveMenu(menu) {
+    const targets = [{ value: "new", label: "New window" }, ...state.session.windows.filter((w) => w.type === "normal").map((w) => ({ value: String(w.id), label: `${windowLabel(w).slice(0, 40)} · ${w.tabs.length}` }))];
+    menu.replaceChildren(...targets.map((t) => el("button", { type: "button", role: "menuitem", dataset: { target: t.value } }, t.label)));
   }
 
   // ---- selection ---------------------------------------------------------------
@@ -408,6 +419,22 @@
       console.warn("TabVault group failed", err);
       toast(`Could not group: ${err.message || err}`);
     }
+  }
+  // Group reads "Ungroup" when every selected tab is already grouped (renderSelbar).
+  function groupOrUngroupSelection() {
+    const tabs = selectedTabs();
+    if (!tabs.length) return Promise.resolve();
+    if (tabs.every((t) => t.groupId !== null)) {
+      return chrome.tabs.ungroup(tabs.map((t) => t.id)).then(() => toast("Ungrouped"), (e) => toast(`Could not ungroup: ${e.message || e}`));
+    }
+    return groupSelection();
+  }
+
+  // Pin reads "Unpin" when every selected tab is pinned (renderSelbar).
+  function togglePinSelection() {
+    const tabs = selectedTabs();
+    const pin = !(tabs.length && tabs.every((t) => t.pinned));
+    return forEachSelected((id) => chrome.tabs.update(id, { pinned: pin }));
   }
   async function forEachSelected(fn) {
     let failed = 0;
@@ -493,6 +520,19 @@
     if (e.key === "Escape" && closeMenus(true)) { e.preventDefault(); return; }
     const inField = e.target.matches("input, select, textarea");
     if (!$("dialog-backdrop").hidden) { if (e.key === "Escape") closeDialog(); return; }
+    // An open group colour picker takes the Escape by itself (a stale id with no picker on screen is just dropped).
+    if (e.key === "Escape" && state.colorPickerFor !== null) {
+      const groupId = state.colorPickerFor;
+      const open = document.querySelector("#grid .swatches");
+      state.colorPickerFor = null;
+      if (open) {
+        e.preventDefault();
+        render();
+        const dot = document.querySelector(`.group[data-group="${groupId}"] .gdot`);
+        if (dot) dot.focus();
+        return;
+      }
+    }
     if (e.key === "/" && !inField) { e.preventDefault(); $("search").focus(); $("search").select(); return; }
     if (e.key === "Escape") { if (inField) e.target.blur(); state.query = ""; $("search").value = ""; state.selected.clear(); state.confirmClose = null; render(); return; }
     if (inField) return;
@@ -510,23 +550,21 @@
   function wire() {
     $("search").addEventListener("input", (e) => { state.query = e.target.value; render(); });
     $("search").addEventListener("keydown", (e) => { if (e.key === "Enter") { const r = visibleTabs()[0]; if (r) focusTab(r.id, r.windowId); } });
-    $("move-target").addEventListener("change", async (e) => {
-      const v = e.target.value;
-      if (!v) return;
+    $("move-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("move-menu", fillMoveMenu); });
+    $("move-menu").addEventListener("click", async (e) => {
+      const item = e.target.closest("button[data-target]");
+      if (!item) return;
+      closeMenus();
       try {
-        const moved = await moveTabs(selection(), v);
+        const moved = await moveTabs(selection(), item.dataset.target);
         if (moved) toast("Moved");
       } catch (err) {
         console.warn("TabVault move failed", err);
         toast(`Could not move: ${err.message || err}`);
-      } finally {
-        e.target.value = "";
       }
     });
-    $("sel-group").addEventListener("click", groupSelection);
-    $("sel-ungroup").addEventListener("click", () => chrome.tabs.ungroup(selection()).catch((e) => toast(`Could not ungroup: ${e.message || e}`)));
-    $("sel-pin").addEventListener("click", () => forEachSelected((id) => chrome.tabs.update(id, { pinned: true })));
-    $("sel-unpin").addEventListener("click", () => forEachSelected((id) => chrome.tabs.update(id, { pinned: false })));
+    $("sel-group").addEventListener("click", () => groupOrUngroupSelection());
+    $("sel-pin").addEventListener("click", () => togglePinSelection());
     $("sel-discard").addEventListener("click", () => forEachSelected((id) => chrome.tabs.discard(id)));
     $("sel-close").addEventListener("click", () => chrome.tabs.remove(selection()).catch((e) => toast(`Could not close: ${e.message || e}`)));
     $("sel-clear").addEventListener("click", clearSelection);

@@ -324,7 +324,8 @@ async function main() {
     try {
       await clearSelection();
       await appPage.click(`.tab[data-tab="${oneInB.id}"] input[type=checkbox]`);
-      await appPage.selectOption("#move-target", String(winC.id));
+      await appPage.click("#move-btn");
+      await appPage.click(`#move-menu button[data-target="${winC.id}"]`);
       const moved = await waitFor(async () => {
         const t = await (await worker()).evaluate((id) => chrome.tabs.get(id), oneInB.id);
         return t.windowId === winC.id ? t : null;

@@ -68,7 +68,17 @@
     .menu button { text-align: left; background: transparent; border: 0; border-radius: 5px; padding: 6px 10px; white-space: nowrap; }
     .menu button:hover, .menu button:focus-visible { background: var(--g3); }
     /* == selection == */
-    #selbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--accent-soft); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    #selbar { position: sticky; bottom: 12px; z-index: 5; align-self: center; width: fit-content; max-width: 100%; margin-top: 16px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px 8px 14px; background: var(--t); color: var(--g); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, .28); }
+    #selcount { font-size: 11px; margin-right: 6px; white-space: nowrap; }
+    #selbar button { background: transparent; color: var(--g); border-color: color-mix(in srgb, var(--g) 30%, transparent); }
+    #selbar button:hover { background: color-mix(in srgb, var(--g) 14%, transparent); }
+    #selbar #sel-close { background: var(--danger); border-color: var(--danger); color: var(--g); font-weight: 500; }
+    #selbar #sel-close:hover { filter: brightness(1.08); }
+    #selbar .esc { border-color: transparent; margin-left: 6px; color: color-mix(in srgb, var(--g) 72%, transparent); }
+    #selbar kbd { color: inherit; background: transparent; border-color: color-mix(in srgb, var(--g) 40%, transparent); }
+    .menu-wrap.up .menu { top: auto; bottom: calc(100% + 6px); left: 0; right: auto; max-height: 50vh; overflow: auto; }
+    #selbar .menu button { color: var(--t); border: 0; }
+    #selbar .menu button:hover, #selbar .menu button:focus-visible { background: var(--g3); }
     /* == windows == */
     #main { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; }
     #grid { flex: 1 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; align-content: start; }
@@ -165,18 +175,21 @@
     </div>
     <input type="file" id="import-file" accept="application/json,.json" hidden />
   </header>
-  <div id="selbar" hidden>
-    <span id="selcount"></span>
-    <select id="move-target"><option value="">Move to…</option></select>
-    <button id="sel-group">Group</button>
-    <button id="sel-ungroup">Ungroup</button>
-    <button id="sel-pin">Pin</button>
-    <button id="sel-unpin">Unpin</button>
-    <button id="sel-discard">Discard</button>
-    <button id="sel-close" class="danger">Close</button>
-    <button id="sel-clear">Clear selection</button>
-  </div>
-  <main id="main"><div id="grid"></div></main>
+  <main id="main">
+    <div id="grid"></div>
+    <div id="selbar" role="toolbar" aria-label="Selected tabs" hidden>
+      <span id="selcount" class="mono"></span>
+      <div class="menu-wrap up">
+        <button id="move-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="move-menu">Move to ▾</button>
+        <div id="move-menu" class="menu" role="menu" hidden></div>
+      </div>
+      <button id="sel-group" type="button">Group</button>
+      <button id="sel-pin" type="button">Pin</button>
+      <button id="sel-discard" type="button">Discard</button>
+      <button id="sel-close" type="button">Close</button>
+      <button id="sel-clear" type="button" class="esc" title="Clear selection (Esc)" aria-label="Clear selection (Esc)"><kbd>Esc</kbd> to clear</button>
+    </div>
+  </main>
   <div id="dialog-backdrop" hidden><div id="dialog" role="dialog" aria-modal="true"></div></div>
   <div id="toast"></div>
   <script src="../lib/session.js"></script>

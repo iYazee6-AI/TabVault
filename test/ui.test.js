@@ -24,10 +24,17 @@ test("domainOf: bare host for web pages, scheme and host for browser pages, sche
 
 test("faviconColor maps a domain to one of eight fixed colours, stably and case-insensitively", () => {
   assert.equal(FAVICON_COLORS.length, 8);
-  const letters = ["a", "b", "c", "d", "e", "f", "g", "h"].map(faviconColor);
-  assert.deepEqual([...new Set(letters)].sort(), [...FAVICON_COLORS].sort(), "a-h cover all eight colours");
-  assert.equal(faviconColor("example.com"), "#475569");
-  assert.equal(faviconColor("github.com"), "#C2410C");
+  const letters = "abcdefghijklmnopqrstuvwxyz".split("").map(faviconColor);
+  assert.deepEqual([...new Set(letters)].sort(), [...FAVICON_COLORS].sort(), "a-z cover all eight colours");
+  assert.equal(faviconColor("example.com"), "#7C3AED");
+  assert.equal(faviconColor("github.com"), "#2F6FDE");
+  assert.equal(faviconColor("gitlab.com"), "#A16207");
+  assert.notEqual(faviconColor("github.com"), faviconColor("gitlab.com"), "characters 8 apart no longer collide");
+  assert.notEqual(faviconColor("a.com"), faviconColor("i.com"), "the high bits of each character count");
+  for (const d of ["github.com", "gitlab.com", "example.com", "chrome://extensions", ""]) {
+    assert.equal(faviconColor(d), faviconColor(d), `deterministic for ${JSON.stringify(d)}`);
+    assert.ok(FAVICON_COLORS.includes(faviconColor(d)));
+  }
   assert.equal(faviconColor("GitHub.COM"), faviconColor("github.com"));
   assert.equal(faviconLetter("docs.example.com"), "D");
   assert.equal(faviconLetter("chrome://extensions"), "C");
