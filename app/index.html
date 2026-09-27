@@ -19,6 +19,7 @@
       --p: #F2B84B; --pInk: #1A1200; --pSoft: #3A2E12; --pText: #F2B84B; --danger: #F0645A;
       color-scheme: dark;
     }
+    /* Same dark values as the block above, kept in sync by hand: one selector list cannot hold both, because this one only applies inside the media query. */
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         --g: #131518; --g2: #1B1E23; --g3: #22262C; --t: #EDEFF2; --t2: #9AA1AB; --l: #2C3138;
@@ -55,25 +56,39 @@
     .mono { font-family: var(--mono); font-weight: 500; font-synthesis: none; }
     kbd { font: 500 11px/1.3 var(--mono); font-synthesis: none; color: var(--t); background: var(--g2); border: 1px solid var(--l); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
     /* == header == */
-    #toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-    #toolbar .brand { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    #toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--g2); border-bottom: 1px solid var(--l); flex-wrap: wrap; position: relative; z-index: 3; }
+    #toolbar .brand { display: flex; align-items: center; gap: 6px; margin-right: 6px; font: 500 13px var(--mono); font-synthesis: none; letter-spacing: .02em; }
     #toolbar .brand img { width: 18px; height: 18px; }
-    #search { flex: 1; min-width: 200px; }
-    #counts { color: var(--ink-2); white-space: nowrap; }
+    .search-wrap { position: relative; flex: 1; min-width: 220px; max-width: 560px; display: flex; }
+    #search { flex: 1; padding-right: 30px; background: var(--g); }
+    .search-wrap kbd { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--t2); }
+    #counts { margin-right: auto; font: 500 11px var(--mono); font-synthesis: none; color: var(--t2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .menu-wrap { position: relative; }
+    .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; min-width: 180px; display: flex; flex-direction: column; padding: 4px; color: var(--t); background: var(--g2); border: 1px solid var(--l); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .16); }
+    .menu button { text-align: left; background: transparent; border: 0; border-radius: 5px; padding: 6px 10px; white-space: nowrap; }
+    .menu button:hover, .menu button:focus-visible { background: var(--g3); }
     /* == selection == */
     #selbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--accent-soft); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
     /* == windows == */
-    #grid { flex: 1; display: flex; gap: 12px; padding: 12px; overflow: auto; align-items: flex-start; }
-    .window { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; width: 320px; flex: 0 0 320px; display: flex; flex-direction: column; max-height: 100%; }
-    .window.drop { outline: 2px solid var(--accent); }
-    .window.incognito .whead { background: #3b3b52; color: #fff; }
-    .whead { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; background: var(--surface-2); }
-    .whead .title { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .whead .count { color: var(--ink-2); font-variant-numeric: tabular-nums; }
-    .whead button { padding: 2px 6px; }
-    .tabs { overflow: auto; padding: 4px 0; }
+    #main { flex: 1; min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; }
+    #grid { flex: 1 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; align-content: start; }
+    @media (min-width: 720px) { #grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (min-width: 1100px) { #grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    .window { min-width: 0; display: flex; flex-direction: column; background: var(--g2); border: 1px solid var(--l); border-radius: 10px; }
+    .window.current { border-color: var(--p); box-shadow: 0 0 0 1px var(--p); }
+    .window.drop { outline: 2px dashed var(--p); outline-offset: 2px; }
+    .window.incognito .whead { background: #2A2B3D; color: #EDEFF2; border-radius: 10px 10px 0 0; }
+    .whead { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--l); }
+    .whead .wname { flex: 1; min-width: 0; font: 500 13px var(--mono); font-synthesis: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .whead .wname.unnamed { font: 400 12.5px var(--sans); color: var(--t2); }
+    .whead input.wname-edit { flex: 1; min-width: 0; padding: 2px 6px; font: 500 13px var(--mono); font-synthesis: none; }
+    .whead .count { font: 500 11px var(--mono); font-synthesis: none; color: var(--t2); font-variant-numeric: tabular-nums; padding: 0 2px; }
+    .tag-current { flex: none; padding: 1px 5px; border-radius: 4px; font: 500 10px var(--mono); font-synthesis: none; letter-spacing: .06em; color: var(--pText); background: var(--pSoft); }
+    .tabs { padding: 4px 0; }
     .window.collapsed .tabs { display: none; }
-    #empty { margin: auto; color: var(--ink-2); text-align: center; }
+    #empty { grid-column: 1 / -1; margin: 64px auto; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--t2); text-align: center; }
+    #empty p { margin: 0; }
+    #empty .links { display: flex; gap: 8px; }
     /* == groups == */
     .group { margin: 4px 6px; border-left: 4px solid var(--gcolor, #999); border-radius: 4px; background: color-mix(in srgb, var(--gcolor, #999) 10%, var(--surface)); }
     .group.drop { outline: 2px solid var(--accent); }
@@ -112,18 +127,26 @@
   </style>
 </head>
 <body>
-  <div id="toolbar">
+  <header id="toolbar">
     <span class="brand"><img src="../icons/icon48.png" alt="">TabVault</span>
-    <input type="search" id="search" placeholder="Search tabs  ( / )" autocomplete="off" />
-    <span id="counts"></span>
-    <button id="btn-dupes">Find duplicates</button>
-    <button id="btn-export">Export</button>
-    <button id="btn-import">Import</button>
-    <button id="btn-snapshots">Snapshots</button>
-    <button id="btn-settings">Settings</button>
-    <button id="btn-help" title="Keyboard shortcuts">?</button>
+    <div class="search-wrap">
+      <input type="search" id="search" placeholder="Search tabs" aria-label="Search tabs" autocomplete="off" />
+      <kbd aria-hidden="true">/</kbd>
+    </div>
+    <span id="counts" aria-live="polite"></span>
+    <button id="btn-dupes" type="button" class="primary">Find duplicates</button>
+    <button id="btn-snapshots" type="button">Snapshots</button>
+    <div class="menu-wrap">
+      <button id="btn-more" type="button" class="icon" title="More: export, import, settings, help" aria-label="More: export, import, settings, help" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
+      <div id="more-menu" class="menu" role="menu" hidden>
+        <button id="btn-export" type="button" role="menuitem">Export</button>
+        <button id="btn-import" type="button" role="menuitem">Import</button>
+        <button id="btn-settings" type="button" role="menuitem">Settings</button>
+        <button id="btn-help" type="button" role="menuitem">Help</button>
+      </div>
+    </div>
     <input type="file" id="import-file" accept="application/json,.json" hidden />
-  </div>
+  </header>
   <div id="selbar" hidden>
     <span id="selcount"></span>
     <select id="move-target"><option value="">Move to…</option></select>
@@ -135,7 +158,7 @@
     <button id="sel-close" class="danger">Close</button>
     <button id="sel-clear">Clear selection</button>
   </div>
-  <div id="grid"></div>
+  <main id="main"><div id="grid"></div></main>
   <div id="dialog-backdrop" hidden><div id="dialog" role="dialog" aria-modal="true"></div></div>
   <div id="toast"></div>
   <script src="../lib/session.js"></script>
@@ -144,6 +167,7 @@
   <script src="../lib/snapshots.js"></script>
   <script src="../lib/exporters.js"></script>
   <script src="../lib/restore-plan.js"></script>
+  <script src="../lib/ui.js"></script>
   <script src="app.js"></script>
   <script src="dialogs.js"></script>
 </body>

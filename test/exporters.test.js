@@ -26,3 +26,18 @@ test("parseImport round-trips an export and rejects bad files", () => {
   assert.throws(() => parseImport(JSON.stringify({ schema: 1 })), /windows/i);
   assert.throws(() => parseImport(JSON.stringify({ schema: 1, windows: [{ tabs: [{ title: "x" }] }] })), /url/i);
 });
+
+test("windowName is optional: kept through export and import, dropped when blank or not a string", () => {
+  const s = buildSession({ windows: [win({ id: 1, tabs: [tab({ id: 1 })] }), win({ id: 2, tabs: [tab({ id: 2 })] })], groups: [], windowNames: { 1: "Research" } });
+  const back = parseImport(toJsonFile(s, { now: 1, version: "1.1.0" }).text);
+  assert.equal(back.windows[0].windowName, "Research");
+  assert.equal("windowName" in back.windows[1], false);
+  const odd = parseImport(JSON.stringify({ schema: 1, windows: [
+    { windowName: 42, tabs: [{ url: "https://a.com/" }] },
+    { windowName: "   ", tabs: [{ url: "https://b.com/" }] },
+    { windowName: ` ${"y".repeat(70)} `, tabs: [{ url: "https://c.com/" }] },
+  ] }));
+  assert.equal("windowName" in odd.windows[0], false);
+  assert.equal("windowName" in odd.windows[1], false);
+  assert.equal(odd.windows[2].windowName, "y".repeat(60));
+});

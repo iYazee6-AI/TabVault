@@ -70,3 +70,31 @@ test("stripVolatile is order-independent: a focus change alone must not change t
   const b = S.buildSession({ windows: [w1, { ...w2, focused: true }], groups: [] });
   assert.equal(JSON.stringify(S.stripVolatile(a)), JSON.stringify(S.stripVolatile(b)));
 });
+
+test("buildSession carries a trimmed window name from windowNames and omits blank or missing ones", () => {
+  const s = S.buildSession({
+    windows: [win({ id: 1, tabs: [tab({ id: 1 })] }), win({ id: 2, tabs: [tab({ id: 2 })] }), win({ id: 3, tabs: [tab({ id: 3 })] })],
+    groups: [],
+    windowNames: { 1: "  Research  ", 2: "   " },
+  });
+  assert.equal(s.windows[0].windowName, "Research");
+  assert.equal("windowName" in s.windows[1], false);
+  assert.equal("windowName" in s.windows[2], false);
+});
+
+test("setWindowName sets, clears, caps at 60 characters and drops names of closed windows", () => {
+  const names = S.setWindowName({ 1: "Old", 9: "Gone" }, 2, " Work ", [1, 2]);
+  assert.deepEqual(names, { 1: "Old", 2: "Work" });
+  assert.deepEqual(S.setWindowName(names, 1, "  ", [1, 2]), { 2: "Work" });
+  assert.equal(S.setWindowName({}, 3, "x".repeat(80))["3"].length, 60);
+  assert.deepEqual(names, { 1: "Old", 2: "Work" }, "input untouched");
+});
+
+test("stripVolatile keeps a window name, so a rename is a real change, and adds nothing when unnamed", () => {
+  const w = win({ id: 1, tabs: [tab({ id: 1 })] });
+  const plain = S.stripVolatile(S.buildSession({ windows: [w], groups: [] }));
+  const named = S.stripVolatile(S.buildSession({ windows: [w], groups: [], windowNames: { 1: "Work" } }));
+  assert.deepEqual(Object.keys(plain.windows[0]), ["id", "type", "incognito", "groups", "tabs"]);
+  assert.equal(named.windows[0].windowName, "Work");
+  assert.notEqual(JSON.stringify(plain), JSON.stringify(named));
+});

@@ -63,6 +63,7 @@
     const failedWindows = new Set();
     const result = { windows: 0, tabs: 0, errors: [], skipped, discard };
     let discardFailures = 0;
+    const names = {};
     for (const step of steps) {
       try {
         switch (step.op) {
@@ -125,10 +126,22 @@
             if (ids.get(step.ref) === undefined) break;
             await chrome.tabs.discard(ids.get(step.ref)).catch(() => { discardFailures++; });
             break;
+          case "nameWindow":
+            if (failedWindows.has(step.windowRef) || ids.get(step.windowRef) === undefined) break;
+            names[ids.get(step.windowRef)] = step.name;
+            break;
           default: break;
         }
       } catch (e) {
         result.errors.push(`${step.op} ${step.ref || ""}: ${(e && e.message) || e}`);
+      }
+    }
+    if (Object.keys(names).length) {
+      try {
+        const { windowNames = {} } = await chrome.storage.session.get("windowNames");
+        await chrome.storage.session.set({ windowNames: { ...windowNames, ...names } });
+      } catch (e) {
+        result.errors.push(`window names: ${(e && e.message) || e}`);
       }
     }
     if (discardFailures) result.errors.push(`${discardFailures} tab(s) could not be unloaded`);
@@ -146,7 +159,7 @@
     const chosen = new Set(session.windows.map((w) => w.id));
     const rows = session.windows.map((w) => el("label", { class: "row" },
       el("input", { type: "checkbox", checked: "", onchange: (e) => { e.target.checked ? chosen.add(w.id) : chosen.delete(w.id); } }),
-      el("span", {}, `${w.incognito ? "🕶 " : ""}${(w.tabs[0] && (w.tabs[0].title || w.tabs[0].url)) || "(empty)"}`),
+      el("span", {}, `${w.incognito ? "🕶 " : ""}${w.windowName || (w.tabs[0] && (w.tabs[0].title || w.tabs[0].url)) || "(empty)"}`),
       el("span", { class: "muted" }, `${w.tabs.length} tabs, ${(w.groups || []).length} groups`)));
     const status = el("p", { class: "muted" }, session.capturedAt ? `Captured ${fmt(session.capturedAt)}` : "");
     const go = el("button", { class: "primary" }, "Restore selected windows");

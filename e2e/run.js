@@ -238,6 +238,12 @@ async function main() {
       await appPage.click("#sel-clear").catch(() => {});
     }
 
+    // Export, Import, Settings and Help live in the header's "⋯" menu since 1.1.
+    async function openMenuItem(selector) {
+      await appPage.click("#btn-more");
+      await appPage.click(selector);
+    }
+
     // ---------------------------------------------------------------
     // Fixtures: two windows created directly via the service worker, with
     // window B's "two" tab placed in a blue "Grp" group.
@@ -274,7 +280,7 @@ async function main() {
       const expected = await expectedCounts();
       const countsText = await appPage.$eval("#counts", (el) => el.textContent);
       assert(
-        countsText === `${expected.winCount} windows · ${expected.tabCount} tabs`,
+        countsText === `${expected.winCount} win · ${expected.tabCount} tabs`,
         `counts text "${countsText}" did not match expected ${JSON.stringify(expected)}`
       );
 
@@ -292,8 +298,8 @@ async function main() {
     try {
       const expected = await expectedCounts();
       await appPage.fill("#search", "three");
-      const countsText = await waitForTextContains(appPage, "#counts", "of");
-      assert(countsText === `1 of ${expected.tabCount} tabs`, `counts text after search = "${countsText}"`);
+      const countsText = await waitForTextContains(appPage, "#counts", " of ");
+      assert(countsText === `${expected.winCount} win · 1 of ${expected.tabCount} tabs`, `counts text after search = "${countsText}"`);
       const visibleRows = await appPage.$$eval("#grid .tab", (nodes) => nodes.length);
       assert(visibleRows === 1, `expected 1 visible tab row, got ${visibleRows}`);
       const visibleTabId = await appPage.$eval("#grid .tab", (el) => el.dataset.tab);
@@ -305,7 +311,7 @@ async function main() {
       await appPage.keyboard.press("Escape");
       await waitFor(async () => (await appPage.$eval("#search", (el) => el.value)) === "");
       const countsAfter = await appPage.$eval("#counts", (el) => el.textContent);
-      assert(countsAfter === `${expected.winCount} windows · ${expected.tabCount} tabs`, `counts after Escape = "${countsAfter}"`);
+      assert(countsAfter === `${expected.winCount} win · ${expected.tabCount} tabs`, `counts after Escape = "${countsAfter}"`);
 
       record("B", "PASS", `search "three" -> counts="${countsText}", visible row data-tab=${visibleTabId} (matches three.html tab ${threeTabsNow[0].id}); Escape -> search cleared, counts="${countsAfter}"`);
     } catch (e) {
@@ -454,7 +460,7 @@ async function main() {
       // extra duplicate tabs were added, before "Close 2 duplicates" ran) if
       // we rely on the page's own 100ms debounced refresh alone.
       await appPage.evaluate(() => window.TabVaultApp.refresh());
-      await appPage.click("#btn-export");
+      await openMenuItem("#btn-export");
       await appPage.waitForSelector("#dialog h2");
       const downloadPromise = appPage.waitForEvent("download");
       await appPage.click('#dialog button:has-text("Download JSON")');
@@ -524,7 +530,7 @@ async function main() {
     // ---------------------------------------------------------------
 
     async function setLazyRestore(wanted) {
-      await appPage.click("#btn-settings");
+      await openMenuItem("#btn-settings");
       await appPage.waitForSelector("#dialog h2");
       const lazyCheckbox = appPage.locator("#dialog label", { hasText: "lazy" }).locator("input[type=checkbox]");
       if (wanted) await lazyCheckbox.check();
@@ -733,7 +739,7 @@ async function main() {
     // last so it does not slow down debugging of the others)
     // ---------------------------------------------------------------
     try {
-      await appPage.click("#btn-settings");
+      await openMenuItem("#btn-settings");
       await appPage.waitForSelector("#dialog h2");
       await appPage.selectOption("#dialog select >> nth=1", "compact"); // density select (theme is select#0)
       const urlsCheckbox = appPage.locator("#dialog label", { hasText: "Show URLs" }).locator("input[type=checkbox]");

@@ -17,6 +17,7 @@
     editing: false,
     confirmClose: null,
     renderPending: false,
+    currentWindowId: null,
   };
 
   // ---- data ------------------------------------------------------------------
@@ -38,7 +39,7 @@
     try {
       localStorage.setItem(THEME_MIRROR, theme);
     } catch {
-      /* storage unavailable: the theme still applies, one frame later on the next load */
+      /* storage unavailable: the next load paints with the System tokens first, then this function applies the chosen theme once chrome.storage.local answers */
     }
     root.dataset.showUrls = String(Boolean(state.settings.showUrls));
     root.dataset.density = state.settings.density;
@@ -47,12 +48,15 @@
   async function readSession() {
     const windows = await chrome.windows.getAll({ populate: true });
     const groups = chrome.tabGroups ? await chrome.tabGroups.query({}) : [];
-    return TV.buildSession({ windows, groups, now: Date.now(), excludeUrlPrefix: OWN_PREFIX });
+    const { windowNames = {} } = await chrome.storage.session.get("windowNames").catch(() => ({}));
+    return TV.buildSession({ windows, groups, now: Date.now(), excludeUrlPrefix: OWN_PREFIX, windowNames });
   }
 
   let refreshTimer = null;
   async function refresh() {
-    state.session = await readSession();
+    const [session, own] = await Promise.all([readSession(), chrome.tabs.getCurrent().catch(() => null)]);
+    state.session = session;
+    state.currentWindowId = own ? own.windowId : null;
     const live = new Set(state.session.windows.flatMap((w) => w.tabs.map((t) => t.id)));
     for (const id of state.selected) if (!live.has(id)) state.selected.delete(id);
     if (state.cursor !== null && !live.has(state.cursor)) state.cursor = null;
@@ -73,9 +77,18 @@
     return node;
   }
 
+  // Every glyph-only button gets the same text as its tooltip and its accessible name.
+  function iconButton(glyph, label, onclick, extraClass = "") {
+    return el("button", { type: "button", class: extraClass ? `icon ${extraClass}` : "icon", title: label, "aria-label": label, onclick }, glyph);
+  }
+
   function windowTitle(w) {
     const active = w.tabs.find((t) => t.active) || w.tabs[0];
     return active ? active.title || active.url : "(empty)";
+  }
+
+  function windowLabel(w) {
+    return w.windowName || windowTitle(w);
   }
 
   function tabRow(w, t) {
@@ -151,23 +164,66 @@
     input.focus(); input.select();
   }
 
+  // Inline rename: Enter or blur saves, Escape cancels. The name lives in
+  // chrome.storage.session (see saveWindowName); storage.onChanged refreshes the page.
+  function renameWindow(w, nameEl) {
+    state.editing = true;
+    const input = el("input", { type: "text", class: "wname-edit", value: w.windowName || "", placeholder: windowTitle(w), maxlength: "60", "aria-label": "Window name" });
+    let settled = false;
+    const finish = async (save) => {
+      if (settled) return;
+      settled = true;
+      try {
+        if (save) await saveWindowName(w.id, input.value);
+      } catch (e) {
+        toast(`Could not rename: ${(e && e.message) || e}`);
+      } finally {
+        state.editing = false;
+        await refresh().catch(console.error);
+      }
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") finish(true);
+      if (e.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+    nameEl.replaceWith(input);
+    input.focus(); input.select();
+  }
+
+  async function saveWindowName(windowId, name) {
+    const { windowNames = {} } = await chrome.storage.session.get("windowNames");
+    const live = state.session.windows.map((x) => x.id);
+    await chrome.storage.session.set({ windowNames: TV.setWindowName(windowNames, windowId, name, live) });
+  }
+
   function windowColumn(w) {
     const dropTarget = w.type === "normal";
-    const col = el("div", { class: `window${w.incognito ? " incognito" : ""}${state.collapsedWindows.has(w.id) ? " collapsed" : ""}${dropTarget ? "" : " nodrop"}`, dataset: { window: String(w.id) } });
+    const collapsed = state.collapsedWindows.has(w.id);
+    const current = w.id === state.currentWindowId;
+    const col = el("section", {
+      class: `window${w.incognito ? " incognito" : ""}${collapsed ? " collapsed" : ""}${dropTarget ? "" : " nodrop"}${current ? " current" : ""}`,
+      "aria-label": `Window ${windowLabel(w)}`,
+      dataset: { window: String(w.id) },
+    });
     let head;
     if (state.confirmClose === w.id) {
       const full = state.session.windows.find((x) => x.id === w.id) || w;
-      const confirmBtn = el("button", { class: "danger", onclick: () => { chrome.windows.remove(w.id); state.confirmClose = null; } }, `Close ${full.tabs.length} tabs`);
-      const cancel = el("button", { onclick: () => { state.confirmClose = null; render(); } }, "Cancel");
+      const confirmBtn = el("button", { type: "button", class: "danger", onclick: () => { chrome.windows.remove(w.id).catch((e) => toast(`Could not close: ${e.message || e}`)); state.confirmClose = null; } }, `Close ${full.tabs.length} tabs`);
+      const cancel = el("button", { type: "button", onclick: () => { state.confirmClose = null; render(); } }, "Cancel");
       head = el("div", { class: "whead" }, confirmBtn, cancel);
     } else {
+      const name = el("span", { class: w.windowName ? "wname" : "wname unnamed", title: windowTitle(w) }, (w.incognito ? "🕶 " : "") + windowLabel(w));
       head = el("div", { class: "whead" },
-        el("button", { title: "Collapse", onclick: () => { state.collapsedWindows.has(w.id) ? state.collapsedWindows.delete(w.id) : state.collapsedWindows.add(w.id); render(); } }, state.collapsedWindows.has(w.id) ? "▸" : "▾"),
-        el("span", { class: "title", title: windowTitle(w) }, (w.incognito ? "🕶 " : "") + windowTitle(w)),
-        el("span", { class: "count" }, String(w.tabs.length)),
-        el("button", { title: "Select all in window", onclick: () => { for (const t of w.tabs) state.selected.add(t.id); render(); } }, "☑"),
-        el("button", { title: "Focus window", onclick: () => chrome.windows.update(w.id, { focused: true }) }, "⤴"),
-        el("button", { class: "danger", title: "Close window", onclick: () => { state.confirmClose = w.id; render(); } }, "×"));
+        iconButton(collapsed ? "▸" : "▾", collapsed ? "Expand window" : "Collapse window", () => { collapsed ? state.collapsedWindows.delete(w.id) : state.collapsedWindows.add(w.id); render(); }),
+        name,
+        current ? el("span", { class: "tag-current", title: "TabVault is open in this window" }, "CURRENT") : null,
+        el("span", { class: "count", title: `${w.tabs.length} tabs` }, String(w.tabs.length)),
+        iconButton("✎", "Rename window", () => renameWindow(w, name)),
+        iconButton("☑", "Select all in window", () => { for (const t of w.tabs) state.selected.add(t.id); render(); }),
+        iconButton("⤴", "Focus window", () => chrome.windows.update(w.id, { focused: true }).catch((e) => toast(`Could not focus: ${e.message || e}`))),
+        iconButton("×", "Close window", () => { state.confirmClose = w.id; render(); }, "danger"));
     }
     const body = el("div", { class: "tabs" });
     // Render in index order, wrapping consecutive tabs of a group in a section.
@@ -197,24 +253,41 @@
       return;
     }
     state.renderPending = false;
-    const grid = $("grid");
-    const scroll = { left: grid.scrollLeft, top: grid.scrollTop };
-    const colScroll = new Map([...document.querySelectorAll(".window")].map((c) => [c.dataset.window, c.querySelector(".tabs")?.scrollTop || 0]));
+    const main = $("main");
+    const scrollTop = main.scrollTop;
     const filtered = TV.filterSession(state.session, state.query);
+    const grid = $("grid");
     grid.replaceChildren();
-    if (filtered.windows.length === 0) {
-      grid.append(el("div", { id: "empty" }, state.query ? "No tabs match." : "No other windows are open."));
-    } else {
-      for (const w of filtered.windows) grid.append(windowColumn(w));
-    }
-    grid.scrollLeft = scroll.left; grid.scrollTop = scroll.top;
-    for (const col of document.querySelectorAll(".window")) {
-      const tabs = col.querySelector(".tabs");
-      if (tabs && colScroll.has(col.dataset.window)) tabs.scrollTop = colScroll.get(col.dataset.window);
-    }
-    const total = TV.countTabs(state.session);
-    $("counts").textContent = state.query ? `${filtered.count} of ${total} tabs` : `${state.session.windows.length} windows · ${total} tabs`;
+    if (filtered.windows.length === 0) grid.append(emptyState());
+    else for (const w of filtered.windows) grid.append(windowColumn(w));
+    main.scrollTop = scrollTop;
+    $("counts").textContent = TV.formatCounts({
+      windows: state.session.windows.length,
+      tabs: TV.countTabs(state.session),
+      shown: state.query.trim() ? filtered.count : null,
+      selected: state.selected.size,
+    });
     renderSelbar();
+  }
+
+  function clearSearch() {
+    state.query = "";
+    $("search").value = "";
+    render();
+  }
+
+  function emptyState() {
+    const q = state.query.trim();
+    if (q) {
+      return el("div", { id: "empty" },
+        el("p", {}, "Nothing matches ", el("span", { class: "mono" }, `“${q}”`)),
+        el("button", { type: "button", onclick: clearSearch }, "Clear search"));
+    }
+    return el("div", { id: "empty" },
+      el("p", {}, "No other windows are open. TabVault lists every tab except its own."),
+      el("div", { class: "links" },
+        el("button", { type: "button", onclick: () => openDialog("snapshots") }, "Snapshots"),
+        el("button", { type: "button", onclick: () => $("import-file").click() }, "Import")));
   }
 
   let lastMoveTargetKey = null;
@@ -222,12 +295,12 @@
     const n = state.selected.size;
     $("selbar").hidden = n === 0;
     $("selcount").textContent = `${n} selected`;
-    const key = state.session.windows.map((w) => `${w.id}:${w.tabs.length}`).join("|");
+    const key = state.session.windows.map((w) => `${w.id}:${w.tabs.length}:${w.windowName || ""}`).join("|");
     if (key === lastMoveTargetKey) return;
     lastMoveTargetKey = key;
     const sel = $("move-target");
     sel.replaceChildren(el("option", { value: "" }, "Move to…"), el("option", { value: "new" }, "New window"),
-      ...state.session.windows.filter((w) => w.type === "normal").map((w) => el("option", { value: String(w.id) }, `${windowTitle(w).slice(0, 40)} (${w.tabs.length})`)));
+      ...state.session.windows.filter((w) => w.type === "normal").map((w) => el("option", { value: String(w.id) }, `${windowLabel(w).slice(0, 40)} (${w.tabs.length})`)));
   }
 
   // ---- selection ---------------------------------------------------------------
@@ -310,6 +383,39 @@
     clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("on"), 1800);
   }
 
+  // ---- menus ---------------------------------------------------------------------
+  // A menu is a `.menu` element; its trigger button names it with aria-controls.
+  function menuButton(menu) {
+    return document.querySelector(`[aria-controls="${menu.id}"]`);
+  }
+  // Closes every open menu; returns whether one was open (Escape uses this).
+  function closeMenus(refocus = false) {
+    let wasOpen = false;
+    for (const menu of document.querySelectorAll(".menu")) {
+      if (menu.hidden) continue;
+      wasOpen = true;
+      menu.hidden = true;
+      const button = menuButton(menu);
+      if (button) {
+        button.setAttribute("aria-expanded", "false");
+        if (refocus) button.focus();
+      }
+    }
+    return wasOpen;
+  }
+  function toggleMenu(menuId, fill) {
+    const menu = $(menuId);
+    const opening = menu.hidden;
+    closeMenus();
+    if (!opening) return;
+    if (fill) fill(menu);
+    menu.hidden = false;
+    const button = menuButton(menu);
+    if (button) button.setAttribute("aria-expanded", "true");
+    const first = menu.querySelector("button");
+    if (first) first.focus();
+  }
+
   // ---- dialogs (content provided by dialogs.js) -------------------------------------
   const dialogs = {};
   function openDialog(name, arg) {
@@ -346,6 +452,7 @@
     if (first) { state.cursor = first.id; render(); }
   }
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && closeMenus(true)) { e.preventDefault(); return; }
     const inField = e.target.matches("input, select, textarea");
     if (!$("dialog-backdrop").hidden) { if (e.key === "Escape") closeDialog(); return; }
     if (e.key === "/" && !inField) { e.preventDefault(); $("search").focus(); $("search").select(); return; }
@@ -398,6 +505,10 @@
     $("btn-snapshots").addEventListener("click", () => openDialog("snapshots"));
     $("btn-settings").addEventListener("click", () => openDialog("settings"));
     $("btn-help").addEventListener("click", () => openDialog("help"));
+    $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("more-menu"); });
+    $("more-menu").addEventListener("click", () => closeMenus());
+    document.addEventListener("click", (e) => { if (!e.target.closest(".menu-wrap")) closeMenus(); });
+    chrome.storage.onChanged.addListener((changes, area) => { if (area === "session" && changes.windowNames) scheduleRefresh(); });
     $("dialog-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(); });
 
     for (const container of [$("grid"), $("selbar")]) {

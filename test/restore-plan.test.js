@@ -62,3 +62,12 @@ test("a window whose tabs are all pinned opens with its first tab", () => {
   assert.equal(steps[0].firstTabRef, "t31");
   assert.deepEqual(steps.map((x) => x.op), ["createWindow", "updateTab"]);
 });
+
+test("a named window gets a nameWindow step right after createWindow; unnamed windows get none", () => {
+  const named = { schema: 1, windows: [{ ...session.windows[0], windowName: "Work" }] };
+  const { steps } = planRestore(named, { selectedWindowIds: [1], allowIncognito: false, screen: { width: 1920, height: 1080 } });
+  assert.equal(steps[0].op, "createWindow");
+  assert.deepEqual(steps[1], { op: "nameWindow", windowRef: "w1", name: "Work" });
+  const plain = planRestore(session, { selectedWindowIds: [1], allowIncognito: false, screen: { width: 1920, height: 1080 } });
+  assert.ok(!plain.steps.some((s) => s.op === "nameWindow"));
+});
