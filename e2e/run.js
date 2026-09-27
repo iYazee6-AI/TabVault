@@ -389,18 +389,21 @@ async function main() {
       await appPage.click("#sel-group");
 
       await appPage.waitForSelector(".group");
-      await appPage.click('.group .ghead button[title="Rename"]');
+      await appPage.click('.group .ghead button[title="Rename group"]');
       const input = appPage.locator(".group .ghead input[type=text]");
       await input.fill("Renamed");
       await input.press("Enter");
       await waitForTextContains(appPage, ".group .gtitle", "Renamed");
-      await appPage.selectOption('.group select[title="Color"]', "blue");
+      const before = (await (await worker()).evaluate(() => chrome.tabGroups.query({ title: "Renamed" })))[0];
+      const target = before.color === "purple" ? "cyan" : "purple";
+      await appPage.click(".group .ghead .gdot");
+      await appPage.click(`.group .swatches button[data-color="${target}"]`);
 
       const groups = await waitFor(async () => {
         const gs = await (await worker()).evaluate(() => chrome.tabGroups.query({ title: "Renamed" }));
-        return gs.length === 1 && gs[0].color === "blue" ? gs : null;
+        return gs.length === 1 && gs[0].color === target ? gs : null;
       });
-      record("F", "PASS", `grouped tabs ${tabsC.map((t) => t.id).join(",")}, renamed to "Renamed", set color blue; chrome.tabGroups.query confirms ${JSON.stringify(groups)}`);
+      record("F", "PASS", `grouped tabs ${tabsC.map((t) => t.id).join(",")}, renamed to "Renamed", colour ${before.color} -> ${target} via the colour dots; chrome.tabGroups.query confirms ${JSON.stringify(groups)}`);
     } catch (e) {
       record("F", "FAIL", e.message);
     }

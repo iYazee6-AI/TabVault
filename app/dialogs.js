@@ -138,8 +138,8 @@
     }
     if (Object.keys(names).length) {
       try {
-        const { windowNames = {} } = await chrome.storage.session.get("windowNames");
-        await chrome.storage.session.set({ windowNames: { ...windowNames, ...names } });
+        const { windowNames = {} } = await chrome.storage.local.get("windowNames");
+        await chrome.storage.local.set({ windowNames: { ...windowNames, ...names } });
       } catch (e) {
         result.errors.push(`window names: ${(e && e.message) || e}`);
       }

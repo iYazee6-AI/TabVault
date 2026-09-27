@@ -5,6 +5,8 @@
   const DEFAULT_SETTINGS = { debounceSeconds: 30, keepSnapshots: 20, ignoreHash: true, theme: "system", showUrls: false, density: "comfortable", lazyRestore: true };
   const THEME_MIRROR = "tabvault.theme"; // read by app/theme-boot.js before first paint
   const GROUP_COLORS = { grey: "#8a8a8a", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038", pink: "#d01884", purple: "#a142f4", cyan: "#007b83", orange: "#fa903e" };
+  // The picker offers the spec's eight; an existing orange group still renders orange.
+  const PICKER_COLORS = ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan"];
 
   const state = {
     session: { schema: 1, windows: [] },
@@ -18,6 +20,8 @@
     confirmClose: null,
     renderPending: false,
     currentWindowId: null,
+    colorPickerFor: null,
+    dupes: new Set(),
   };
 
   // ---- data ------------------------------------------------------------------
@@ -48,7 +52,7 @@
   async function readSession() {
     const windows = await chrome.windows.getAll({ populate: true });
     const groups = chrome.tabGroups ? await chrome.tabGroups.query({}) : [];
-    const { windowNames = {} } = await chrome.storage.session.get("windowNames").catch(() => ({}));
+    const { windowNames = {} } = await chrome.storage.local.get("windowNames").catch(() => ({}));
     return TV.buildSession({ windows, groups, now: Date.now(), excludeUrlPrefix: OWN_PREFIX, windowNames });
   }
 
@@ -91,20 +95,31 @@
     return w.windowName || windowTitle(w);
   }
 
+  function favicon(t, domain) {
+    const badge = el("span", { class: "fav letter", style: `--fav:${TV.faviconColor(domain)}`, "aria-hidden": "true" }, TV.faviconLetter(domain));
+    if (!t.favIconUrl) return badge;
+    const img = el("img", { class: "fav", src: t.favIconUrl, alt: "" });
+    img.addEventListener("error", () => img.replaceWith(badge), { once: true });
+    return img;
+  }
+
   function tabRow(w, t) {
+    const selected = state.selected.has(t.id);
+    const domain = TV.domainOf(t.url);
     const row = el("div", {
-      class: `tab${state.selected.has(t.id) ? " selected" : ""}${state.cursor === t.id ? " cursor" : ""}${t.active ? " active" : ""}${t.discarded ? " discarded" : ""}`,
-      draggable: "true", title: t.url, dataset: { tab: String(t.id), window: String(w.id) },
+      class: `tab${selected ? " selected" : ""}${state.cursor === t.id ? " cursor" : ""}${t.active ? " active" : ""}${t.discarded ? " discarded" : ""}`,
+      draggable: "true", tabindex: "-1", title: t.url, dataset: { tab: String(t.id), window: String(w.id) },
     });
-    const icon = el("img", { src: t.favIconUrl || "../icons/icon16.png", alt: "" });
-    icon.addEventListener("error", () => { icon.src = "../icons/icon16.png"; }, { once: true });
     const text = el("div", { class: "text" }, el("span", { class: "ttitle" }, t.title || t.url), el("span", { class: "turl" }, t.url));
-    const badges = [];
-    if (t.pinned) badges.push("📌");
-    if (t.audible && !t.muted) badges.push("🔊");
-    if (t.muted) badges.push("🔇");
-    const close = el("button", { class: "close", title: "Close tab", onclick: (e) => { e.stopPropagation(); chrome.tabs.remove(t.id).catch((err) => toast(`Could not close: ${err.message || err}`)); } }, "×");
-    row.append(el("input", { type: "checkbox", checked: state.selected.has(t.id) ? "" : null, onclick: (e) => { e.stopPropagation(); toggleSelect(t.id, e.shiftKey, w); } }), icon, text, el("span", { class: "badge" }, badges.join(" ")), close);
+    const flags = el("span", { class: "flags" });
+    if (t.pinned) flags.append(el("span", { class: "flag", title: "Pinned" }, "📌"));
+    if (t.audible && !t.muted) flags.append(el("span", { class: "flag", title: "Playing audio" }, "🔊"));
+    if (t.muted) flags.append(el("span", { class: "flag", title: "Muted" }, "🔇"));
+    if (t.discarded) flags.append(el("span", { class: "flag mono", title: "Unloaded: loads when you open it" }, "zz"));
+    if (state.dupes.has(t.id)) flags.append(el("span", { class: "flag mono dup", title: "Duplicate: Find duplicates would close this copy" }, "dup"));
+    const check = el("input", { type: "checkbox", "aria-label": `Select ${t.title || t.url}`, checked: selected ? "" : null, onclick: (e) => { e.stopPropagation(); toggleSelect(t.id, e.shiftKey, w); } });
+    const close = iconButton("×", "Close tab", (e) => { e.stopPropagation(); chrome.tabs.remove(t.id).catch((err) => toast(`Could not close: ${err.message || err}`)); }, "close");
+    row.append(check, favicon(t, domain), text, el("span", { class: "domain mono" }, domain), flags, close);
     row.addEventListener("click", (e) => {
       if (e.ctrlKey || e.metaKey) { toggleSelect(t.id, false, w); return; }
       if (e.shiftKey) { toggleSelect(t.id, true, w); return; }
@@ -122,20 +137,40 @@
   }
 
   function groupSection(w, g, tabs) {
-    const sec = el("div", { class: `group${g.collapsed ? " collapsed" : ""}`, style: `--gcolor:${GROUP_COLORS[g.color] || "#999"}` });
+    const picking = state.colorPickerFor === g.id;
+    const sec = el("div", { class: `group${g.collapsed ? " collapsed" : ""}`, style: `--gcolor:${GROUP_COLORS[g.color] || GROUP_COLORS.grey}`, dataset: { group: String(g.id) } });
     const title = el("span", { class: "gtitle" }, g.title || "(unnamed group)");
+    const dot = el("button", {
+      type: "button", class: "gdot", title: `Colour: ${g.color}. Click to change`, "aria-label": `Group colour ${g.color}, change`, "aria-expanded": String(picking),
+      onclick: () => { state.colorPickerFor = picking ? null : g.id; render(); },
+    });
     const head = el("div", { class: "ghead" },
-      el("button", { title: g.collapsed ? "Expand" : "Collapse", onclick: () => chrome.tabGroups.update(g.id, { collapsed: !g.collapsed }).catch((e) => toast(`Could not collapse: ${e.message || e}`)) }, g.collapsed ? "▸" : "▾"),
+      dot,
       title,
-      el("span", { class: "badge" }, String(tabs.length)),
-      el("button", { title: "Rename", onclick: () => renameGroup(g, title) }, "✎"),
-      el("select", { title: "Color", onchange: (e) => chrome.tabGroups.update(g.id, { color: e.target.value }).catch((err) => toast(`Could not recolor: ${err.message || err}`)) }, ...Object.keys(GROUP_COLORS).map((c) => el("option", { value: c, selected: c === g.color ? "" : null }, c))),
-      el("button", { title: "Ungroup", onclick: () => chrome.tabs.ungroup(tabs.map((t) => t.id)).catch((e) => toast(`Could not ungroup: ${e.message || e}`)) }, "⊟"));
-    sec.append(head, ...tabs.map((t) => tabRow(w, t)));
+      el("span", { class: "gcount mono", title: `${tabs.length} tabs` }, String(tabs.length)),
+      iconButton("✎", "Rename group", () => renameGroup(g, title)),
+      iconButton("⊟", "Ungroup", () => chrome.tabs.ungroup(tabs.map((t) => t.id)).catch((e) => toast(`Could not ungroup: ${e.message || e}`))),
+      iconButton(g.collapsed ? "▸" : "▾", g.collapsed ? "Expand group" : "Collapse group", () => chrome.tabGroups.update(g.id, { collapsed: !g.collapsed }).catch((e) => toast(`Could not collapse: ${e.message || e}`))));
+    sec.append(head);
+    if (picking) sec.append(colorPicker(g));
+    sec.append(...tabs.map((t) => tabRow(w, t)));
     sec.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.add("drop"); });
     sec.addEventListener("dragleave", () => sec.classList.remove("drop"));
     sec.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.remove("drop"); dropTabs(e, { windowId: w.id, index: -1, groupId: g.id }); });
     return sec;
+  }
+
+  function colorPicker(g) {
+    return el("div", { class: "swatches", role: "group", "aria-label": "Group colour" },
+      ...PICKER_COLORS.map((c) => el("button", {
+        type: "button", class: c === g.color ? "swatch on" : "swatch", style: `--sw:${GROUP_COLORS[c]}`,
+        title: c, "aria-label": `Colour ${c}`, "aria-pressed": String(c === g.color), dataset: { color: c },
+        onclick: () => {
+          state.colorPickerFor = null;
+          chrome.tabGroups.update(g.id, { color: c }).catch((err) => toast(`Could not recolor: ${err.message || err}`));
+          render();
+        },
+      })));
   }
 
   function renameGroup(g, titleEl) {
@@ -165,7 +200,7 @@
   }
 
   // Inline rename: Enter or blur saves, Escape cancels. The name lives in
-  // chrome.storage.session (see saveWindowName); storage.onChanged refreshes the page.
+  // chrome.storage.local (see saveWindowName); storage.onChanged refreshes the page.
   function renameWindow(w, nameEl) {
     state.editing = true;
     const input = el("input", { type: "text", class: "wname-edit", value: w.windowName || "", placeholder: windowTitle(w), maxlength: "60", "aria-label": "Window name" });
@@ -193,9 +228,11 @@
   }
 
   async function saveWindowName(windowId, name) {
-    const { windowNames = {} } = await chrome.storage.session.get("windowNames");
+    // storage.local, not storage.session: session storage is also wiped on an extension update,
+    // reload or disable while the windows stay open. The worker clears the key on browser startup.
+    const { windowNames = {} } = await chrome.storage.local.get("windowNames");
     const live = state.session.windows.map((x) => x.id);
-    await chrome.storage.session.set({ windowNames: TV.setWindowName(windowNames, windowId, name, live) });
+    await chrome.storage.local.set({ windowNames: TV.setWindowName(windowNames, windowId, name, live) });
   }
 
   function windowColumn(w) {
@@ -256,6 +293,7 @@
     const main = $("main");
     const scrollTop = main.scrollTop;
     const filtered = TV.filterSession(state.session, state.query);
+    state.dupes = TV.duplicateIds(TV.findDuplicates(state.session, { ignoreHash: state.settings.ignoreHash !== false }));
     const grid = $("grid");
     grid.replaceChildren();
     if (filtered.windows.length === 0) grid.append(emptyState());
@@ -508,7 +546,7 @@
     $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("more-menu"); });
     $("more-menu").addEventListener("click", () => closeMenus());
     document.addEventListener("click", (e) => { if (!e.target.closest(".menu-wrap")) closeMenus(); });
-    chrome.storage.onChanged.addListener((changes, area) => { if (area === "session" && changes.windowNames) scheduleRefresh(); });
+    chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.windowNames) scheduleRefresh(); });
     $("dialog-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(); });
 
     for (const container of [$("grid"), $("selbar")]) {

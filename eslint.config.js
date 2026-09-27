@@ -33,6 +33,7 @@ module.exports = [
       "dist/**",
       "e2e/.tmp/**",
       "tools/.tmp/**",
+      ".superpowers/**",
       "lib/*.min.js",
       "qrcode.min.js",
     ],

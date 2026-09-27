@@ -90,26 +90,44 @@
     #empty p { margin: 0; }
     #empty .links { display: flex; gap: 8px; }
     /* == groups == */
-    .group { margin: 4px 6px; border-left: 4px solid var(--gcolor, #999); border-radius: 4px; background: color-mix(in srgb, var(--gcolor, #999) 10%, var(--surface)); }
-    .group.drop { outline: 2px solid var(--accent); }
-    .ghead { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-weight: 600; font-size: 12px; }
-    .ghead .gtitle { flex: 1; }
+    .group { margin: 4px 4px 2px; border-radius: 6px; }
+    .group.drop { outline: 2px dashed var(--p); outline-offset: 1px; }
+    .ghead { display: flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; background: var(--g3); border-left: 3px solid var(--gcolor); border-radius: 5px; font-weight: 500; }
+    .ghead .gtitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ghead input[type=text] { flex: 1; min-width: 0; padding: 1px 6px; }
+    .gcount { font-size: 11px; color: var(--t2); font-variant-numeric: tabular-nums; }
+    .ghead .gdot, .ghead .gdot:hover { flex: none; width: 12px; height: 12px; padding: 0; border: 0; border-radius: 50%; background: var(--gcolor); }
+    .swatches { display: flex; flex-wrap: wrap; gap: 8px; padding: 7px 10px 7px 14px; }
+    .swatches .swatch, .swatches .swatch:hover { width: 12px; height: 12px; padding: 0; border: 0; border-radius: 50%; background: var(--sw); }
+    .swatches .swatch.on { box-shadow: 0 0 0 2px var(--g2), 0 0 0 4px var(--sw); }
+    .ghead .gdot:hover, .swatches .swatch:hover { transform: scale(1.2); }
+    .group .tab { margin-left: 12px; }
     .group.collapsed .tab { display: none; }
     /* == tabs == */
-    .tab { display: flex; align-items: center; gap: 6px; height: var(--row); padding: 0 8px; cursor: pointer; border-radius: 4px; margin: 0 4px; }
-    .tab:hover { background: var(--surface-2); }
-    .tab.selected { background: var(--accent-soft); }
-    .tab.cursor { outline: 1px solid var(--accent); }
-    .tab.active .ttitle { font-weight: 600; }
-    .tab.discarded .ttitle { color: var(--ink-2); font-style: italic; }
-    .tab img { width: 16px; height: 16px; flex: none; }
-    .tab .ttitle { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tab .turl { display: none; color: var(--ink-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    :root[data-show-urls="true"] .tab { height: auto; padding: 3px 8px; } :root[data-show-urls="true"] .tab .text { display: flex; flex-direction: column; min-width: 0; flex: 1; } :root[data-show-urls="true"] .tab .turl { display: block; }
-    .tab .badge { font-size: 10px; color: var(--ink-2); }
-    .tab .close { visibility: hidden; padding: 0 5px; line-height: 1; }
-    .tab:hover .close { visibility: visible; }
-    .tab.dragover { box-shadow: inset 0 2px 0 var(--accent); }
+    .tab { position: relative; display: flex; align-items: center; gap: 8px; height: var(--row); padding: 0 6px 0 10px; margin: 0 4px; border-radius: 5px; cursor: pointer; }
+    .tab:hover { background: var(--g3); }
+    .tab.selected { background: var(--pSoft); }
+    .tab.cursor { outline: 1px solid var(--p); outline-offset: -1px; }
+    .tab:focus-visible { outline: 2px solid var(--p); outline-offset: -2px; }
+    .tab.active::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--p); }
+    .tab.active .ttitle { font-weight: 500; }
+    .tab.discarded .ttitle { color: var(--t2); }
+    .tab input[type=checkbox] { margin: 0; flex: none; }
+    .fav { flex: none; width: 16px; height: 16px; border-radius: 3px; }
+    .fav.letter { display: inline-flex; align-items: center; justify-content: center; background: var(--fav); color: #FFFFFF; font: 600 10px/1 var(--sans); }
+    .tab .text { flex: 1; min-width: 0; }
+    .tab .ttitle { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tab .turl { display: none; color: var(--t2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    :root[data-show-urls="true"] .tab { height: auto; padding-block: 3px; }
+    :root[data-show-urls="true"] .tab .turl { display: block; }
+    .tab .domain { flex: none; max-width: 38%; font-size: 11px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .flags { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11px; }
+    .flags:empty { display: none; }
+    .flag.mono { font-size: 10px; color: var(--t2); }
+    .flag.dup { color: var(--danger); }
+    .tab .close { visibility: hidden; }
+    .tab:hover .close, .tab:focus-within .close, .tab.cursor .close { visibility: visible; }
+    .tab.dragover { box-shadow: inset 0 2px 0 var(--p); }
     /* == hints == */
     /* == dialogs == */
     #dialog-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(10, 12, 14, .45); display: flex; align-items: center; justify-content: center; }

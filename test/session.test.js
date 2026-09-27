@@ -90,6 +90,14 @@ test("setWindowName sets, clears, caps at 60 characters and drops names of close
   assert.deepEqual(names, { 1: "Old", 2: "Work" }, "input untouched");
 });
 
+test("clearWindowNames removes only the window-names key from the storage area it is given", async () => {
+  const store = { windowNames: { 1: "Work" }, settings: { theme: "dark" }, snapshots: [] };
+  const area = { remove: async (key) => { for (const k of [].concat(key)) delete store[k]; } };
+  assert.equal(S.WINDOW_NAMES_KEY, "windowNames");
+  await S.clearWindowNames(area);
+  assert.deepEqual(Object.keys(store).sort(), ["settings", "snapshots"]);
+});
+
 test("stripVolatile keeps a window name, so a rename is a real change, and adds nothing when unnamed", () => {
   const w = win({ id: 1, tabs: [tab({ id: 1 })] });
   const plain = S.stripVolatile(S.buildSession({ windows: [w], groups: [] }));
