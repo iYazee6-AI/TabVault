@@ -104,13 +104,14 @@ the `setup-trivy` tag it depended on).
 TabVault puts every window and tab you have open into a single page, and keeps local snapshots of your session so a crash or a stray click does not cost you your tabs.
 
 WHAT YOU CAN DO
-• See every window as a column and every tab as a row, with your native tab groups shown inline.
+• See every window as a card and every tab as a row with its favicon and site, with your native tab groups shown inline. The window TabVault is open in is marked CURRENT, and you can give any window a name.
 • Search across all tab titles and URLs at once (press / to jump to the search box).
 • Select tabs with checkboxes, Ctrl/Cmd-click or Shift-click ranges, then move them to another window, group them, pin them, unload them or close them in bulk.
-• Drag a tab row onto another window's column, or onto a group, to move it there.
+• Drag a tab row onto another window's card, or onto a group, to move it there.
 • Create, rename, recolour, collapse and ungroup native tab groups.
 • Find tabs that share a URL, choose which copy to keep, and close the rest in one click.
-• Navigate entirely from the keyboard: arrows to move, Enter to go to a tab, Space to select, Delete to close, ? for the full list.
+• Navigate entirely from the keyboard: j and k (or the arrows) to move, x to select, g to group, d for duplicates, Enter to go to a tab, Delete to close, ? for the full list. The shortcuts are always shown at the bottom of the page.
+• Light and dark themes that follow Chrome, or pick one in Settings.
 
 SNAPSHOTS, EXPORT AND RESTORE
 • Snapshots are taken after your tabs stop changing for a while, and on browser startup — not on a fixed timer, so an idle browser does not fill your storage. Identical sessions are never stored twice.
@@ -136,9 +137,9 @@ Open source, plain HTML and JavaScript, no build step and no dependencies, MIT l
 | Field | File | Size |
 |---|---|---|
 | Store icon | `icons/icon128.png` | 128×128 |
-| Screenshots (upload in this order) | `docs/store/screenshots/01-all-windows.png` — the whole session: three windows as columns, two named tab groups, a pinned tab, the toolbar counter | 1280×800 |
-| | `docs/store/screenshots/02-search.png` — searching "release": only matching tabs remain, counter reads "4 of 27 tabs" | 1280×800 |
-| | `docs/store/screenshots/03-selection.png` — four tabs selected with the bulk-action bar showing Move to…, Group, Pin, Discard, Close | 1280×800 |
+| Screenshots (upload in this order) | `docs/store/screenshots/01-all-windows.png` — the whole session: three named window cards (Research, Work, Personal), three colour-coded tab groups, a pinned tab, the header counter and the shortcut strip | 1280×800 |
+| | `docs/store/screenshots/02-search.png` — searching "release": only matching tabs remain, the counter reads "3 win · 4 of 27 tabs" | 1280×800 |
+| | `docs/store/screenshots/03-selection.png` — four tabs selected with the floating bar: Move to ▾, Group, Pin, Discard, Close, Esc to clear | 1280×800 |
 | | `docs/store/screenshots/04-duplicates.png` — the duplicate finder listing two duplicated URLs with a Keep radio per copy | 1280×800 |
 | | `docs/store/screenshots/05-snapshots.png` — the snapshot list: automatic, startup and a kept manual snapshot, with Restore/Export/Keep/Delete | 1280×800 |
 | Small promo tile | `docs/store/promo-tile-440x280.png` | 440×280 |
@@ -160,10 +161,9 @@ extension running in Chromium, using example pages served locally on port
 
 **Screenshot format rule (the dashboard's words):** up to 5, 1280x800 or
 640x400, JPEG or 24-bit PNG with no alpha channel, at least one required.
-Every screenshot and the promo tile in this folder is an 8-bit RGB PNG with
-no alpha (verified 2026-09-23). If they are ever regenerated, check the PNG
-colour type is 2 (RGB), not 6 (RGBA): Playwright writes RGBA by default, and
-`sharp(file).flatten({ background: '#ffffff' }).removeAlpha().png()` fixes it.
+Since 1.1, `tools/screenshots.js` writes every screenshot and the promo tile
+as an 8-bit RGB PNG (colour type 2) itself, compositing Playwright's RGBA
+output onto white; check byte 25 of each file is 2 after regenerating.
 
 ## 5. Privacy tab
 
@@ -283,3 +283,20 @@ three certification checkboxes. Save draft after filling them, then Submit.
   is not covered here.
 - **Account-level 2-Step Verification and the registration fee** must be done
   by you; nothing in this repo can do it.
+
+## 10. What's new in 1.1.0 (for the update)
+
+Upload the 1.1.0 package as in section 8, replace all five screenshots with the
+regenerated ones (same order), and paste this block at the top of the
+description, above "TabVault puts every window...", with one blank line after it:
+
+```
+NEW IN 1.1
+• A new look: denser rows, a warm light theme and a dark theme that follow Chrome, or choose one in Settings → Appearance.
+• Windows are cards in a grid; the window TabVault is open in is marked CURRENT. Name any window with the pencil; names are kept in snapshots and exports.
+• Every tab shows its favicon (or a coloured letter), its site, and flags for pinned, playing, unloaded and duplicate tabs. The active tab of each window is marked.
+• Pick a group's colour from eight dots.
+• Selected tabs get a floating bar: Move to, Group, Pin, Discard, Close. Esc clears it.
+• More keyboard: j and k to move, x to select, g to group, d for duplicates, ? for every shortcut, with a hint strip at the bottom.
+• Fonts are bundled with the extension; it still makes no network requests.
+```

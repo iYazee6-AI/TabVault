@@ -4,7 +4,8 @@ TabVault is a Manifest V3 Chrome extension that puts every window and tab into o
 
 ## Features
 
-- Every window as a column, every tab as a row, with native tab groups shown inline
+- Every window as a card in a responsive grid, every tab as a row with its favicon (or a coloured letter), site and flags, native tab groups shown inline; the window TabVault is open in is marked CURRENT
+- Name windows inline (the pencil on each card); names last until the browser restarts and are kept in snapshots and exports
 - Instant search across tab titles and URLs (`/` to focus)
 - Multi-select with checkboxes, click, Ctrl/Cmd-click and Shift-click ranges
 - Move selected tabs to another window (or a new one) via drag-and-drop or the "Move to…" menu
@@ -15,7 +16,7 @@ TabVault is a Manifest V3 Chrome extension that puts every window and tab into o
 - Manual "Snapshot now", with the option to keep a snapshot so it's never rotated out
 - Export the current session, or any snapshot, to a JSON file; import and restore selected windows from a file
 - Restored tabs load lazily by default: only the first tab of each window loads immediately, the rest open discarded and load when you click them (configurable in Settings)
-- Light/dark/system theme, compact density, and an option to show URLs under titles
+- Light and dark themes that follow Chrome, an Appearance override (System/Light/Dark), compact density, and an option to show URLs under titles; IBM Plex fonts bundled
 
 ## Installing (load unpacked)
 
@@ -30,9 +31,9 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 ## How to use
 
 - **Search** — type in the search box at the top, or press `/` to focus it. Matching tabs stay visible; everything else is hidden. Press `Esc` to clear the search (and the selection).
-- **Selection** — click a tab's checkbox, or click the row (Ctrl/Cmd-click to toggle one tab, Shift-click to select a range within a window). The selection bar at the top shows a count and the bulk actions.
-- **Move** — drag a tab row onto another window's column (or onto a group, to move it into that group), or select tabs and choose a window from the "Move to…" menu in the selection bar. "New window" opens the selection in a fresh window.
-- **Groups** — select tabs and click **Group** to create a native tab group; click a group's ✎ to rename it, use the color dropdown to recolor it, and **⊟** to ungroup. Click a group's header to collapse/expand it.
+- **Selection** — click a tab's checkbox, or click the row (Ctrl/Cmd-click to toggle one tab, Shift-click to select a range within a window). The floating selection bar at the bottom shows a count and the bulk actions.
+- **Move** — drag a tab row onto another window's card (or onto a group, to move it into that group), or select tabs and choose a window from **Move to ▾** in the floating selection bar. "New window" opens the selection in a fresh window.
+- **Groups** — select tabs and click **Group** to create a native tab group; click a group's ✎ to rename it, pick one of its eight colour dots to recolor it, and **⊟** to ungroup. Click a group's header to collapse/expand it.
 - **Duplicates** — click **Find duplicates** to see tabs that share a URL (optionally ignoring `#hash`), pick which copy of each to keep, and close the rest with one click.
 - **Snapshots** — click **Snapshots** to browse automatic and manual snapshots, restore one (into new windows), export it to a file, keep it so it's never rotated away, or delete it. **Snapshot now** takes one immediately.
 - **Export** — click **Export** to download the current session (all windows, tabs, groups, pinned state and positions) as a JSON file.
@@ -40,23 +41,27 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 
 ## Settings
 
-Available from the **Settings** button: the snapshot debounce (how many seconds of no tab changes before an automatic snapshot is taken) and how many snapshots to keep; whether duplicate-finding ignores the URL `#hash`; theme (system/light/dark) and density (comfortable/compact); whether URLs are shown under titles; and **"Load restored tabs only when opened (lazy)"**, which controls whether Import/Restore loads only the first tab of each restored window immediately (the rest open discarded, loading on click) or loads every restored tab right away. It's on by default.
+Available from the **Settings** button: the snapshot debounce (how many seconds of no tab changes before an automatic snapshot is taken) and how many snapshots to keep; whether duplicate-finding ignores the URL `#hash`; Appearance (System/Light/Dark) and density (comfortable/compact); whether URLs are shown under titles; and **"Load restored tabs only when opened (lazy)"**, which controls whether Import/Restore loads only the first tab of each restored window immediately (the rest open discarded, loading on click) or loads every restored tab right away. It's on by default.
 
 ## Keyboard shortcuts
 
 | Key | Action |
 |---|---|
 | `/` | Search |
-| `↑` `↓` | Move between tabs |
-| `←` `→` | Move between windows |
-| `Enter` | Go to the highlighted tab |
-| `Space` | Select / unselect the highlighted tab |
+| `j` `↓` / `k` `↑` | Next / previous tab |
+| `←` `→` | Previous / next window |
+| `Enter` | Go to the focused tab |
+| `x` or `Space` | Select / unselect the focused tab |
+| `g` | Group the selected tabs (Ungroup when all are grouped) |
+| `d` | Find duplicates |
 | `Delete` | Close selected tabs |
 | `Ctrl`/`Cmd`+click | Toggle a tab's selection |
 | `Shift`+click | Select a range of tabs |
-| `Esc` | Clear search and selection |
-| `?` | Show this help |
+| `Esc` | Close a menu; otherwise clear search and selection |
+| `?` | All shortcuts |
 | `Alt+Shift+T` | Open TabVault (browser-level shortcut, configurable at `chrome://extensions/shortcuts`) |
+
+The list lives in one place, `lib/shortcuts.js`; the page's key handler, the hint strip and the `?` panel all read it.
 
 ## Files
 
@@ -67,6 +72,10 @@ Available from the **Settings** button: the snapshot debounce (how many seconds 
 | `app/index.html` | The full-page UI |
 | `app/app.js` | Rendering, selection, drag-and-drop, keyboard handling |
 | `app/dialogs.js` | Duplicates, export, import/restore, snapshots, settings and help dialogs |
+| `app/theme-boot.js` | Applies an explicit Light/Dark choice before first paint |
+| `app/fonts/` | IBM Plex Sans (400/500/600) and Plex Mono (500), OFL 1.1 (`LICENSE.txt`) |
+| `lib/ui.js` | Header counter text, tab domain, favicon fallback colour, duplicate flags |
+| `lib/shortcuts.js` | The keyboard shortcut table |
 | `lib/session.js` | Builds a normalized session snapshot from `chrome.windows`/`chrome.tabGroups` |
 | `lib/search.js` | Tab search/filtering |
 | `lib/dedupe.js` | Duplicate-tab detection |
@@ -86,8 +95,9 @@ Everything lives in `chrome.storage.local` (the `unlimitedStorage` permission re
 
 - **`settings`** — theme, density, whether URLs are shown, the snapshot debounce (seconds) and how many snapshots to keep, whether duplicate-finding ignores `#hash`, and whether restored tabs load lazily. A few hundred bytes.
 - **`snapshots`** — an array of past sessions, newest first, each with its own full window/tab/group snapshot. Automatic snapshots beyond the configured "keep" count are rotated out oldest-first; snapshots you've explicitly kept are never rotated out. Typical size is a few KB per snapshot for a normal session, so tens to low hundreds of KB for a full history.
+- **`windowNames`** — the names you give windows, keyed by window id. The worker clears it when the browser starts, because window ids change with every browser session; the names also travel inside snapshots and exports.
 
-Nothing is written outside of `chrome.storage.local`; there is no server, account or sync involved (see [Privacy](#privacy)).
+One small thing lives elsewhere: the page keeps a copy of your Appearance choice in its own `localStorage` so the right theme paints first. There is no server, account or sync involved (see [Privacy](#privacy)).
 
 ## Limitations
 

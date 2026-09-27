@@ -20,6 +20,7 @@ const path = require("path");
 const fs = require("fs");
 const http = require("http");
 const { pathToFileURL } = require("url");
+const zlib = require("zlib");
 
 const REPO = path.join(__dirname, "..");
 const TMP = path.join(REPO, "tools", ".tmp");
@@ -129,6 +130,95 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ---- PNG without alpha -----------------------------------------------------
+// The Web Store wants 24-bit PNGs with no alpha channel; Playwright writes 8-bit
+// RGBA. This decodes the RGBA image (all five PNG row filters), composites it on
+// white, and re-encodes it as colour type 2. Zero dependencies.
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+function crc32(buf) {
+  let crc = 0xffffffff;
+  for (let n = 0; n < buf.length; n++) {
+    let c = (crc ^ buf[n]) & 0xff;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body), 0);
+  return Buffer.concat([length, body, crc]);
+}
+
+function toRgbPng(png) {
+  if (!png.subarray(0, 8).equals(PNG_SIGNATURE)) throw new Error("not a PNG");
+  let off = 8;
+  let width = 0, height = 0, bitDepth = 0, colorType = 0, interlace = 0;
+  const idat = [];
+  while (off < png.length) {
+    const len = png.readUInt32BE(off);
+    const type = png.toString("ascii", off + 4, off + 8);
+    const data = png.subarray(off + 8, off + 8 + len);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+      interlace = data[12];
+    } else if (type === "IDAT") {
+      idat.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+    off += 12 + len;
+  }
+  if (colorType === 2 && bitDepth === 8) return png;
+  if (colorType !== 6 || bitDepth !== 8 || interlace !== 0) throw new Error(`unsupported PNG: colour type ${colorType}, depth ${bitDepth}, interlace ${interlace}`);
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const bpp = 4;
+  const stride = width * bpp;
+  const outStride = width * 3 + 1;
+  const out = Buffer.alloc(outStride * height);
+  let prev = Buffer.alloc(stride);
+  for (let y = 0; y < height; y++) {
+    const start = y * (stride + 1);
+    const filter = raw[start];
+    const line = Buffer.from(raw.subarray(start + 1, start + 1 + stride));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? line[x - bpp] : 0;
+      const b = prev[x];
+      const c = x >= bpp ? prev[x - bpp] : 0;
+      let add = 0;
+      if (filter === 1) add = a;
+      else if (filter === 2) add = b;
+      else if (filter === 3) add = (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        add = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      line[x] = (line[x] + add) & 0xff;
+    }
+    const o = y * outStride;
+    out[o] = 0;
+    for (let x = 0; x < width; x++) {
+      const alpha = line[x * 4 + 3];
+      for (let k = 0; k < 3; k++) out[o + 1 + x * 3 + k] = Math.round((line[x * 4 + k] * alpha + 255 * (255 - alpha)) / 255);
+    }
+    prev = line;
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  return Buffer.concat([PNG_SIGNATURE, pngChunk("IHDR", ihdr), pngChunk("IDAT", zlib.deflateSync(out, { level: 9 })), pngChunk("IEND", Buffer.alloc(0))]);
+}
+
 async function main() {
   fs.rmSync(USER_DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(TMP, { recursive: true });
@@ -142,6 +232,7 @@ async function main() {
     context = await chromium.launchPersistentContext(USER_DATA_DIR, {
       headless: false,
       viewport: { width: WIDTH, height: HEIGHT },
+      colorScheme: "light",
       args: [
         "--disable-extensions-except=" + EXT_DIR,
         "--load-extension=" + EXT_DIR,
@@ -178,8 +269,8 @@ async function main() {
     }, "chrome-extension://" + extId + "/");
 
     // ---- seed three example windows ----------------------------------------
-    // Three is deliberate: a .window column is a fixed 320px, so a fourth one
-    // would be sliced in half by the right edge of a 1280-wide screenshot.
+    // Three is deliberate: at 1280 px wide the Console grid shows three window
+    // cards per row, so the first screenshot shows every window.
     const newWindow = (urls, left, top) =>
       sw(
         ({ u, l, t }) => chrome.windows.create({ url: u, focused: false, left: l, top: t, width: 1080, height: 760 }),
@@ -266,6 +357,14 @@ async function main() {
       await chrome.storage.local.set({ snapshots });
     });
 
+    // Window names (1.1) live in chrome.storage.local under TabVault.WINDOW_NAMES_KEY
+    // (the worker clears them on browser startup); the page re-renders when they change.
+    await app.evaluate((names) => chrome.storage.local.set({ [self.TabVault.WINDOW_NAMES_KEY]: names }), {
+      [research.id]: "Research",
+      [work.id]: "Work",
+      [personal.id]: "Personal",
+    });
+
     await app.bringToFront();
     await app.evaluate(() => window.TabVaultApp.refresh());
     await app.waitForFunction(() => document.querySelectorAll("#grid .window").length >= 3, null, { timeout: 15000 });
@@ -277,7 +376,7 @@ async function main() {
 
     const shot = async (name) => {
       const file = path.join(SHOTS, name);
-      await app.screenshot({ path: file });
+      fs.writeFileSync(file, toRgbPng(await app.screenshot()));
       console.log("wrote " + file);
     };
 
@@ -333,7 +432,7 @@ async function main() {
     await promo.goto(pathToFileURL(PROMO_HTML).href);
     await promo.waitForFunction(() => Array.from(document.images).every((i) => i.complete && i.naturalWidth > 0));
     await sleep(300);
-    await promo.screenshot({ path: PROMO_PNG });
+    fs.writeFileSync(PROMO_PNG, toRgbPng(await promo.screenshot()));
     console.log("wrote " + PROMO_PNG);
     await promo.close();
 

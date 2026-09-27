@@ -245,6 +245,24 @@ async function main() {
       await appPage.click("#sel-clear").catch(() => {});
     }
 
+    // Unconditional cleanup after a scenario's try/catch: close an open dialog or menu, clear the
+    // search and the selection, so a failure part-way through cannot leave state for the next one.
+    async function resetUi() {
+      try {
+        if (await appPage.$eval("#dialog-backdrop", (n) => !n.hidden)) {
+          await appPage.click("#dialog-backdrop", { position: { x: 5, y: 5 } });
+          await waitFor(async () => appPage.$eval("#dialog-backdrop", (n) => n.hidden));
+        }
+      } catch (e) {
+        console.log("  resetUi: dialog did not close: " + e.message);
+      }
+      if (await appPage.$("#more-menu:not([hidden]), #move-menu:not([hidden])").catch(() => null)) {
+        await appPage.keyboard.press("Escape").catch(() => {});
+      }
+      await appPage.fill("#search", "").catch(() => {});
+      if (await appPage.$("#selbar:not([hidden])").catch(() => null)) await clearSelection();
+    }
+
     // Export, Import, Settings and Help live in the header's "⋯" menu since 1.1.
     async function openMenuItem(selector) {
       await appPage.click("#btn-more");
@@ -810,6 +828,7 @@ async function main() {
       record("M", "FAIL", e.message);
     }
     await appPage.emulateMedia({ colorScheme: "light" }).catch(() => {});
+    await resetUi();
 
     // ---------------------------------------------------------------
     // N. The window hosting TabVault is marked CURRENT with the --p ring
@@ -968,6 +987,7 @@ async function main() {
     } catch (e) {
       record("Q", "FAIL", e.message);
     }
+    await resetUi();
 
     // ---------------------------------------------------------------
     // R. Window rename round-trips through storage, export and import

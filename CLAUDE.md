@@ -57,7 +57,12 @@ contact email is still the `<your contact email>` placeholder).
 - Title changes are deliberately not a snapshot trigger (live titles would re-arm the debounce forever); URL, pinned, group and mute changes are; a max-wait cap (`pendingSince`) guarantees a snapshot within max(10 x debounce, 5 min).
 - `stripVolatile` sorts windows by id so focus order never defeats snapshot dedup.
 - Restore: if `chrome.windows.create` rejects for the first tab's URL, it retries without a URL and reports that tab as an error instead of dropping the window.
-- The page pauses re-rendering while a group rename input or a `<select>` inside the grid/selection bar is focused; `state.renderPending` flushes on blur.
+- The page pauses re-rendering while a group or window rename input is open (`state.editing`) or a `<select>` inside the grid/selection bar is focused; `state.renderPending` flushes on blur.
+- Window names live in `chrome.storage.local` under `windowNames` (`TabVault.WINDOW_NAMES_KEY`; window id to name), not `storage.session`, because Chrome also wipes session storage on an extension update or reload; the worker clears the key on `chrome.runtime.onStartup`, since window ids reset with the browser. `buildSession` copies them into sessions as the optional `windowName`; restore re-applies them through a `nameWindow` step; a rename schedules a snapshot.
+- Appearance: `settings.theme` (system/light/dark) is mirrored to `localStorage["tabvault.theme"]` and stamped on `<html data-theme>` before first paint by `app/theme-boot.js` (MV3 forbids inline scripts). "System" is pure CSS.
+- Keyboard shortcuts exist in one table, `lib/shortcuts.js`: the key handler, the hint strip and the `?` panel read it. Add a binding there and nowhere else.
+- Styles are one inline `<style>` in `app/index.html`, split by `/* == section == */` markers; the tokens are the spec's table (`docs/superpowers/specs/2026-09-28-console-ui-design.md`).
+- `tools/pack.js` refuses to build without the four IBM Plex woff2 files and `app/fonts/LICENSE.txt`.
 - `lazyRestore` (default on) controls whether restored tabs are discarded; the e2e harness turns it off for scenario I-a because `chrome.tabs.discard` crashes Playwright's Chromium.
 
 - Pure logic lives in `lib/` with the UMD wrapper; everything that touches
@@ -73,7 +78,7 @@ contact email is still the `<your contact email>` placeholder).
 
 - background.js cap branch: if `chrome.storage.session.remove("pendingSince")` ever rejects, change snapshots stop for the session; add a `chrome.alarms.get(ALARM)` fallback in the cap branch.
 - Rows/groups inside non-normal (popup) window columns still accept drops; the move fails with a toast. Skip row/group drop handlers when the column is `nodrop`.
-- Confirm-close button lacks a `.catch`; the delegated `change` handler in wire() is a no-op (blur flushes pending renders); tabbing between grid selects drops focus to body.
+- The delegated `change` handler in wire() is a no-op (blur flushes pending renders).
 - A window restored via the create-retry keeps an extra New Tab page; a group containing only that window's first tab throws into the per-step catch.
 - Snapshots live under one storage key rewritten per write (`storageVersion: 1` recorded); split into an index plus per-snapshot keys in 1.1.
 - Not verified by automation: Alt+Shift+T on Windows (may collide with Chrome's focus-toolbar shortcut), restore with file:// tabs, lazy restore (discard) inside a real restore in real Chrome (Playwright's Chromium crashes on chrome.tabs.discard; e2e I-b is LIMITED when that happens).

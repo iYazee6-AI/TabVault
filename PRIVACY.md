@@ -1,6 +1,6 @@
 # TabVault Privacy Policy
 
-Effective date: 2026-09-19
+Effective date: 2026-09-28
 
 TabVault is a browser extension that shows every window and tab you have open
 in one page, and keeps local snapshots of your session so you can get it back.
@@ -18,9 +18,11 @@ TabVault stores, on your device only:
   automatically after your tabs stop changing for a while, on browser startup,
   and whenever you click **Snapshot now**. Each snapshot records the time it
   was taken and why.
-- **Your settings** — theme, density, whether URLs are shown under titles, the
+- **Your settings** — appearance (theme), density, whether URLs are shown under titles, the
   snapshot debounce in seconds, how many snapshots to keep, whether duplicate
   finding ignores the URL `#hash`, and whether restored tabs load lazily.
+- **Window names** — any names you type for your windows. They are kept until
+  the browser next starts and are also saved inside snapshots and exports.
 
 Tab titles and URLs can contain personal information, because they are
 whatever the pages you have open happen to be.
@@ -38,8 +40,11 @@ whatever the pages you have open happen to be.
 ## Where the data is kept
 
 All data is stored only on your device, in the browser's extension storage
-(`chrome.storage.local`, plus a single short-lived value in
-`chrome.storage.session` used to time the snapshot debounce). TabVault has no
+(`chrome.storage.local`, which also holds your window names until the browser
+next starts; `chrome.storage.session`, which the browser clears when it
+closes, for a short-lived value that times the snapshot debounce; and the
+extension page's own `localStorage`, for a copy of your Appearance choice).
+TabVault has no
 server. It makes no network requests of its own, contains no analytics or
 telemetry, and never transmits, syncs, sells or shares your data with anyone,
 including the developer.

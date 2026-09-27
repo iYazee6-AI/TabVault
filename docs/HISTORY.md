@@ -37,3 +37,14 @@ Result: 23 unit tests, 13 e2e scenarios (I-b PASS or LIMITED depending on the en
 - Data disclosure decided as "Web history" only: tab URLs and titles are stored
   locally; no host permissions and no content scripts, so page content is never
   readable and "Website content" is not ticked.
+
+## 2026-09-28 — 1.1 "Console" UI
+
+- Request: the owner tried the 1.0 store build and asked for better UI/UX. Three mockups; direction A, "Console", chosen (dense, keyboard-first, mono for names and counts, one amber for the thing to press). Spec: `docs/superpowers/specs/2026-09-28-console-ui-design.md`; plan: `docs/superpowers/plans/2026-09-28-console-ui.md`.
+- Tokens exactly as the spec's table, light and dark, following Chrome's scheme with an Appearance override (System/Light/Dark). IBM Plex Sans 400/500/600 and Plex Mono 500 bundled in `app/fonts/` with the OFL 1.1 licence; `tools/pack.js` refuses to build without them. No network requests.
+- Window cards in a responsive grid (3/2/1 columns), the window hosting TabVault marked CURRENT, window names editable inline, kept in `chrome.storage.local` under `windowNames` and cleared by the worker on `chrome.runtime.onStartup` (the spec said `chrome.storage.session`; Task 2's review found Chrome also wipes session storage on an extension update or reload, while window ids only reset with the browser), and carried into snapshots and exports as the optional `windowName` (schema stays 1; restore re-applies names with a `nameWindow` step).
+- Groups: colour dot, 3 px bar, eight-dot picker. Tab rows: favicon or a letter badge coloured from the domain (`lib/ui.js`), domain in mono, flags (pinned, audible, muted, `zz`, `dup`), the active-tab bar.
+- Floating bulk bar with a Move-to menu; Esc closes a menu first, then clears. One shortcut table (`lib/shortcuts.js`) drives the key handler, the hint strip and the `?` panel; new keys `j` `k` `x` `g` `d`.
+- Rulings made in the plan: an explicit Light/Dark choice is mirrored to `localStorage` and applied by `app/theme-boot.js` before first paint (MV3 forbids inline scripts; "System" needs no script); window names use Plex Mono Medium because only 500 is bundled; Pin and Group read Unpin and Ungroup when every selected tab already is, so 1.0's Unpin and Ungroup survive; the picker offers the spec's eight colours and an existing orange group still renders orange; unnamed windows show the active tab's title; `dup` uses the whole session and the `ignoreHash` setting; the muted flag stays; the page scrolls instead of each card.
+- Store screenshots regenerated in the new look (light theme, RGB without alpha, written by `tools/screenshots.js` itself).
+- Result: 36 unit tests, 19 e2e scenarios (I-b PASS or LIMITED as before).
