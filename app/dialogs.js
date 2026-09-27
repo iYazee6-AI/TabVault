@@ -138,8 +138,8 @@
     }
     if (Object.keys(names).length) {
       try {
-        const { windowNames = {} } = await chrome.storage.local.get("windowNames");
-        await chrome.storage.local.set({ windowNames: { ...windowNames, ...names } });
+        const { [TV.WINDOW_NAMES_KEY]: windowNames = {} } = await chrome.storage.local.get(TV.WINDOW_NAMES_KEY);
+        await chrome.storage.local.set({ [TV.WINDOW_NAMES_KEY]: { ...windowNames, ...names } });
       } catch (e) {
         result.errors.push(`window names: ${(e && e.message) || e}`);
       }
@@ -240,8 +240,13 @@
 
   // ---- help ---------------------------------------------------------------------------
   App.dialogs.help = (box) => {
-    const rows = [["/", "Search"], ["↑ ↓", "Move between tabs"], ["← →", "Move between windows"], ["Enter", "Go to tab"], ["Space", "Select / unselect"], ["Delete", "Close selected tabs"], ["Ctrl+click", "Toggle selection"], ["Shift+click", "Select a range"], ["Esc", "Clear search and selection"], ["?", "This help"], ["Alt+Shift+T", "Open TabVault (browser shortcut)"]];
-    box.replaceChildren(el("h2", {}, "Keyboard shortcuts"), el("table", {}, ...rows.map(([k, d]) => el("tr", {}, el("td", {}, el("kbd", {}, k)), el("td", {}, d)))), el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close")));
+    const rows = TV.SHORTCUTS.map((s) => el("tr", {},
+      el("td", {}, ...s.display.map((k) => el("kbd", {}, k))),
+      el("td", {}, s.label)));
+    box.replaceChildren(
+      el("h2", {}, "Keyboard shortcuts"),
+      el("table", { class: "shortcuts" }, el("tbody", {}, ...rows)),
+      el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
   };
 
   App.restoreSession = restoreSession;

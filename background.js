@@ -39,7 +39,7 @@ async function captureSession() {
   const groups = chrome.tabGroups ? await chrome.tabGroups.query({}) : [];
   const info = await chrome.runtime.getPlatformInfo().catch(() => null);
   const version = (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1] || "";
-  const { windowNames = {} } = await chrome.storage.local.get("windowNames").catch(() => ({}));
+  const { [self.TabVault.WINDOW_NAMES_KEY]: windowNames = {} } = await chrome.storage.local.get(self.TabVault.WINDOW_NAMES_KEY).catch(() => ({}));
   return self.TabVault.buildSession({ windows, groups, now: Date.now(), browser: { name: "Chrome", version, os: info && info.os }, excludeUrlPrefix: OWN_PREFIX, windowNames });
 }
 
@@ -90,7 +90,7 @@ for (const ev of [chrome.tabs.onCreated, chrome.tabs.onRemoved, chrome.tabs.onMo
 chrome.tabs.onUpdated.addListener((_id, info) => { if (info.url || info.pinned !== undefined || info.groupId !== undefined || info.mutedInfo !== undefined) onChange(); });
 if (chrome.tabGroups) for (const ev of [chrome.tabGroups.onCreated, chrome.tabGroups.onRemoved, chrome.tabGroups.onUpdated, chrome.tabGroups.onMoved]) ev.addListener(onChange);
 // A window rename is a user change, like a group rename: schedule a snapshot for it.
-chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.windowNames) onChange(); });
+chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[self.TabVault.WINDOW_NAMES_KEY]) onChange(); });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== ALARM) return;

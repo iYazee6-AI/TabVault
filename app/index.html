@@ -28,8 +28,6 @@
       }
     }
     :root[data-density="compact"] { --row: 24px; }
-    /* == legacy aliases (removed in Task 5) == */
-    :root { --bg: var(--g); --surface: var(--g2); --surface-2: var(--g3); --ink: var(--t); --ink-2: var(--t2); --line: var(--l); --accent: var(--p); --accent-ink: var(--pInk); --accent-soft: var(--pSoft); }
     /* == fonts == */
     @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: block; src: url("fonts/IBMPlexSans-Regular.woff2") format("woff2"); }
     @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 500; font-display: block; src: url("fonts/IBMPlexSans-Medium.woff2") format("woff2"); }
@@ -139,6 +137,12 @@
     .tab:hover .close, .tab:focus-within .close, .tab.cursor .close { visibility: visible; }
     .tab.dragover { box-shadow: inset 0 2px 0 var(--p); }
     /* == hints == */
+    #hints { flex: none; padding: 6px 16px; background: var(--g2); border-top: 1px solid var(--l); color: var(--t2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #hints kbd { font-size: 10.5px; }
+    #hints button.link { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+    #hints button.link:hover { color: var(--t); background: transparent; }
+    #dialog table.shortcuts td:first-child { width: 1%; white-space: nowrap; padding-right: 18px; }
+    #dialog table.shortcuts kbd + kbd { margin-left: 4px; }
     /* == dialogs == */
     #dialog-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(10, 12, 14, .45); display: flex; align-items: center; justify-content: center; }
     #dialog { background: var(--g2); color: var(--t); border: 1px solid var(--l); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); width: min(720px, 92vw); max-height: 88vh; overflow: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
@@ -190,6 +194,7 @@
       <button id="sel-clear" type="button" class="esc" title="Clear selection (Esc)" aria-label="Clear selection (Esc)"><kbd>Esc</kbd> to clear</button>
     </div>
   </main>
+  <footer id="hints" aria-label="Keyboard shortcuts"></footer>
   <div id="dialog-backdrop" hidden><div id="dialog" role="dialog" aria-modal="true"></div></div>
   <div id="toast"></div>
   <script src="../lib/session.js"></script>
@@ -199,6 +204,7 @@
   <script src="../lib/exporters.js"></script>
   <script src="../lib/restore-plan.js"></script>
   <script src="../lib/ui.js"></script>
+  <script src="../lib/shortcuts.js"></script>
   <script src="app.js"></script>
   <script src="dialogs.js"></script>
 </body>

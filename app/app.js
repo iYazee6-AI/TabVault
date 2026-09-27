@@ -22,6 +22,8 @@
     currentWindowId: null,
     colorPickerFor: null,
     dupes: new Set(),
+    // tab id -> the favIconUrl that failed to load; that tab shows its letter badge until its URL changes.
+    failedFavicons: new Map(),
   };
 
   // ---- data ------------------------------------------------------------------
@@ -52,7 +54,7 @@
   async function readSession() {
     const windows = await chrome.windows.getAll({ populate: true });
     const groups = chrome.tabGroups ? await chrome.tabGroups.query({}) : [];
-    const { windowNames = {} } = await chrome.storage.local.get("windowNames").catch(() => ({}));
+    const { [TV.WINDOW_NAMES_KEY]: windowNames = {} } = await chrome.storage.local.get(TV.WINDOW_NAMES_KEY).catch(() => ({}));
     return TV.buildSession({ windows, groups, now: Date.now(), excludeUrlPrefix: OWN_PREFIX, windowNames });
   }
 
@@ -63,6 +65,7 @@
     state.currentWindowId = own ? own.windowId : null;
     const live = new Set(state.session.windows.flatMap((w) => w.tabs.map((t) => t.id)));
     for (const id of state.selected) if (!live.has(id)) state.selected.delete(id);
+    for (const id of state.failedFavicons.keys()) if (!live.has(id)) state.failedFavicons.delete(id);
     if (state.cursor !== null && !live.has(state.cursor)) state.cursor = null;
     render();
   }
@@ -97,9 +100,9 @@
 
   function favicon(t, domain) {
     const badge = el("span", { class: "fav letter", style: `--fav:${TV.faviconColor(domain)}`, "aria-hidden": "true" }, TV.faviconLetter(domain));
-    if (!t.favIconUrl) return badge;
+    if (!t.favIconUrl || state.failedFavicons.get(t.id) === t.favIconUrl) return badge;
     const img = el("img", { class: "fav", src: t.favIconUrl, alt: "" });
-    img.addEventListener("error", () => img.replaceWith(badge), { once: true });
+    img.addEventListener("error", () => { state.failedFavicons.set(t.id, t.favIconUrl); img.replaceWith(badge); }, { once: true });
     return img;
   }
 
@@ -230,9 +233,9 @@
   async function saveWindowName(windowId, name) {
     // storage.local, not storage.session: session storage is also wiped on an extension update,
     // reload or disable while the windows stay open. The worker clears the key on browser startup.
-    const { windowNames = {} } = await chrome.storage.local.get("windowNames");
+    const { [TV.WINDOW_NAMES_KEY]: windowNames = {} } = await chrome.storage.local.get(TV.WINDOW_NAMES_KEY);
     const live = state.session.windows.map((x) => x.id);
-    await chrome.storage.local.set({ windowNames: TV.setWindowName(windowNames, windowId, name, live) });
+    await chrome.storage.local.set({ [TV.WINDOW_NAMES_KEY]: TV.setWindowName(windowNames, windowId, name, live) });
   }
 
   function windowColumn(w) {
@@ -290,6 +293,7 @@
       return;
     }
     state.renderPending = false;
+    const rowHadFocus = Boolean(active && active.classList && active.classList.contains("tab"));
     const main = $("main");
     const scrollTop = main.scrollTop;
     const filtered = TV.filterSession(state.session, state.query);
@@ -299,6 +303,7 @@
     if (filtered.windows.length === 0) grid.append(emptyState());
     else for (const w of filtered.windows) grid.append(windowColumn(w));
     main.scrollTop = scrollTop;
+    if (rowHadFocus) focusCursorRow(false);
     $("counts").textContent = TV.formatCounts({
       windows: state.session.windows.length,
       tabs: TV.countTabs(state.session),
@@ -306,6 +311,13 @@
       selected: state.selected.size,
     });
     renderSelbar();
+  }
+
+  function focusCursorRow(scroll = true) {
+    const row = state.cursor === null ? null : document.querySelector(`.tab[data-tab="${state.cursor}"]`);
+    if (!row) return;
+    row.focus({ preventScroll: true });
+    if (scroll) row.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 
   function clearSearch() {
@@ -326,6 +338,18 @@
       el("div", { class: "links" },
         el("button", { type: "button", onclick: () => openDialog("snapshots") }, "Snapshots"),
         el("button", { type: "button", onclick: () => $("import-file").click() }, "Import")));
+  }
+
+  // Rendered once from the shortcut table; its text reads exactly TV.hintText().
+  function renderHints() {
+    const parts = [];
+    TV.HINTS.forEach(([keys, label], i) => {
+      if (i) parts.push(" · ");
+      const caps = keys.split(" ").flatMap((k, j) => (j ? [" ", el("kbd", {}, k)] : [el("kbd", {}, k)]));
+      if (keys === "?") parts.push(el("button", { type: "button", class: "link", title: "All shortcuts", onclick: () => openDialog("help") }, ...caps, ` ${label}`));
+      else parts.push(el("span", {}, ...caps, ` ${label}`));
+    });
+    $("hints").replaceChildren(...parts);
   }
 
   function selectedTabs() {
@@ -483,14 +507,28 @@
 
   // ---- dialogs (content provided by dialogs.js) -------------------------------------
   const dialogs = {};
-  function openDialog(name, arg) {
+  let dialogReturnFocus = null;
+  async function openDialog(name, arg) {
     const box = $("dialog");
     box.replaceChildren();
     if (!dialogs[name]) return;
+    // A dialog opened from a menu item returns focus to the menu's button, since the item is hidden.
+    const from = document.activeElement;
+    const fromMenu = from && from.closest ? from.closest(".menu") : null;
+    dialogReturnFocus = fromMenu ? menuButton(fromMenu) || from : from;
+    closeMenus();
     $("dialog-backdrop").hidden = false;
-    dialogs[name](box, arg);
+    await dialogs[name](box, arg);
+    const first = box.querySelector("input, select, button");
+    if (first && !box.contains(document.activeElement)) first.focus();
   }
-  function closeDialog() { $("dialog-backdrop").hidden = true; $("dialog").replaceChildren(); }
+  function closeDialog() {
+    $("dialog-backdrop").hidden = true;
+    $("dialog").replaceChildren();
+    const back = dialogReturnFocus;
+    dialogReturnFocus = null;
+    if (back && back.isConnected && typeof back.focus === "function") back.focus();
+  }
 
   // ---- keyboard ----------------------------------------------------------------------
   function visibleTabs() {
@@ -504,8 +542,7 @@
     i = i < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, i + delta));
     state.cursor = rows[i].id;
     render();
-    const row = document.querySelector(`.tab[data-tab="${state.cursor}"]`);
-    if (row) row.scrollIntoView({ block: "nearest", inline: "nearest" });
+    focusCursorRow();
   }
   function moveCursorWindow(delta) {
     const rows = visibleTabs();
@@ -514,42 +551,85 @@
     const wi = cur ? windows.indexOf(cur.windowId) : 0;
     const target = windows[Math.max(0, Math.min(windows.length - 1, wi + delta))];
     const first = rows.find((r) => r.windowId === target);
-    if (first) { state.cursor = first.id; render(); }
+    if (first) { state.cursor = first.id; render(); focusCursorRow(); }
   }
+  function toggleCursorSelection() {
+    if (state.cursor === null) return;
+    state.selected.has(state.cursor) ? state.selected.delete(state.cursor) : state.selected.add(state.cursor);
+    state.lastClicked = state.cursor;
+    render();
+  }
+
+  const ACTIONS = {
+    search: () => { $("search").focus(); $("search").select(); },
+    next: () => moveCursor(1),
+    prev: () => moveCursor(-1),
+    nextWindow: () => moveCursorWindow(1),
+    prevWindow: () => moveCursorWindow(-1),
+    open: () => {
+      if (state.cursor === null) return;
+      const r = visibleTabs().find((x) => x.id === state.cursor);
+      if (r) focusTab(r.id, r.windowId);
+    },
+    toggle: toggleCursorSelection,
+    group: () => { if (state.selected.size) groupOrUngroupSelection(); },
+    dupes: () => openDialog("duplicates"),
+    close: () => { if (state.selected.size) chrome.tabs.remove(selection()).catch((err) => toast(`Could not close: ${err.message || err}`)); },
+    escape: (e) => {
+      // An open group colour picker takes the Escape by itself (a stale id with no picker on screen is just dropped).
+      if (state.colorPickerFor !== null) {
+        const groupId = state.colorPickerFor;
+        const open = document.querySelector("#grid .swatches");
+        state.colorPickerFor = null;
+        if (open) {
+          render();
+          const dot = document.querySelector(`.group[data-group="${groupId}"] .gdot`);
+          if (dot) dot.focus();
+          return;
+        }
+      }
+      if (e.target.matches("input, select, textarea")) e.target.blur();
+      state.query = "";
+      $("search").value = "";
+      state.selected.clear();
+      state.confirmClose = null;
+      render();
+    },
+    help: () => openDialog("help"),
+  };
+
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && closeMenus(true)) { e.preventDefault(); return; }
-    const inField = e.target.matches("input, select, textarea");
-    if (!$("dialog-backdrop").hidden) { if (e.key === "Escape") closeDialog(); return; }
-    // An open group colour picker takes the Escape by itself (a stale id with no picker on screen is just dropped).
-    if (e.key === "Escape" && state.colorPickerFor !== null) {
-      const groupId = state.colorPickerFor;
-      const open = document.querySelector("#grid .swatches");
-      state.colorPickerFor = null;
-      if (open) {
+    const openMenu = document.querySelector(".menu:not([hidden])");
+    if (openMenu) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        render();
-        const dot = document.querySelector(`.group[data-group="${groupId}"] .gdot`);
-        if (dot) dot.focus();
-        return;
+        const items = [...openMenu.querySelectorAll("button")];
+        const i = items.indexOf(document.activeElement);
+        const next = items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length];
+        if (next) next.focus();
       }
+      return; // Enter and Space activate the focused item natively
     }
-    if (e.key === "/" && !inField) { e.preventDefault(); $("search").focus(); $("search").select(); return; }
-    if (e.key === "Escape") { if (inField) e.target.blur(); state.query = ""; $("search").value = ""; state.selected.clear(); state.confirmClose = null; render(); return; }
-    if (inField) return;
-    if (e.key === "?") { openDialog("help"); return; }
-    if (e.key === "ArrowDown") { e.preventDefault(); moveCursor(1); }
-    if (e.key === "ArrowUp") { e.preventDefault(); moveCursor(-1); }
-    if (e.key === "ArrowRight") { e.preventDefault(); moveCursorWindow(1); }
-    if (e.key === "ArrowLeft") { e.preventDefault(); moveCursorWindow(-1); }
-    if (e.key === "Enter" && state.cursor !== null) { const r = visibleTabs().find((x) => x.id === state.cursor); if (r) focusTab(r.id, r.windowId); }
-    if (e.key === " " && state.cursor !== null) { e.preventDefault(); state.selected.has(state.cursor) ? state.selected.delete(state.cursor) : state.selected.add(state.cursor); render(); }
-    if (e.key === "Delete" && state.selected.size) { chrome.tabs.remove(selection()).catch((err) => toast(`Could not close: ${err.message || err}`)); }
+    if (!$("dialog-backdrop").hidden) { if (e.key === "Escape") closeDialog(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const s = TV.findShortcut(e.key);
+    if (!s || !s.action) return;
+    const inField = e.target.matches("input, select, textarea");
+    if (inField && s.action !== "escape") return; // typing, including "/" in the search field
+    if ((s.action === "open" || s.action === "toggle") && e.target.closest("button")) return; // let the focused button take Enter/Space
+    e.preventDefault();
+    ACTIONS[s.action](e);
   });
 
   // ---- wiring -------------------------------------------------------------------------
   function wire() {
+    renderHints();
     $("search").addEventListener("input", (e) => { state.query = e.target.value; render(); });
-    $("search").addEventListener("keydown", (e) => { if (e.key === "Enter") { const r = visibleTabs()[0]; if (r) focusTab(r.id, r.windowId); } });
+    $("search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { const r = visibleTabs()[0]; if (r) focusTab(r.id, r.windowId); }
+      if (e.key === "ArrowDown") { e.preventDefault(); $("search").blur(); moveCursor(1); }
+    });
     $("move-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("move-menu", fillMoveMenu); });
     $("move-menu").addEventListener("click", async (e) => {
       const item = e.target.closest("button[data-target]");
@@ -584,7 +664,7 @@
     $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("more-menu"); });
     $("more-menu").addEventListener("click", () => closeMenus());
     document.addEventListener("click", (e) => { if (!e.target.closest(".menu-wrap")) closeMenus(); });
-    chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.windowNames) scheduleRefresh(); });
+    chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[TV.WINDOW_NAMES_KEY]) scheduleRefresh(); });
     $("dialog-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(); });
 
     for (const container of [$("grid"), $("selbar")]) {
