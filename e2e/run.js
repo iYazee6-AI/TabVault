@@ -9,7 +9,7 @@ const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R"];
 const byId = new Map();
 const consoleErrors = { worker: [], app: [] };
 
@@ -125,6 +125,13 @@ async function main() {
   // caller just wants those refreshed in place (including after a
   // mid-scenario relaunch).
   async function launchAndOpenApp() {
+    // A relaunch reuses the profile, and Playwright's Chromium dies on the first download of a
+    // relaunched profile whose History database already records one (H's export does). Dropping
+    // History (the downloads table lives there) avoids it; no scenario reads browsing history.
+    const profileDir = path.join(USER_DATA_DIR, "Default");
+    if (fs.existsSync(profileDir)) {
+      for (const f of fs.readdirSync(profileDir)) if (f.startsWith("History")) fs.rmSync(path.join(profileDir, f), { force: true });
+    }
     context = await chromium.launchPersistentContext(USER_DATA_DIR, {
       headless: false,
       acceptDownloads: true,
@@ -737,6 +744,273 @@ async function main() {
     } catch (e) {
       record("J", "FAIL", e.message);
     }
+
+    // ---------------------------------------------------------------
+    // 1.1 Console scenarios M-R. They share one fresh fixture window,
+    // created here because I-b may have relaunched the browser, which
+    // leaves no earlier fixture window behind.
+    // ---------------------------------------------------------------
+    let winM = null;
+    let tabsM = [];
+    try {
+      winM = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), [oneUrl, twoUrl, threeUrl]);
+      tabsM = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winM.id);
+        return ts.length === 3 && ts.every((t) => String(t.url || "").startsWith(BASE)) ? ts.sort((a, b) => a.index - b.index) : null;
+      }, { timeout: 15000 });
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await appPage.waitForSelector(`.window[data-window="${winM.id}"]`);
+    } catch (e) {
+      console.log(`M-R fixture window could not be created: ${e.message}`);
+    }
+
+    const LIGHT_G = "rgb(247, 247, 245)"; // --g light #F7F7F5
+    const DARK_G = "rgb(19, 21, 24)"; // --g dark #131518
+    const bodyBg = () => appPage.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    async function setAppearance(value) {
+      await openMenuItem("#btn-settings");
+      await appPage.waitForSelector("#dialog h2");
+      await appPage.selectOption('#dialog select[aria-label="Appearance"]', value);
+      await appPage.click('#dialog button:has-text("Save")');
+      await waitFor(async () => (await appPage.evaluate(() => document.documentElement.dataset.theme)) === value);
+    }
+    async function blurAll() {
+      await appPage.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
+    }
+
+    // ---------------------------------------------------------------
+    // M. Dark theme via the Settings override
+    // ---------------------------------------------------------------
+    try {
+      await appPage.emulateMedia({ colorScheme: "light" });
+      await setAppearance("dark");
+      const darkBg = await bodyBg();
+      assert(darkBg === DARK_G, `Appearance dark: body background ${darkBg}, expected ${DARK_G}`);
+      const mirror = await appPage.evaluate(() => localStorage.getItem("tabvault.theme"));
+      assert(mirror === "dark", `localStorage mirror = ${JSON.stringify(mirror)}`);
+      await appPage.reload();
+      await appPage.waitForSelector("#toolbar");
+      const bootTheme = await appPage.evaluate(() => document.documentElement.dataset.theme);
+      const bootBg = await bodyBg();
+      assert(bootTheme === "dark" && bootBg === DARK_G, `after reload: data-theme=${bootTheme}, background ${bootBg}`);
+      await appPage.waitForSelector(".window");
+
+      await appPage.emulateMedia({ colorScheme: "dark" });
+      await setAppearance("light");
+      const lightBg = await bodyBg();
+      assert(lightBg === LIGHT_G, `Appearance light under a dark OS: ${lightBg}`);
+
+      await setAppearance("system");
+      const systemDark = await bodyBg();
+      await appPage.emulateMedia({ colorScheme: "light" });
+      const systemLight = await bodyBg();
+      assert(systemDark === DARK_G && systemLight === LIGHT_G, `System: dark OS -> ${systemDark}, light OS -> ${systemLight}`);
+      record("M", "PASS", `dark override -> ${darkBg} (mirror "${mirror}"), after reload data-theme=${bootTheme} ${bootBg}; light override under dark OS -> ${lightBg}; System follows the OS: ${systemDark} / ${systemLight}`);
+    } catch (e) {
+      record("M", "FAIL", e.message);
+    }
+    await appPage.emulateMedia({ colorScheme: "light" }).catch(() => {});
+
+    // ---------------------------------------------------------------
+    // N. The window hosting TabVault is marked CURRENT with the --p ring
+    // ---------------------------------------------------------------
+    try {
+      const appTab = (await (await worker()).evaluate((prefix) => chrome.tabs.query({ url: prefix + "*" }), ownPrefix))[0];
+      await (await worker()).evaluate(({ windowId, url }) => chrome.tabs.create({ windowId, url, active: false }), { windowId: appTab.windowId, url: threeUrl });
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await appPage.waitForSelector(`.window[data-window="${appTab.windowId}"]`);
+      const cards = await appPage.$$eval(".window", (nodes) => nodes.map((n) => ({
+        id: Number(n.dataset.window),
+        current: n.classList.contains("current"),
+        tag: (n.querySelector(".tag-current") || {}).textContent || "",
+        ring: getComputedStyle(n).borderTopColor,
+      })));
+      const marked = cards.filter((c) => c.current || c.tag);
+      assert(marked.length === 1 && marked[0].id === appTab.windowId, `expected only window ${appTab.windowId} marked: ${JSON.stringify(cards)}`);
+      assert(marked[0].tag === "CURRENT", `tag text = ${JSON.stringify(marked[0].tag)}`);
+      assert(marked[0].ring === "rgb(183, 121, 31)", `ring colour = ${marked[0].ring}, expected --p #B7791F`);
+      record("N", "PASS", `window ${appTab.windowId} (TabVault's own) is the only card with .current and the CURRENT tag; ring ${marked[0].ring}; cards ${JSON.stringify(cards)}`);
+    } catch (e) {
+      record("N", "FAIL", e.message);
+    }
+
+    // ---------------------------------------------------------------
+    // O. The bulk bar appears on selection and Esc closes it
+    // ---------------------------------------------------------------
+    try {
+      assert(winM, "no fixture window for M-R");
+      await clearSelection();
+      await blurAll();
+      assert(await appPage.$eval("#selbar", (n) => n.hidden), "bulk bar visible with nothing selected");
+      const first = tabsM[0];
+      const second = tabsM[1];
+      let cursor = null;
+      for (let i = 0; i < 80 && cursor !== first.id; i++) {
+        await appPage.keyboard.press("j");
+        cursor = await appPage.$eval(".tab.cursor", (n) => Number(n.dataset.tab)).catch(() => null);
+      }
+      assert(cursor === first.id, `j never reached tab ${first.id} (cursor ${cursor})`);
+      const focused = await appPage.evaluate(() => document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.tab : null);
+      assert(Number(focused) === first.id, `the cursor row does not hold focus (active element data-tab=${focused})`);
+      await appPage.keyboard.press("x");
+      await appPage.waitForSelector("#selbar:not([hidden])");
+      await appPage.click(`.tab[data-tab="${second.id}"] input[type=checkbox]`);
+      await waitForTextContains(appPage, "#selcount", "2 selected");
+      const counts = await appPage.$eval("#counts", (n) => n.textContent);
+      assert(counts.endsWith(" · 2 sel"), `counter = "${counts}"`);
+      const position = await appPage.$eval("#selbar", (n) => getComputedStyle(n).position);
+      assert(position === "sticky", `bulk bar position = ${position}`);
+
+      await appPage.click("#move-btn");
+      await appPage.waitForSelector('#move-menu:not([hidden]) button[data-target="new"]');
+      await appPage.keyboard.press("Escape");
+      await appPage.waitForSelector("#move-menu[hidden]", { state: "attached" });
+      const stillSelected = await appPage.evaluate(() => window.TabVaultApp.selection().length);
+      assert(stillSelected === 2, `first Esc should close only the menu; selection is ${stillSelected}`);
+
+      await appPage.keyboard.press("Escape");
+      await appPage.waitForSelector("#selbar[hidden]", { state: "attached" });
+      const after = await appPage.evaluate(() => window.TabVaultApp.selection().length);
+      assert(after === 0, `selection after second Esc = ${after}`);
+
+      // Carry-in (Task 5 review MEDIUM-1): x never acts on a cursor row the search hides.
+      // The checkbox click moved the cursor to the second tab, so hide whichever row holds it now.
+      const cursorNow = await appPage.$eval(".tab.cursor", (n) => Number(n.dataset.tab));
+      const cursorTab = tabsM.find((t) => t.id === cursorNow);
+      assert(cursorTab, `cursor ${cursorNow} is not a fixture tab`);
+      const hideQuery = cursorTab.url.endsWith("three.html") ? "two.html" : "three.html";
+      await appPage.fill("#search", hideQuery);
+      await waitFor(async () => (await appPage.$(`.tab[data-tab="${cursorNow}"]`)) === null && (await appPage.$(".tab")) !== null);
+      await blurAll();
+      await appPage.keyboard.press("x");
+      const hiddenSel = await appPage.evaluate(() => window.TabVaultApp.selection());
+      assert(hiddenSel.length === 0, `x with the cursor row (${cursorNow}) hidden by the search "${hideQuery}" selected ${JSON.stringify(hiddenSel)}`);
+      await appPage.fill("#search", "");
+      await appPage.waitForSelector(`.tab[data-tab="${cursorNow}"]`);
+      record("O", "PASS", `j reached tab ${first.id} with focus, x selected it, checkbox added ${second.id}: bar sticky, "2 selected", counter "${counts}"; Esc closed the Move-to menu only, Esc again cleared the selection and hid the bar; with the cursor row (${cursorNow}) hidden by the search "${hideQuery}", x selected nothing`);
+    } catch (e) {
+      record("O", "FAIL", e.message);
+    }
+    await appPage.fill("#search", "").catch(() => {});
+    await clearSelection();
+
+    // ---------------------------------------------------------------
+    // P. The colour dots change a group's colour
+    // ---------------------------------------------------------------
+    try {
+      assert(winM, "no fixture window for M-R");
+      const gid = await (await worker()).evaluate(async ({ tabId, windowId }) => {
+        const id = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId } });
+        await chrome.tabGroups.update(id, { title: "Dots", color: "grey" });
+        return id;
+      }, { tabId: tabsM[2].id, windowId: winM.id });
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      const g = `.group[data-group="${gid}"]`;
+      await appPage.waitForSelector(g);
+      await appPage.click(`${g} .gdot`);
+      const offered = await appPage.$$eval(`${g} .swatches button`, (bs) => bs.map((b) => b.dataset.color));
+      assert(JSON.stringify(offered) === JSON.stringify(["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan"]), `picker offers ${JSON.stringify(offered)}`);
+      await appPage.click(`${g} .swatches button[data-color="green"]`);
+      const live = await waitFor(async () => {
+        const x = await (await worker()).evaluate((id) => chrome.tabGroups.get(id), gid);
+        return x.color === "green" ? x : null;
+      });
+      const edge = await waitFor(async () => {
+        const c = await appPage.$eval(`${g} .ghead`, (n) => getComputedStyle(n).borderLeftColor).catch(() => null);
+        return c === "rgb(24, 128, 56)" ? c : null; // GROUP_COLORS.green #188038
+      });
+      const pickerOpen = (await appPage.$(`${g} .swatches`)) !== null;
+      assert(!pickerOpen, "the picker is still open after choosing a colour");
+      record("P", "PASS", `group ${gid}: picker offered ${offered.length} colours; clicked green -> chrome.tabGroups.get says ${live.color}; header bar ${edge}; picker closed`);
+    } catch (e) {
+      record("P", "FAIL", e.message);
+    }
+
+    // ---------------------------------------------------------------
+    // Q. The ? panel, the hint strip, named icon buttons
+    // ---------------------------------------------------------------
+    try {
+      await blurAll();
+      await appPage.keyboard.press("?");
+      await waitForTextContains(appPage, "#dialog h2", "Keyboard shortcuts");
+      const rows = await appPage.$$eval("#dialog table.shortcuts tr", (r) => r.length);
+      const expectedRows = await appPage.evaluate(() => self.TabVault.SHORTCUTS.length);
+      assert(rows === expectedRows, `panel lists ${rows} rows, the table has ${expectedRows}`);
+      await appPage.keyboard.press("Escape");
+      await waitFor(async () => appPage.$eval("#dialog-backdrop", (n) => n.hidden));
+      const hints = await appPage.$eval("#hints", (n) => n.textContent);
+      assert(hints === "/ search · j k move · x select · g group · d duplicates · ? all shortcuts", `hint strip = "${hints}"`);
+      const unnamed = await appPage.$$eval("#toolbar button, #grid button, #selbar button", (bs) => bs
+        .filter((b) => !/[A-Za-z]{2}/.test(b.textContent) && !(b.getAttribute("title") && b.getAttribute("aria-label")))
+        .map((b) => b.outerHTML.slice(0, 120)));
+      assert(unnamed.length === 0, `glyph buttons without title and aria-label: ${JSON.stringify(unnamed)}`);
+
+      // Carry-in (Task 5 review MEDIUM-2): the panel is opened from a row, a re-render replaces that row
+      // while the panel is open (a real title change in a fixture tab), and closing it puts focus on a row, not <body>.
+      const cursorId = await appPage.$eval(".tab.cursor", (n) => Number(n.dataset.tab));
+      await appPage.focus(`.tab[data-tab="${cursorId}"]`);
+      await appPage.evaluate((id) => { window.__e2eRow = document.querySelector(`.tab[data-tab="${id}"]`); }, cursorId);
+      await appPage.keyboard.press("?");
+      await waitForTextContains(appPage, "#dialog h2", "Keyboard shortcuts");
+      const titled = context.pages().find((p) => p.url() === twoUrl);
+      let rerender = "a title change in a fixture tab";
+      if (titled) await titled.evaluate(() => { document.title = "Two retitled"; });
+      else { rerender = "TabVaultApp.refresh()"; await appPage.evaluate(() => window.TabVaultApp.refresh()); }
+      await waitFor(() => appPage.evaluate(() => !window.__e2eRow.isConnected));
+      await appPage.keyboard.press("Escape");
+      await waitFor(async () => appPage.$eval("#dialog-backdrop", (n) => n.hidden));
+      const back = await appPage.evaluate(() => {
+        const a = document.activeElement;
+        return a ? { tag: a.tagName, row: a.classList.contains("tab"), tab: a.dataset ? a.dataset.tab || null : null } : null;
+      });
+      assert(back && back.row && Number(back.tab) === cursorId, `after the panel closed over a re-rendered row, focus is on ${JSON.stringify(back)}`);
+      record("Q", "PASS", `? opened "Keyboard shortcuts" with ${rows} rows (= SHORTCUTS.length), Esc closed it; hint strip "${hints}"; every glyph-only button has title and aria-label; opened from row ${cursorId}, re-rendered by ${rerender}, Esc put focus back on row ${back.tab}`);
+    } catch (e) {
+      record("Q", "FAIL", e.message);
+    }
+
+    // ---------------------------------------------------------------
+    // R. Window rename round-trips through storage, export and import
+    // ---------------------------------------------------------------
+    try {
+      assert(winM, "no fixture window for M-R");
+      const card = `.window[data-window="${winM.id}"]`;
+      await appPage.click(`${card} button[aria-label="Rename window"]`);
+      const input = appPage.locator(`${card} input.wname-edit`);
+      await input.fill("E2E Research");
+      await input.press("Enter");
+      await waitForTextContains(appPage, `${card} .wname`, "E2E Research");
+      // Names live in chrome.storage.local (Task 3: storage.session is wiped on an extension update).
+      const stored = await (await worker()).evaluate(() => chrome.storage.local.get("windowNames"));
+      assert(stored.windowNames && stored.windowNames[String(winM.id)] === "E2E Research", `storage.local windowNames = ${JSON.stringify(stored)}`);
+
+      await appPage.click(`${card} button[aria-label="Rename window"]`);
+      await appPage.locator(`${card} input.wname-edit`).fill("Not saved");
+      await appPage.locator(`${card} input.wname-edit`).press("Escape");
+      const kept = await waitForTextContains(appPage, `${card} .wname`, "E2E Research");
+      assert(!kept.includes("Not saved"), `Escape did not cancel: "${kept}"`);
+
+      await openMenuItem("#btn-export");
+      await appPage.waitForSelector("#dialog h2");
+      const downloadPromise = appPage.waitForEvent("download");
+      await appPage.click('#dialog button:has-text("Download JSON")');
+      const download = await downloadPromise;
+      const file = path.join(DOWNLOAD_DIR, `rename-${download.suggestedFilename()}`);
+      await download.saveAs(file);
+      const json = JSON.parse(fs.readFileSync(file, "utf8"));
+      const exported = json.windows.find((w) => w.id === winM.id);
+      assert(exported && exported.windowName === "E2E Research", `exported window ${winM.id}: ${JSON.stringify(exported && { id: exported.id, windowName: exported.windowName })}`);
+
+      await appPage.setInputFiles("#import-file", file);
+      await waitForTextContains(appPage, "#dialog h2", "choose windows to restore");
+      const labels = await appPage.$$eval("#dialog .list label", (nodes) => nodes.map((n) => n.textContent));
+      assert(labels.some((l) => l.includes("E2E Research")), `import list does not show the name: ${JSON.stringify(labels)}`);
+      await appPage.click('#dialog button:has-text("Cancel")');
+      record("R", "PASS", `renamed window ${winM.id} to "E2E Research" (storage.local confirms), Escape cancelled a second rename, export carries windowName, import list shows it`);
+    } catch (e) {
+      record("R", "FAIL", e.message);
+    }
+    await appPage.emulateMedia({ colorScheme: null }).catch(() => {});
 
     // ---------------------------------------------------------------
     // L. Settings persistence (run before K; K's real-time wait is kept

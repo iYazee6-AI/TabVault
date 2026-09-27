@@ -528,6 +528,7 @@
     const back = dialogReturnFocus;
     dialogReturnFocus = null;
     if (back && back.isConnected && typeof back.focus === "function") back.focus();
+    else if (back && !back.isConnected) focusCursorRow(); // a re-render replaced the row the dialog was opened from
   }
 
   // ---- keyboard ----------------------------------------------------------------------
@@ -554,7 +555,8 @@
     if (first) { state.cursor = first.id; render(); focusCursorRow(); }
   }
   function toggleCursorSelection() {
-    if (state.cursor === null) return;
+    // Only a row on screen is acted on, as with Enter: never one hidden by the search or inside a collapsed window or group.
+    if (state.cursor === null || !visibleTabs().some((r) => r.id === state.cursor)) return;
     state.selected.has(state.cursor) ? state.selected.delete(state.cursor) : state.selected.add(state.cursor);
     state.lastClicked = state.cursor;
     render();
