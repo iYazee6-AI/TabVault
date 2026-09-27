@@ -3,6 +3,7 @@
   const $ = (id) => document.getElementById(id);
   const OWN_PREFIX = chrome.runtime.getURL("");
   const DEFAULT_SETTINGS = { debounceSeconds: 30, keepSnapshots: 20, ignoreHash: true, theme: "system", showUrls: false, density: "comfortable", lazyRestore: true };
+  const THEME_MIRROR = "tabvault.theme"; // read by app/theme-boot.js before first paint
   const GROUP_COLORS = { grey: "#8a8a8a", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038", pink: "#d01884", purple: "#a142f4", cyan: "#007b83", orange: "#fa903e" };
 
   const state = {
@@ -32,9 +33,13 @@
   }
   function applySettings() {
     const root = document.documentElement;
-    const dark = state.settings.theme === "dark" || (state.settings.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    root.dataset.theme = state.settings.theme;
-    root.classList.toggle("dark", dark);
+    const theme = state.settings.theme === "light" || state.settings.theme === "dark" ? state.settings.theme : "system";
+    root.dataset.theme = theme;
+    try {
+      localStorage.setItem(THEME_MIRROR, theme);
+    } catch {
+      /* storage unavailable: the theme still applies, one frame later on the next load */
+    }
     root.dataset.showUrls = String(Boolean(state.settings.showUrls));
     root.dataset.density = state.settings.density;
   }
@@ -403,7 +408,6 @@
     const events = [chrome.tabs.onCreated, chrome.tabs.onRemoved, chrome.tabs.onUpdated, chrome.tabs.onMoved, chrome.tabs.onAttached, chrome.tabs.onDetached, chrome.tabs.onActivated, chrome.tabs.onReplaced, chrome.windows.onCreated, chrome.windows.onRemoved, chrome.windows.onFocusChanged];
     if (chrome.tabGroups) events.push(chrome.tabGroups.onCreated, chrome.tabGroups.onUpdated, chrome.tabGroups.onRemoved, chrome.tabGroups.onMoved);
     for (const ev of events) ev.addListener(scheduleRefresh);
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applySettings);
 
     document.addEventListener("dragend", () => {
       for (const node of document.querySelectorAll(".drop, .dragover")) node.classList.remove("drop", "dragover");

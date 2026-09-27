@@ -24,6 +24,15 @@ function dosDateTime(date) {
 }
 
 const rootDir = path.join(__dirname, "..");
+// The page's @font-face rules point here; a package without them would fall back to
+// system fonts silently, so the build fails instead.
+const REQUIRED = [
+  "app/fonts/IBMPlexSans-Regular.woff2",
+  "app/fonts/IBMPlexSans-Medium.woff2",
+  "app/fonts/IBMPlexSans-SemiBold.woff2",
+  "app/fonts/IBMPlexMono-Medium.woff2",
+  "app/fonts/LICENSE.txt",
+];
 
 function walk(relDir) {
   const abs = path.join(rootDir, relDir);
@@ -124,6 +133,11 @@ function main() {
   const manifest = JSON.parse(fs.readFileSync(path.join(rootDir, "manifest.json"), "utf8"));
   const version = manifest.version;
   const entries = collectEntries();
+  const missing = REQUIRED.filter((f) => !entries.includes(f));
+  if (missing.length) {
+    console.error(`Missing from the package: ${missing.join(", ")}`);
+    process.exit(1);
+  }
   const zipBuf = buildZip(entries);
 
   const distDir = path.join(rootDir, "dist");

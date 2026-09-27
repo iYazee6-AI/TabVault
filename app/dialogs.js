@@ -202,7 +202,7 @@
     const debounce = el("input", { type: "number", min: "30", max: "600", value: String(s.debounceSeconds) });
     const keep = el("input", { type: "number", min: "5", max: "200", value: String(s.keepSnapshots) });
     const hash = el("input", { type: "checkbox", checked: s.ignoreHash ? "" : null });
-    const theme = el("select", {}, ...["system", "light", "dark"].map((t) => el("option", { value: t, selected: t === s.theme ? "" : null }, t)));
+    const theme = el("select", { "aria-label": "Appearance" }, ...[["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([value, label]) => el("option", { value, selected: value === s.theme ? "" : null }, label)));
     const urls = el("input", { type: "checkbox", checked: s.showUrls ? "" : null });
     const density = el("select", {}, ...["comfortable", "compact"].map((d) => el("option", { value: d, selected: d === s.density ? "" : null }, d)));
     const lazy = el("input", { type: "checkbox", checked: s.lazyRestore !== false ? "" : null });
@@ -211,7 +211,7 @@
       el("label", { class: "row" }, "Snapshot after tabs stop changing for ", debounce, " seconds (30–600)"),
       el("label", { class: "row" }, "Keep the last ", keep, " snapshots (5–200); kept snapshots never expire"),
       el("label", { class: "row" }, hash, " Ignore #hash when finding duplicates"),
-      el("label", { class: "row" }, "Theme ", theme),
+      el("label", { class: "row" }, "Appearance ", theme),
       el("label", { class: "row" }, urls, " Show URLs under titles"),
       el("label", { class: "row" }, "Density ", density),
       el("label", { class: "row" }, lazy, " Load restored tabs only when opened (lazy)"),
