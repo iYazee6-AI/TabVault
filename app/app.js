@@ -684,7 +684,7 @@
   }
 
   window.TabVaultApp = {
-    getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab,
+    getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel,
   };
 
   loadSettings().then(refresh).then(wire).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });

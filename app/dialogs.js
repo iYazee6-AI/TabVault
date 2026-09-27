@@ -1,7 +1,7 @@
 (() => {
   const TV = self.TabVault;
   const App = window.TabVaultApp;
-  const { el, toast, closeDialog } = App;
+  const { el, toast, closeDialog, windowLabel } = App;
   const VERSION = chrome.runtime.getManifest().version;
 
   function download(filename, text) {
@@ -18,6 +18,14 @@
   App.dialogs.duplicates = (box) => {
     const settings = App.getSettings();
     let ignoreHash = settings.ignoreHash;
+    // The Window column uses the cards' label: the window's name, else its active
+    // tab's title; "Window N" (grid position) only if that is blank.
+    const windowCell = (windowId) => {
+      const wins = App.getSession().windows;
+      const win = wins.find((w) => w.id === windowId);
+      const label = win ? windowLabel(win) : "";
+      return label || (win ? "Window " + (wins.indexOf(win) + 1) : "Window");
+    };
     const draw = () => {
       const groups = TV.findDuplicates(App.getSession(), { ignoreHash });
       const keep = new Map(groups.map((g) => [g.url, g.keepId]));
@@ -30,7 +38,7 @@
       for (const g of groups) {
         const table = el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Keep"), el("th", {}, "Title"), el("th", {}, "Window"))));
         for (const { windowId, tab } of g.tabs) {
-          table.append(el("tr", {}, el("td", {}, el("input", { type: "radio", name: `keep-${g.url}`, checked: keep.get(g.url) === tab.id ? "" : null, onchange: () => keep.set(g.url, tab.id) })), el("td", { title: tab.url }, tab.title || tab.url), el("td", { class: "muted" }, String(windowId))));
+          table.append(el("tr", {}, el("td", {}, el("input", { type: "radio", name: `keep-${g.url}`, checked: keep.get(g.url) === tab.id ? "" : null, onchange: () => keep.set(g.url, tab.id) })), el("td", { title: tab.url }, tab.title || tab.url), el("td", { class: "muted wcell", title: windowCell(windowId) }, windowCell(windowId).slice(0, 40))));
         }
         list.append(el("div", {}, el("div", { class: "muted", style: "word-break:break-all" }, g.url), table));
       }
@@ -188,9 +196,9 @@
       const list = el("div", { class: "list" });
       if (!snapshots.length) list.append(el("p", { class: "muted" }, "No snapshots yet. They are taken automatically when your tabs change."));
       for (const s of snapshots) {
-        list.append(el("div", { class: "row", dataset: { snapshot: s.id } },
-          el("span", { style: "min-width:170px" }, fmt(s.takenAt)),
-          el("span", { class: "muted", style: "min-width:120px" }, `${s.reason}${s.pinned ? " · kept" : ""}`),
+        list.append(el("div", { class: "row snap", dataset: { snapshot: s.id } },
+          el("span", { title: fmt(s.takenAt) }, fmt(s.takenAt)),
+          el("span", { class: "muted" }, `${s.reason}${s.pinned ? " · kept" : ""}`),
           el("span", { class: "muted" }, `${s.windows} windows · ${s.tabs} tabs`),
           el("button", { onclick: () => showRestore(box, s.session, "Snapshot") }, "Restore"),
           el("button", { onclick: () => { const f = TV.toJsonFile(s.session, { now: s.takenAt, version: VERSION }); download(f.filename, f.text); toast("Exported"); } }, "Export"),

@@ -126,7 +126,7 @@ A few things the automated tests can't (fully) cover, worth checking by hand in 
 
 ## Privacy
 
-Chrome shows a permission warning for this extension because of the `tabs` permission: it means TabVault can read the URL, title and favicon of every tab in every window, and open, close, move or modify them — which is exactly what a tab manager needs to do. TabVault does not make network requests of its own, does not include any analytics or telemetry, and does not send tab data anywhere: everything it reads and writes stays in `chrome.storage.local` on your machine (see [How data is stored](#how-data-is-stored)). Export and import are manual, local file operations you initiate.
+Chrome shows a permission warning for this extension because of the `tabs` permission: it means TabVault can read the URL, title and favicon of every tab in every window, and open, close, move or modify them — which is exactly what a tab manager needs to do. TabVault sends nothing to any server of its own, does not include any analytics or telemetry, and does not send tab data anywhere (the only network activity is the browser fetching each tab's favicon from that tab's own site, which 1.0 did too): everything it reads and writes stays in `chrome.storage.local` on your machine (see [How data is stored](#how-data-is-stored)). Export and import are manual, local file operations you initiate.
 
 ## Publishing
 

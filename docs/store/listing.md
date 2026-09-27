@@ -121,7 +121,7 @@ SNAPSHOTS, EXPORT AND RESTORE
 
 WHAT IT NEVER DOES
 • It never reads the content of a page. TabVault asks for no access to websites and injects no scripts, so it sees a tab's title, address and favicon and nothing more.
-• It makes no network requests, contains no analytics or telemetry, and has no account or server. Everything it stores stays in your browser's local extension storage on your machine.
+• It sends nothing to any server of its own, contains no analytics or telemetry, and has no account. The only network activity is the browser fetching each tab's favicon from that tab's own site, which 1.0 did too. Everything it stores stays in your browser's local extension storage on your machine.
 • Export and import are manual file operations that you start.
 
 GOOD TO KNOW
@@ -191,7 +191,7 @@ permissions)
 | Field | Value |
 |---|---|
 | Are you using remote code? | `No, I am not using remote code` |
-| Justification (if asked) | `All JavaScript ships inside the package: background.js, app/ and lib/. There is no eval, no new Function, no remotely hosted script or stylesheet, and no network request of any kind.` |
+| Justification (if asked) | `All JavaScript ships inside the package: background.js, app/ and lib/. There is no eval, no new Function, and no remotely hosted script or stylesheet. The extension sends nothing to any server of its own; the only network activity is the browser fetching each tab's favicon from that tab's own site.` |
 
 **Data usage** — "What user data do you plan to collect from users now or in
 the future?" Tick:
@@ -298,5 +298,5 @@ NEW IN 1.1
 • Pick a group's colour from eight dots.
 • Selected tabs get a floating bar: Move to, Group, Pin, Discard, Close. Esc clears it.
 • More keyboard: j and k to move, x to select, g to group, d for duplicates, ? for every shortcut, with a hint strip at the bottom.
-• Fonts are bundled with the extension; it still makes no network requests.
+• Fonts are bundled with the extension. TabVault still sends nothing to any server of its own and has no analytics; the only network activity is the browser fetching each tab's favicon from that tab's own site, as in 1.0.
 ```

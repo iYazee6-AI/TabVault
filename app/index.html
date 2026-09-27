@@ -151,6 +151,9 @@
     #dialog td, #dialog th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--l); vertical-align: top; }
     #dialog th { font-weight: 500; color: var(--t2); }
     #dialog .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #dialog .row.snap { flex-wrap: nowrap; }
+    #dialog .row.snap > span { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #dialog .row.snap > button { flex: none; }
     #dialog .muted { color: var(--t2); }
     #dialog .list { max-height: 50vh; overflow: auto; }
     #toast { position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); z-index: 30; background: var(--t); color: var(--g); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }

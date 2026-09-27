@@ -447,6 +447,13 @@ async function main() {
       assert(headerText.includes("1 duplicated URL"), `duplicates header = "${headerText}"`);
       const rowCount = await appPage.$$eval("#dialog table tr", (rows) => rows.length - 1); // minus header row
       assert(rowCount === 3, `expected 3 duplicate rows, got ${rowCount}`);
+      const expectedLabel = await (await worker()).evaluate(async (windowId) => {
+        const { windowNames = {} } = await chrome.storage.local.get("windowNames");
+        const [active] = await chrome.tabs.query({ windowId, active: true });
+        return new Map(Object.entries(windowNames)).get(String(windowId)) || (active && (active.title || active.url)) || "";
+      }, winC.id);
+      const windowCells = await appPage.$$eval("#dialog table td.wcell", (cells) => cells.map((c) => c.textContent));
+      assert(expectedLabel && windowCells.length === 3 && windowCells.every((c) => c === expectedLabel.slice(0, 40) && !/^[0-9]+$/.test(c)), 'Window column = ' + JSON.stringify(windowCells) + ', expected the window label ' + JSON.stringify(expectedLabel));
       const closeCount = rowCount - 1;
 
       await appPage.click(`#dialog button:has-text("Close ${closeCount} duplicates")`);
@@ -454,7 +461,7 @@ async function main() {
         const tabs = await (await worker()).evaluate((url) => chrome.tabs.query({ url }), oneUrl);
         return tabs.length === 1 ? tabs : null;
       });
-      record("G", "PASS", `header="${headerText}", duplicate rows=${rowCount}; clicked "Close ${closeCount} duplicates" -> exactly ${remaining.length} one.html tab remains (id=${remaining[0].id})`);
+      record("G", "PASS", `header="${headerText}", duplicate rows=${rowCount}, Window column=${JSON.stringify(windowCells)}; clicked "Close ${closeCount} duplicates" -> exactly ${remaining.length} one.html tab remains (id=${remaining[0].id})`);
     } catch (e) {
       record("G", "FAIL", e.message);
     }

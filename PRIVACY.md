@@ -45,9 +45,11 @@ next starts; `chrome.storage.session`, which the browser clears when it
 closes, for a short-lived value that times the snapshot debounce; and the
 extension page's own `localStorage`, for a copy of your Appearance choice).
 TabVault has no
-server. It makes no network requests of its own, contains no analytics or
+server. It sends nothing to any server of its own, contains no analytics or
 telemetry, and never transmits, syncs, sells or shares your data with anyone,
-including the developer.
+including the developer. The only network activity is the browser fetching
+each tab's favicon from that tab's own site to show it in the list, which
+version 1.0 did too.
 
 If you use **Export**, a JSON file containing the session you chose is written
 to the download location you pick. That file is yours and under your control.
