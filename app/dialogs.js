@@ -28,24 +28,42 @@
     };
     const draw = () => {
       const groups = TV.findDuplicates(App.getSession(), { ignoreHash });
-      const keep = new Map(groups.map((g) => [g.url, g.keepId]));
       box.replaceChildren(
         el("h2", {}, "Duplicate tabs"),
         el("div", { class: "row" }, el("label", {}, el("input", { type: "checkbox", checked: ignoreHash ? "" : null, onchange: (e) => { ignoreHash = e.target.checked; draw(); } }), " Ignore #hash when comparing"), el("span", { class: "muted" }, `${groups.length} duplicated URL${groups.length === 1 ? "" : "s"}`)),
       );
       if (!groups.length) { box.append(el("p", { class: "muted" }, "No duplicates."), el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close"))); return; }
+      // Every extra copy (all but the kept one) is a checkbox, checked on each draw.
+      const boxes = [];
+      const go = el("button", { class: "primary", type: "button" });
+      const chosen = () => boxes.filter((b) => b.checked).map((b) => Number(b.dataset.tab));
+      const update = () => { const n = chosen().length; go.textContent = `Close ${n} selected`; go.disabled = n === 0; };
+      const setAll = (on) => { for (const b of boxes) b.checked = on; update(); };
       const list = el("div", { class: "list" });
       for (const g of groups) {
-        const table = el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Keep"), el("th", {}, "Title"), el("th", {}, "Window"))));
+        const table = el("table", { class: "dupes" }, el("thead", {}, el("tr", {}, el("th", {}, "Close"), el("th", {}, "Title"), el("th", {}, "Window"))));
         for (const { windowId, tab } of g.tabs) {
-          table.append(el("tr", {}, el("td", {}, el("input", { type: "radio", name: `keep-${g.url}`, checked: keep.get(g.url) === tab.id ? "" : null, onchange: () => keep.set(g.url, tab.id) })), el("td", { title: tab.url }, tab.title || tab.url), el("td", { class: "muted wcell", title: windowCell(windowId) }, windowCell(windowId).slice(0, 40))));
+          let first;
+          if (tab.id === g.keepId) first = el("span", { class: "kept" }, "kept");
+          else {
+            first = el("input", { type: "checkbox", checked: "", dataset: { tab: String(tab.id) }, "aria-label": `Close ${tab.title || tab.url}`, onchange: update });
+            boxes.push(first);
+          }
+          table.append(el("tr", { dataset: { tab: String(tab.id) } }, el("td", {}, first), el("td", { title: tab.url }, tab.title || tab.url), el("td", { class: "muted wcell", title: windowCell(windowId) }, windowCell(windowId).slice(0, 40))));
         }
         list.append(el("div", {}, el("div", { class: "muted", style: "word-break:break-all" }, g.url), table));
       }
-      const toClose = () => groups.flatMap((g) => g.tabs.map((x) => x.tab.id).filter((id) => id !== keep.get(g.url)));
-      box.append(list, el("div", { class: "row" },
-        el("button", { class: "primary", onclick: async () => { const ids = toClose(); try { await chrome.tabs.remove(ids); toast(`Closed ${ids.length} duplicate${ids.length === 1 ? "" : "s"}`); closeDialog(); } catch (e) { toast(`Could not close: ${e.message || e}`); } } }, `Close ${toClose().length} duplicates`),
-        el("button", { onclick: closeDialog }, "Cancel")));
+      go.addEventListener("click", async () => {
+        const ids = chosen();
+        if (!ids.length) return;
+        try { await chrome.tabs.remove(ids); toast(`Closed ${ids.length} duplicate${ids.length === 1 ? "" : "s"}`); closeDialog(); }
+        catch (e) { toast(`Could not close: ${e.message || e}`); }
+      });
+      update();
+      box.append(
+        el("div", { class: "row" }, el("button", { type: "button", class: "small", onclick: () => setAll(true) }, "Select all"), el("button", { type: "button", class: "small", onclick: () => setAll(false) }, "Select none")),
+        list,
+        el("div", { class: "row" }, go, el("button", { onclick: closeDialog }, "Cancel")));
     };
     draw();
   };
@@ -254,6 +272,22 @@
     box.replaceChildren(
       el("h2", {}, "Keyboard shortcuts"),
       el("table", { class: "shortcuts" }, el("tbody", {}, ...rows)),
+      el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
+  };
+
+  // ---- about --------------------------------------------------------------------------
+  // Static text and links only; nothing is fetched.
+  const REPO_URL = "https://github.com/iYazee6-AI/TabVault";
+  App.dialogs.about = (box) => {
+    const link = (href, text) => el("a", { href, target: "_blank", rel: "noopener" }, text);
+    box.replaceChildren(
+      el("h2", {}, "TabVault ", el("span", { class: "version" }, VERSION)),
+      el("p", {}, "Every window, group and tab on one page. Local only."),
+      el("ul", { class: "links" },
+        el("li", {}, link(REPO_URL, "GitHub repository")),
+        el("li", {}, link(REPO_URL + "/issues", "Report an issue")),
+        el("li", {}, link(REPO_URL + "/blob/main/PRIVACY.md", "Privacy policy"))),
+      el("p", { class: "muted" }, "MIT licence. Type: IBM Plex Sans and Plex Mono (SIL Open Font License)."),
       el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
   };
 

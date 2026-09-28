@@ -34,14 +34,14 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 - **Selection** — click a tab's checkbox, or click the row (Ctrl/Cmd-click to toggle one tab, Shift-click to select a range within a window). The floating selection bar at the bottom shows a count and the bulk actions.
 - **Move** — drag a tab row onto another window's card (or onto a group, to move it into that group), or select tabs and choose a window from **Move to ▾** in the floating selection bar. "New window" opens the selection in a fresh window.
 - **Groups** — select tabs and click **Group** to create a native tab group; click a group's ✎ to rename it, pick one of its eight colour dots to recolor it, and **⊟** to ungroup. Click a group's header to collapse/expand it.
-- **Duplicates** — click **Find duplicates** to see tabs that share a URL (optionally ignoring `#hash`), pick which copy of each to keep, and close the rest with one click.
+- **Duplicates** — click **Find duplicates** to see tabs that share a URL (optionally ignoring `#hash`), and close the extra copies you choose: each extra copy has a checkbox (all ticked by default, with **Select all** / **Select none**), the most recently used copy is marked "kept", and **Close N selected** closes only the ticked rows.
 - **Snapshots** — click **Snapshots** to browse automatic and manual snapshots, restore one (into new windows), export it to a file, keep it so it's never rotated away, or delete it. **Snapshot now** takes one immediately.
 - **Export** — click **Export** to download the current session (all windows, tabs, groups, pinned state and positions) as a JSON file.
 - **Import** — click **Import**, pick a previously exported (or snapshot-exported) JSON file (up to 50 MB), choose which of its windows to restore, and click **Restore selected windows**. Each window reopens with the same tabs, groups and pinned state; with the **Settings** → "Load restored tabs only when opened (lazy)" option on (the default), only the first tab in each window loads right away and the rest load the next time you click them.
 
 ## Settings
 
-Available from the **Settings** button: the snapshot debounce (how many seconds of no tab changes before an automatic snapshot is taken) and how many snapshots to keep; whether duplicate-finding ignores the URL `#hash`; Appearance (System/Light/Dark) and density (comfortable/compact); whether URLs are shown under titles; and **"Load restored tabs only when opened (lazy)"**, which controls whether Import/Restore loads only the first tab of each restored window immediately (the rest open discarded, loading on click) or loads every restored tab right away. It's on by default.
+Available from **Settings** in the **⋯** menu (which also holds Export, Import, Help and **About**: the version, the repository, the issue tracker and the privacy policy): the snapshot debounce (how many seconds of no tab changes before an automatic snapshot is taken) and how many snapshots to keep; whether duplicate-finding ignores the URL `#hash`; Appearance (System/Light/Dark) and density (comfortable/compact); whether URLs are shown under titles; and **"Load restored tabs only when opened (lazy)"**, which controls whether Import/Restore loads only the first tab of each restored window immediately (the rest open discarded, loading on click) or loads every restored tab right away. It's on by default.
 
 ## Keyboard shortcuts
 
@@ -71,7 +71,7 @@ The list lives in one place, `lib/shortcuts.js`; the page's key handler, the hin
 | `background.js` | Service worker: opens the app page, takes snapshots, handles messages from the page |
 | `app/index.html` | The full-page UI |
 | `app/app.js` | Rendering, selection, drag-and-drop, keyboard handling |
-| `app/dialogs.js` | Duplicates, export, import/restore, snapshots, settings and help dialogs |
+| `app/dialogs.js` | Duplicates, export, import/restore, snapshots, settings, help and about dialogs |
 | `app/theme-boot.js` | Applies an explicit Light/Dark choice before first paint |
 | `app/fonts/` | IBM Plex Sans (400/500/600) and Plex Mono (500), OFL 1.1 (`LICENSE.txt`) |
 | `lib/ui.js` | Header counter text, tab domain, favicon fallback colour, duplicate flags |

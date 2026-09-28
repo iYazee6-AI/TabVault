@@ -9,7 +9,7 @@ const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"];
 const byId = new Map();
 const consoleErrors = { worker: [], app: [] };
 
@@ -455,13 +455,16 @@ async function main() {
       const windowCells = await appPage.$$eval("#dialog table td.wcell", (cells) => cells.map((c) => c.textContent));
       assert(expectedLabel && windowCells.length === 3 && windowCells.every((c) => c === expectedLabel.slice(0, 40) && !/^[0-9]+$/.test(c)), 'Window column = ' + JSON.stringify(windowCells) + ', expected the window label ' + JSON.stringify(expectedLabel));
       const closeCount = rowCount - 1;
+      const checked = await appPage.$$eval("#dialog table input[type=checkbox]", (bs) => bs.filter((b) => b.checked).length);
+      const keptMarks = await appPage.$$eval("#dialog table .kept", (ks) => ks.length);
+      assert(checked === closeCount && keptMarks === 1, `expected ${closeCount} checked rows and 1 kept marker, got ${checked} and ${keptMarks}`);
 
-      await appPage.click(`#dialog button:has-text("Close ${closeCount} duplicates")`);
+      await appPage.click(`#dialog button:has-text("Close ${closeCount} selected")`);
       const remaining = await waitFor(async () => {
         const tabs = await (await worker()).evaluate((url) => chrome.tabs.query({ url }), oneUrl);
         return tabs.length === 1 ? tabs : null;
       });
-      record("G", "PASS", `header="${headerText}", duplicate rows=${rowCount}, Window column=${JSON.stringify(windowCells)}; clicked "Close ${closeCount} duplicates" -> exactly ${remaining.length} one.html tab remains (id=${remaining[0].id})`);
+      record("G", "PASS", `header="${headerText}", duplicate rows=${rowCount}, Window column=${JSON.stringify(windowCells)}; clicked "Close ${closeCount} selected" -> exactly ${remaining.length} one.html tab remains (id=${remaining[0].id})`);
     } catch (e) {
       record("G", "FAIL", e.message);
     }
@@ -1038,6 +1041,110 @@ async function main() {
       record("R", "FAIL", e.message);
     }
     await appPage.emulateMedia({ colorScheme: null }).catch(() => {});
+    await resetUi();
+
+    // ---------------------------------------------------------------
+    // S. About dialog from the ⋯ menu: version from the manifest, links
+    // ---------------------------------------------------------------
+    try {
+      const REPO_URL = "https://github.com/iYazee6-AI/TabVault";
+      const fileVersion = JSON.parse(fs.readFileSync(path.join(REPO, "manifest.json"), "utf8")).version;
+      const live = await (await worker()).evaluate(() => { const m = chrome.runtime.getManifest(); return { version: m.version, homepage: m.homepage_url }; });
+      await openMenuItem("#btn-about");
+      await waitForTextContains(appPage, "#dialog h2", "TabVault");
+      const version = await appPage.$eval("#dialog h2 .version", (n) => n.textContent);
+      assert(version === live.version && version === fileVersion, `About shows version "${version}", manifest says "${live.version}" (file "${fileVersion}")`);
+      const links = await appPage.$$eval("#dialog a", (as) => as.map((a) => ({ text: a.textContent, href: a.getAttribute("href"), target: a.getAttribute("target"), rel: a.getAttribute("rel") })));
+      const repo = links.find((l) => l.text === "GitHub repository");
+      assert(repo && repo.href === REPO_URL && repo.target === "_blank" && repo.rel === "noopener", `repository link = ${JSON.stringify(repo)}`);
+      assert(links.length === 3 && links.some((l) => l.href === REPO_URL + "/issues") && links.some((l) => l.href === REPO_URL + "/blob/main/PRIVACY.md"), `links = ${JSON.stringify(links)}`);
+      assert(live.homepage === REPO_URL, `manifest homepage_url = ${live.homepage}`);
+      await appPage.keyboard.press("Escape");
+      await waitFor(async () => appPage.$eval("#dialog-backdrop", (n) => n.hidden));
+      record("S", "PASS", `⋯ > About shows "TabVault ${version}" (= getManifest().version and manifest.json), repository link ${repo.href} (target=_blank rel=noopener), issues and privacy links, homepage_url set; Esc closed it`);
+    } catch (e) {
+      record("S", "FAIL", e.message);
+    }
+    await resetUi();
+
+    // ---------------------------------------------------------------
+    // T. Duplicates: choose per row. Two duplicate groups in the fixture
+    // window (query strings keep them apart from every other one.html or
+    // two.html in the session); one extra copy is unchecked and survives.
+    // ---------------------------------------------------------------
+    try {
+      assert(winM, "no fixture window for T");
+      const urlA = oneUrl + "?dupT";
+      const urlB = twoUrl + "?dupT";
+      const created = await (await worker()).evaluate(async ({ windowId, urls }) => {
+        const out = [];
+        for (const url of urls) out.push((await chrome.tabs.create({ windowId, url, active: false })).id);
+        return out;
+      }, { windowId: winM.id, urls: [urlA, urlA, urlA, urlB, urlB] });
+      await waitFor(async () => {
+        const ts = await (await worker()).evaluate((ids) => Promise.all(ids.map((id) => chrome.tabs.get(id))), created);
+        return ts.every((t) => String(t.url || "").endsWith("?dupT"));
+      }, { timeout: 15000 });
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      const idsA = created.slice(0, 3);
+      const idsB = created.slice(3);
+
+      await appPage.click("#btn-dupes");
+      await waitForTextContains(appPage, "#dialog .muted", "duplicated URL");
+      const buttonLabel = () => appPage.$eval("#dialog button.primary", (b) => ({ text: b.textContent, disabled: b.disabled }));
+      const rowInfo = (id) => appPage.$eval(`#dialog tr[data-tab="${id}"]`, (tr) => ({ box: !!tr.querySelector("input[type=checkbox]"), kept: !!tr.querySelector(".kept") }));
+      const infoA = await Promise.all(idsA.map(rowInfo));
+      const infoB = await Promise.all(idsB.map(rowInfo));
+      assert(infoA.filter((r) => r.kept && !r.box).length === 1 && infoA.filter((r) => r.box && !r.kept).length === 2, `group A rows = ${JSON.stringify(infoA)}`);
+      assert(infoB.filter((r) => r.kept && !r.box).length === 1 && infoB.filter((r) => r.box && !r.kept).length === 1, `group B rows = ${JSON.stringify(infoB)}`);
+      const keptA = idsA[infoA.findIndex((r) => r.kept)];
+      const keptB = idsB[infoB.findIndex((r) => r.kept)];
+      const extrasA = idsA.filter((id) => id !== keptA);
+      const extraB = idsB.find((id) => id !== keptB);
+
+      const total = await appPage.$$eval("#dialog table.dupes input[type=checkbox]", (bs) => bs.length);
+      const allChecked = await appPage.$$eval("#dialog table.dupes input[type=checkbox]", (bs) => bs.every((b) => b.checked));
+      const initial = await buttonLabel();
+      assert(allChecked && initial.text === `Close ${total} selected` && !initial.disabled, `default: all checked=${allChecked}, button ${JSON.stringify(initial)}, ${total} boxes`);
+      await appPage.click('#dialog button:has-text("Select none")');
+      const none = await buttonLabel();
+      assert(none.text === "Close 0 selected" && none.disabled, `after Select none: ${JSON.stringify(none)}`);
+      await appPage.click('#dialog button:has-text("Select all")');
+      const all = await buttonLabel();
+      assert(all.text === `Close ${total} selected` && !all.disabled, `after Select all: ${JSON.stringify(all)}`);
+
+      // Leave any duplicate outside this fixture alone, then uncheck one of group A's extra copies.
+      const mine = created.map(String);
+      const foreign = await appPage.$$eval("#dialog table.dupes input[type=checkbox]", (bs, ours) => {
+        let n = 0;
+        for (const b of bs) if (!ours.includes(b.dataset.tab)) { b.click(); n++; }
+        return n;
+      }, mine);
+      const spared = extrasA[0];
+      await appPage.click(`#dialog tr[data-tab="${spared}"] input[type=checkbox]`);
+      const toClose = [extrasA[1], extraB];
+      const chosen = await buttonLabel();
+      assert(chosen.text === `Close ${toClose.length} selected` && !chosen.disabled, `after unchecking ${spared}: ${JSON.stringify(chosen)}`);
+      await appPage.click(`#dialog button:has-text("Close ${toClose.length} selected")`);
+      const open = await waitFor(async () => {
+        const present = await (await worker()).evaluate(async (ids) => {
+          const out = [];
+          for (const id of ids) { try { await chrome.tabs.get(id); out.push(id); } catch { /* closed */ } }
+          return out;
+        }, created);
+        return toClose.every((id) => !present.includes(id)) ? present : null;
+      });
+      const expectedOpen = [keptA, spared, keptB].sort((a, b) => a - b);
+      assert(JSON.stringify([...open].sort((a, b) => a - b)) === JSON.stringify(expectedOpen), `tabs still open ${JSON.stringify(open)}, expected ${JSON.stringify(expectedOpen)}`);
+      const toastText = await appPage.$eval("#toast", (n) => n.textContent);
+      assert(toastText === `Closed ${toClose.length} duplicates`, `toast = "${toastText}"`);
+      const foreignNote = foreign ? ` (and ${foreign} foreign row(s))` : "";
+      record("T", "PASS", `two groups (${urlA} x3, ${urlB} x2): kept rows carry the kept marker and no checkbox; default "Close ${total} selected", Select none -> "Close 0 selected" disabled, Select all -> back; unchecked ${spared}${foreignNote} -> "${chosen.text}"; closed exactly ${JSON.stringify(toClose)}; still open ${JSON.stringify(expectedOpen)} incl. the unchecked ${spared}; toast "${toastText}"`);
+      await (await worker()).evaluate((ids) => chrome.tabs.remove(ids).catch(() => {}), open);
+    } catch (e) {
+      record("T", "FAIL", e.message);
+    }
+    await resetUi();
 
     // ---------------------------------------------------------------
     // L. Settings persistence (run before K; K's real-time wait is kept

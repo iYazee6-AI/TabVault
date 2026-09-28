@@ -663,6 +663,7 @@
     $("btn-snapshots").addEventListener("click", () => openDialog("snapshots"));
     $("btn-settings").addEventListener("click", () => openDialog("settings"));
     $("btn-help").addEventListener("click", () => openDialog("help"));
+    $("btn-about").addEventListener("click", () => openDialog("about"));
     $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("more-menu"); });
     $("more-menu").addEventListener("click", () => closeMenus());
     document.addEventListener("click", (e) => { if (!e.target.closest(".menu-wrap")) closeMenus(); });

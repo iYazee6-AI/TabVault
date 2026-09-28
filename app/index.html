@@ -156,6 +156,15 @@
     #dialog .row.snap > button { flex: none; }
     #dialog .muted { color: var(--t2); }
     #dialog .list { max-height: 50vh; overflow: auto; }
+    #dialog button.small { padding: 2px 8px; font-size: 12px; }
+    #dialog table.dupes { table-layout: fixed; margin-bottom: 6px; }
+    #dialog table.dupes th:first-child { width: 52px; }
+    #dialog table.dupes th:last-child { width: 30%; }
+    #dialog table.dupes td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #dialog .kept { font: 500 11px var(--mono); color: var(--pText); background: var(--pSoft); border-radius: 4px; padding: 1px 5px; }
+    #dialog h2 .version { font: 500 12px var(--mono); color: var(--t2); margin-left: 4px; }
+    #dialog ul.links { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+    #dialog a { color: var(--pText); }
     #toast { position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); z-index: 30; background: var(--t); color: var(--g); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
     #toast.on { opacity: 1; }
     /* == end == */
@@ -172,12 +181,13 @@
     <button id="btn-dupes" type="button" class="primary">Find duplicates</button>
     <button id="btn-snapshots" type="button">Snapshots</button>
     <div class="menu-wrap">
-      <button id="btn-more" type="button" class="icon" title="More: export, import, settings, help" aria-label="More: export, import, settings, help" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
+      <button id="btn-more" type="button" class="icon" title="More: export, import, settings, help, about" aria-label="More: export, import, settings, help, about" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
       <div id="more-menu" class="menu" role="menu" hidden>
         <button id="btn-export" type="button" role="menuitem">Export</button>
         <button id="btn-import" type="button" role="menuitem">Import</button>
         <button id="btn-settings" type="button" role="menuitem">Settings</button>
         <button id="btn-help" type="button" role="menuitem">Help</button>
+        <button id="btn-about" type="button" role="menuitem">About</button>
       </div>
     </div>
     <input type="file" id="import-file" accept="application/json,.json" hidden />
