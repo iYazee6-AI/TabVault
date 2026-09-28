@@ -1122,7 +1122,14 @@ async function main() {
       }, mine);
       const spared = extrasA[0];
       await appPage.click(`#dialog tr[data-tab="${spared}"] input[type=checkbox]`);
-      const toClose = [extrasA[1], extraB];
+      // Keep the other copy in group B instead: the marker moves, the old kept copy gets a ticked checkbox.
+      await appPage.click(`#dialog tr[data-tab="${extraB}"] input[type=radio]`);
+      const swappedNew = await rowInfo(extraB);
+      const swappedOld = await rowInfo(keptB);
+      const oldBoxChecked = await appPage.$eval(`#dialog tr[data-tab="${keptB}"] input[type=checkbox]`, (b) => b.checked).catch(() => null);
+      const sparedStill = await appPage.$eval(`#dialog tr[data-tab="${spared}"] input[type=checkbox]`, (b) => b.checked);
+      assert(swappedNew.kept && !swappedNew.box && swappedOld.box && !swappedOld.kept && oldBoxChecked === true && sparedStill === false, `after Keep moved to ${extraB}: new ${JSON.stringify(swappedNew)}, old ${JSON.stringify(swappedOld)} checked=${oldBoxChecked}, spared checked=${sparedStill}`);
+      const toClose = [extrasA[1], keptB];
       const chosen = await buttonLabel();
       assert(chosen.text === `Close ${toClose.length} selected` && !chosen.disabled, `after unchecking ${spared}: ${JSON.stringify(chosen)}`);
       await appPage.click(`#dialog button:has-text("Close ${toClose.length} selected")`);
@@ -1134,12 +1141,12 @@ async function main() {
         }, created);
         return toClose.every((id) => !present.includes(id)) ? present : null;
       });
-      const expectedOpen = [keptA, spared, keptB].sort((a, b) => a - b);
+      const expectedOpen = [keptA, spared, extraB].sort((a, b) => a - b);
       assert(JSON.stringify([...open].sort((a, b) => a - b)) === JSON.stringify(expectedOpen), `tabs still open ${JSON.stringify(open)}, expected ${JSON.stringify(expectedOpen)}`);
       const toastText = await appPage.$eval("#toast", (n) => n.textContent);
       assert(toastText === `Closed ${toClose.length} duplicates`, `toast = "${toastText}"`);
       const foreignNote = foreign ? ` (and ${foreign} foreign row(s))` : "";
-      record("T", "PASS", `two groups (${urlA} x3, ${urlB} x2): kept rows carry the kept marker and no checkbox; default "Close ${total} selected", Select none -> "Close 0 selected" disabled, Select all -> back; unchecked ${spared}${foreignNote} -> "${chosen.text}"; closed exactly ${JSON.stringify(toClose)}; still open ${JSON.stringify(expectedOpen)} incl. the unchecked ${spared}; toast "${toastText}"`);
+      record("T", "PASS", `two groups (${urlA} x3, ${urlB} x2): kept rows carry the kept marker and no checkbox; default "Close ${total} selected", Select none -> "Close 0 selected" disabled, Select all -> back; unchecked ${spared}${foreignNote}, moved Keep in group B from ${keptB} to ${extraB} (marker moved, ${keptB} got a ticked checkbox) -> "${chosen.text}"; closed exactly ${JSON.stringify(toClose)}; still open ${JSON.stringify(expectedOpen)} incl. the unchecked ${spared} and the newly kept ${extraB}, previously kept ${keptB} closed; toast "${toastText}"`);
       await (await worker()).evaluate((ids) => chrome.tabs.remove(ids).catch(() => {}), open);
     } catch (e) {
       record("T", "FAIL", e.message);

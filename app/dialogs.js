@@ -33,24 +33,44 @@
         el("div", { class: "row" }, el("label", {}, el("input", { type: "checkbox", checked: ignoreHash ? "" : null, onchange: (e) => { ignoreHash = e.target.checked; draw(); } }), " Ignore #hash when comparing"), el("span", { class: "muted" }, `${groups.length} duplicated URL${groups.length === 1 ? "" : "s"}`)),
       );
       if (!groups.length) { box.append(el("p", { class: "muted" }, "No duplicates."), el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close"))); return; }
-      // Every extra copy (all but the kept one) is a checkbox, checked on each draw.
-      const boxes = [];
+      // Per group: a Keep radio on every row (the dedupe rule's pick by default). The kept row shows
+      // the "kept" marker; every other row has a close checkbox, all checked on each draw.
+      const keep = new Map(groups.map((g) => [g.url, g.keepId]));
+      const checked = new Map();
+      for (const g of groups) for (const { tab } of g.tabs) if (tab.id !== g.keepId) checked.set(tab.id, true);
       const go = el("button", { class: "primary", type: "button" });
-      const chosen = () => boxes.filter((b) => b.checked).map((b) => Number(b.dataset.tab));
+      const chosen = () => groups.flatMap((g) => g.tabs.map((x) => x.tab.id).filter((id) => id !== keep.get(g.url) && checked.get(id)));
       const update = () => { const n = chosen().length; go.textContent = `Close ${n} selected`; go.disabled = n === 0; };
-      const setAll = (on) => { for (const b of boxes) b.checked = on; update(); };
+      const bodies = new Map();
+      const drawRows = (g) => {
+        const kept = keep.get(g.url);
+        bodies.get(g.url).replaceChildren(...g.tabs.map(({ windowId, tab }) => {
+          const name = tab.title || tab.url;
+          const radio = el("input", { type: "radio", name: `keep-${g.url}`, checked: tab.id === kept ? "" : null, "aria-label": `Keep ${name}`, onchange: () => {
+            const prev = keep.get(g.url);
+            keep.set(g.url, tab.id);
+            checked.set(prev, true);
+            drawRows(g);
+            update();
+            const again = bodies.get(g.url).querySelector(`tr[data-tab="${tab.id}"] input[type=radio]`);
+            if (again) again.focus();
+          } });
+          const mark = tab.id === kept
+            ? el("span", { class: "kept" }, "kept")
+            : el("input", { type: "checkbox", checked: checked.get(tab.id) ? "" : null, dataset: { tab: String(tab.id) }, "aria-label": `Close ${name}`, onchange: (e) => { checked.set(tab.id, e.target.checked); update(); } });
+          return el("tr", { dataset: { tab: String(tab.id) } }, el("td", {}, radio), el("td", {}, mark), el("td", { title: tab.url }, name), el("td", { class: "muted wcell", title: windowCell(windowId) }, windowCell(windowId).slice(0, 40)));
+        }));
+      };
+      const setAll = (on) => {
+        for (const g of groups) { for (const { tab } of g.tabs) if (tab.id !== keep.get(g.url)) checked.set(tab.id, on); drawRows(g); }
+        update();
+      };
       const list = el("div", { class: "list" });
       for (const g of groups) {
-        const table = el("table", { class: "dupes" }, el("thead", {}, el("tr", {}, el("th", {}, "Close"), el("th", {}, "Title"), el("th", {}, "Window"))));
-        for (const { windowId, tab } of g.tabs) {
-          let first;
-          if (tab.id === g.keepId) first = el("span", { class: "kept" }, "kept");
-          else {
-            first = el("input", { type: "checkbox", checked: "", dataset: { tab: String(tab.id) }, "aria-label": `Close ${tab.title || tab.url}`, onchange: update });
-            boxes.push(first);
-          }
-          table.append(el("tr", { dataset: { tab: String(tab.id) } }, el("td", {}, first), el("td", { title: tab.url }, tab.title || tab.url), el("td", { class: "muted wcell", title: windowCell(windowId) }, windowCell(windowId).slice(0, 40))));
-        }
+        const body = el("tbody");
+        bodies.set(g.url, body);
+        drawRows(g);
+        const table = el("table", { class: "dupes" }, el("thead", {}, el("tr", {}, el("th", {}, "Keep"), el("th", {}, "Close"), el("th", {}, "Title"), el("th", {}, "Window"))), body);
         list.append(el("div", {}, el("div", { class: "muted", style: "word-break:break-all" }, g.url), table));
       }
       go.addEventListener("click", async () => {

@@ -109,7 +109,7 @@ WHAT YOU CAN DO
 • Select tabs with checkboxes, Ctrl/Cmd-click or Shift-click ranges, then move them to another window, group them, pin them, unload them or close them in bulk.
 • Drag a tab row onto another window's card, or onto a group, to move it there.
 • Create, rename, recolour, collapse and ungroup native tab groups.
-• Find tabs that share a URL and close the extra copies you tick, row by row; the most recently used copy is always kept.
+• Find tabs that share a URL, choose which copy to keep and which extra copies to close, row by row.
 • Navigate entirely from the keyboard: j and k (or the arrows) to move, x to select, g to group, d for duplicates, Enter to go to a tab, Delete to close, ? for the full list. The shortcuts are always shown at the bottom of the page.
 • Light and dark themes that follow Chrome, or pick one in Settings.
 
@@ -140,7 +140,7 @@ Open source, plain HTML and JavaScript, no build step and no dependencies, MIT l
 | Screenshots (upload in this order) | `docs/store/screenshots/01-all-windows.png` — the whole session: three named window cards (Research, Work, Personal), three colour-coded tab groups, a pinned tab, the header counter and the shortcut strip | 1280×800 |
 | | `docs/store/screenshots/02-search.png` — searching "release": only matching tabs remain, the counter reads "3 win · 4 of 27 tabs" | 1280×800 |
 | | `docs/store/screenshots/03-selection.png` — four tabs selected with the floating bar: Move to ▾, Group, Pin, Discard, Close, Esc to clear | 1280×800 |
-| | `docs/store/screenshots/04-duplicates.png` — the duplicate finder listing two duplicated URLs: the kept copy marked, a checkbox on each extra copy, Select all / Select none, and the "Close 2 selected" button | 1280×800 |
+| | `docs/store/screenshots/04-duplicates.png` — the duplicate finder listing two duplicated URLs: a Keep radio per copy with the kept copy marked, a close checkbox on each extra copy, Select all / Select none, and the "Close 2 selected" button | 1280×800 |
 | | `docs/store/screenshots/05-snapshots.png` — the snapshot list: automatic, startup and a kept manual snapshot, with Restore/Export/Keep/Delete | 1280×800 |
 | Small promo tile | `docs/store/promo-tile-440x280.png` | 440×280 |
 | Marquee promo tile | leave empty (optional) | 1400×560 |
@@ -298,7 +298,7 @@ NEW IN 1.1
 • Pick a group's colour from eight dots.
 • Selected tabs get a floating bar: Move to, Group, Pin, Discard, Close. Esc clears it.
 • More keyboard: j and k to move, x to select, g to group, d for duplicates, ? for every shortcut, with a hint strip at the bottom.
-• Duplicates: choose which copies to close, row by row.
+• Duplicates: choose which copy to keep and which extra copies to close, row by row.
 • About in the ⋯ menu: version, the open-source repository, privacy policy.
 • Fonts are bundled with the extension. TabVault still sends nothing to any server of its own and has no analytics; the only network activity is the browser fetching each tab's favicon from that tab's own site, as in 1.0.
 ```
