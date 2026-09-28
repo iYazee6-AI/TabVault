@@ -304,7 +304,7 @@
       el("h2", {}, "TabVault ", el("span", { class: "version" }, VERSION)),
       el("p", {}, "Every window, group and tab on one page. Local only."),
       el("ul", { class: "links" },
-        el("li", {}, link(REPO_URL, "GitHub repository")),
+        el("li", {}, "Source: ", link(REPO_URL, REPO_URL.replace("https://", ""))),
         el("li", {}, link(REPO_URL + "/issues", "Report an issue")),
         el("li", {}, link(REPO_URL + "/blob/main/PRIVACY.md", "Privacy policy"))),
       el("p", { class: "muted" }, "MIT licence. Type: IBM Plex Sans and Plex Mono (SIL Open Font License)."),

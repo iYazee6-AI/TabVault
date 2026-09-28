@@ -1055,7 +1055,7 @@ async function main() {
       const version = await appPage.$eval("#dialog h2 .version", (n) => n.textContent);
       assert(version === live.version && version === fileVersion, `About shows version "${version}", manifest says "${live.version}" (file "${fileVersion}")`);
       const links = await appPage.$$eval("#dialog a", (as) => as.map((a) => ({ text: a.textContent, href: a.getAttribute("href"), target: a.getAttribute("target"), rel: a.getAttribute("rel") })));
-      const repo = links.find((l) => l.text === "GitHub repository");
+      const repo = links.find((l) => l.text === "github.com/iYazee6-AI/TabVault");
       assert(repo && repo.href === REPO_URL && repo.target === "_blank" && repo.rel === "noopener", `repository link = ${JSON.stringify(repo)}`);
       assert(links.length === 3 && links.some((l) => l.href === REPO_URL + "/issues") && links.some((l) => l.href === REPO_URL + "/blob/main/PRIVACY.md"), `links = ${JSON.stringify(links)}`);
       assert(live.homepage === REPO_URL, `manifest homepage_url = ${live.homepage}`);

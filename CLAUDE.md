@@ -70,7 +70,7 @@ contact email is still the `<your contact email>` placeholder).
 - Snapshots are event-driven (debounced), never on a timer; identical
   sessions are not stored twice; manual/pinned snapshots are never rotated out.
 - Restore creates tabs inactive and discards them; nothing loads until clicked.
-- No host permissions, no alarms, no downloads permission.
+- No host permissions, no downloads permission; `alarms` only debounces the change-driven snapshots.
 - Never use alert/confirm/prompt; confirmations are inline.
 - Commit messages end with the attribution trailer used in sibling repos.
 
