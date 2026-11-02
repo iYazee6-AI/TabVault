@@ -1,6 +1,8 @@
-# TabVault
+# TabVault: Open-Source Tab Manager
 
-TabVault is a Manifest V3 Chrome extension that puts every window and tab into one page: search across all of them, select and move tabs between windows, group and rename, clean up duplicates, and keep your session safe with automatic snapshots plus manual JSON export/import. It's a from-scratch reimplementation inspired by [Tab Manager v2](https://github.com/xcv58/Tab-Manager-v2), written in plain JavaScript with no build step and no runtime dependencies. Licensed under the [MIT License](LICENSE).
+<!-- TODO: add the Chrome Web Store badge and listing link here once the listing URL is known (not yet pasted by the owner; do not guess it). -->
+
+TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that puts every window and tab into one page: search across all of them, select and move tabs between windows, group and rename, clean up duplicates, unload the tabs you select to free their memory, and keep your session safe with automatic snapshots plus manual JSON export/import. It's a from-scratch reimplementation inspired by [Tab Manager v2](https://github.com/xcv58/Tab-Manager-v2), written in plain JavaScript with no build step and no runtime dependencies. Licensed under the [MIT License](LICENSE).
 
 ## Features
 

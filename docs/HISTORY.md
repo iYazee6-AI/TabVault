@@ -49,3 +49,8 @@ Result: 23 unit tests, 13 e2e scenarios (I-b PASS or LIMITED depending on the en
 - Store screenshots regenerated in the new look (light theme, RGB without alpha, written by `tools/screenshots.js` itself).
 - Pre-upload additions (branch `feature/about-and-dup-choice`): the duplicates dialog now closes only the extra copies you tick (a Keep radio per copy as in 1.0, defaulting to the `lib/dedupe.js` pick, which is unchanged; a close checkbox on every other copy, all ticked on each draw including after toggling Ignore #hash; changing Keep moves the kept marker and gives the previously kept copy a ticked checkbox; Select all / Select none; a `Close N selected` button disabled at 0); an About dialog in the ⋯ menu (version from the manifest, repository, issues and privacy links, font credits, nothing fetched) and `homepage_url` in the manifest. e2e scenarios S (About) and T (per-row duplicates) added; G now uses the new button label.
 - Result: 36 unit tests, 21 e2e scenarios (I-b PASS or LIMITED as before).
+
+## 2026-11-02 — 1.1.1: store title "TabVault: Open-Source Tab Manager"
+
+- The owner chose the title from the 2026-11-01 competitor survey (word `tabvault rename open-source`): at least 18 store items are named TabVault, and the earlier draft title was 54 characters. The store title is read from the manifest, so `name` changed to the 33-character title and the version moved to 1.1.1; the `description` (store summary) now names the manual unload.
+- The memory claim stays out of the title and reads, in the listing, that TabVault unloads only the tabs you select (Discard and lazy restore); there is no automatic unloading. No code changed.

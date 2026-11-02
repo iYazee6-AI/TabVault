@@ -50,8 +50,16 @@ once the repository is public.
 - [ ] `PRIVACY.md` contact email filled in and the file is reachable at a
       public URL.
 - [ ] `manifest.json` `version` is the base you want to publish (currently
-      `1.0.0`). The Release workflow appends the run number, so the uploaded
-      package is `1.0.0.<run number>`; every later upload must be higher.
+      `1.1.1`). The Release workflow appends the run number, so the uploaded
+      package is `1.1.1.<run number>`; every later upload must be higher.
+- [ ] `manifest.json` `name` is `TabVault: Open-Source Tab Manager` (33 characters; Chrome
+      allows 75, and this kit keeps the title at or under 45 so store cards
+      and search do not cut it). The store title is read from this field, so
+      the listing title changes only with a new package.
+- [ ] The listing makes no claim the code does not back: the memory line says
+      TabVault unloads only the tabs you select (the Discard action and lazy
+      restore); there is no automatic unloading of idle tabs and no memory
+      meter. Change that line only when such a feature ships.
 - [ ] The zip you are about to upload came from **Actions → Release build →
       Run workflow**, and was downloaded from the GitHub Release
       `v<manifest version>.<run number>` that the workflow created (for
@@ -93,15 +101,17 @@ the `setup-trivy` tag it depended on).
 
 | Field | Value |
 |---|---|
-| Title (from manifest) | `TabVault` |
-| Summary (from manifest, 126 characters, max 132) | `Every window and tab in one page. Search, move, group, clean duplicates, and keep your session safe with snapshots and export.` |
+| Title (from manifest `name`, 33 characters, kept at or under 45) | `TabVault: Open-Source Tab Manager` |
+| Summary (from manifest `description`, 125 characters, max 132) | `Every window and tab in one page. Search, move, group, clean duplicates, unload tabs you pick, and keep snapshots and export.` |
 | Category | `Productivity` → subcategory `Tools`. TabVault manages the browser's own windows and tabs rather than acting on page content, which is what the Tools subcategory covers; if the dashboard offers only one level, choose `Productivity`. |
 | Language | `English` |
 
 **Description** (paste as is):
 
 ```
-TabVault puts every window and tab you have open into a single page, and keeps local snapshots of your session so a crash or a stray click does not cost you your tabs.
+TabVault is an open-source tab manager. It puts every window and tab you have open into a single page, and keeps local snapshots of your session so a crash or a stray click does not cost you your tabs.
+
+Free memory on your terms: TabVault unloads only the tabs you select. Pick the tabs you are not using and click Discard; they stay in their windows and reload when you click them. Restored sessions open unloaded too. Nothing is unloaded automatically.
 
 WHAT YOU CAN DO
 • See every window as a card and every tab as a row with its favicon and site, with your native tab groups shown inline. The window TabVault is open in is marked CURRENT, and you can give any window a name.
@@ -284,11 +294,29 @@ three certification checkboxes. Save draft after filling them, then Submit.
 - **Account-level 2-Step Verification and the registration fee** must be done
   by you; nothing in this repo can do it.
 
-## 10. What's new in 1.1.0 (for the update)
+## 10. The 1.1.1 rename (title "TabVault: Open-Source Tab Manager")
+
+Decided 2026-11-02 (the owner's word `tabvault rename open-source`, from the
+2026-11-01 competitor survey: at least 18 store items are called TabVault, and
+the earlier draft title was 54 characters). 1.1.1 changes only the manifest
+`name` (the store title), the manifest `description` (the summary) and this
+kit; the code is the same as 1.1.0.
+
+1. Build the 1.1.1 package (section 2) and upload it as in section 8. If 1.1.0
+   is still in review, either wait until it is published or cancel that
+   review in the dashboard first; a new package cannot be uploaded while one
+   is pending.
+2. Store listing tab: replace the whole description with the block in section
+   4 (it now opens with "TabVault is an open-source tab manager" and the
+   memory line), keeping the "NEW IN 1.1" block below on top while 1.1 is new.
+3. The title and summary come from the package; check they read as in
+   section 4 after the upload.
+
+## 11. What's new in 1.1.0 (for the update)
 
 Upload the 1.1.0 package as in section 8, replace all five screenshots with the
 regenerated ones (same order), and paste this block at the top of the
-description, above "TabVault puts every window...", with one blank line after it:
+description, above "TabVault is an open-source tab manager...", with one blank line after it:
 
 ```
 NEW IN 1.1
