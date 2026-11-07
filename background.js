@@ -1,4 +1,4 @@
-importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
@@ -301,6 +301,23 @@ chrome.tabs.onRemoved.addListener((tabId, info) => {
 });
 chrome.windows.onRemoved.addListener((windowId) => flushClosingWindow(windowId));
 
+// ---- save and close --------------------------------------------------------------
+// The page has already confirmed with the count (never skipped). A kept snapshot of the chosen
+// windows comes first; only the tabs it saved are closed (lib/save-close.js).
+async function saveAndClose({ windowIds, name }) {
+  const ids = (Array.isArray(windowIds) ? windowIds : []).map(Number).filter(Number.isInteger);
+  if (!ids.length) return { ok: false, error: "no window chosen" };
+  const saved = await takeSnapshot("save-close", { windowIds: ids, name, pinned: true });
+  if (!saved.ok || saved.skipped) return { ok: true, skipped: true, closed: 0 };
+  const snap = await TV.getSnapshot(chrome.storage.local, saved.id);
+  const savedTabIds = snap.session.windows.flatMap((w) => w.tabs.map((t) => t.id));
+  const all = await chrome.windows.getAll({ populate: true });
+  const plan = TV.planSaveClose({ windows: all.map((w) => ({ id: w.id, tabIds: (w.tabs || []).map((t) => t.id) })), targetIds: ids, savedTabIds });
+  if (plan.keepOpenWindowId !== null) await chrome.tabs.create({ windowId: plan.keepOpenWindowId, active: true });
+  if (plan.tabIds.length) await chrome.tabs.remove(plan.tabIds);
+  return { ok: true, closed: plan.count, snapshotId: saved.id };
+}
+
 // ---- messages from the page ------------------------------------------------
 function safeRespond(sendResponse, payload) { try { sendResponse(payload); } catch { /* page closed */ } }
 
@@ -320,6 +337,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     case "openPage": openPage().then(() => reply({ ok: true }), fail); return true;
     case "discardIdleNow": runAutoDiscard({ force: true }).then(reply, fail); return true;
+    case "saveAndClose": saveAndClose(msg).then(reply, fail); return true;
     case "recentRemove":
       recentWrite(async () => {
         const { [TV.RECENT_KEY]: current = [] } = await chrome.storage.local.get(TV.RECENT_KEY);

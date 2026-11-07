@@ -347,5 +347,27 @@
       el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
   };
 
+  // ---- save and close -----------------------------------------------------------------
+  // The confirmation is never skipped (no "do not ask again"); focus starts on Cancel.
+  App.dialogs.saveClose = (box, { windowIds, count, name }) => {
+    const plural = count === 1 ? "" : "s";
+    const go = el("button", { type: "button", class: "primary", id: "save-close-go" }, `Save and close ${count} tab${plural}`);
+    const cancel = el("button", { type: "button", id: "save-close-cancel", onclick: closeDialog }, "Cancel");
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      const r = await chrome.runtime.sendMessage({ type: "saveAndClose", windowIds, name }).catch((e) => ({ ok: false, error: e.message || String(e) }));
+      closeDialog();
+      if (r && r.ok && !r.skipped) toast(`Saved ${r.closed} tab${r.closed === 1 ? "" : "s"} to Snapshots and closed them`);
+      else if (r && r.skipped) toast("Nothing to save");
+      else toast(`Could not save and close: ${r && r.error}`);
+    });
+    box.replaceChildren(
+      el("h2", {}, "Save and close"),
+      el("p", { id: "save-close-text" }, `Save ${count} tab${plural} and close them? The snapshot is kept and can be restored from Snapshots.`),
+      el("p", { class: "muted" }, `Snapshot name: ${name}`),
+      el("div", { class: "row" }, go, cancel));
+    cancel.focus();
+  };
+
   App.restoreSession = restoreSession;
 })();

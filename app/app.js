@@ -270,6 +270,7 @@
         el("span", { class: "count", title: `${w.tabs.length} tabs` }, String(w.tabs.length)),
         iconButton("✎", "Rename window", () => renameWindow(w, name)),
         iconButton("☑", "Select all in window", () => { for (const t of w.tabs) state.selected.add(t.id); render(); }),
+        iconButton("⤓", "Save and close window", () => confirmSaveClose([w.id])),
         iconButton("⤴", "Focus window", () => chrome.windows.update(w.id, { focused: true }).catch((e) => toast(`Could not focus: ${e.message || e}`))),
         iconButton("×", "Close window", () => { state.confirmClose = w.id; render(); }, "danger"));
     }
@@ -665,6 +666,7 @@
       render();
     },
     help: () => openDialog("help"),
+    saveClose: () => { const id = thisWindowId(); if (id === null) toast("Move to a tab first (j or k)"); else confirmSaveClose([id]); },
   };
 
   document.addEventListener("keydown", (e) => {
@@ -695,6 +697,22 @@
     ACTIONS[s.action](e);
   });
 
+  // ---- save and close ------------------------------------------------------------
+  // "This window": the focused row's window when the cursor is on screen, else the window
+  // TabVault is in (the page's tab, or the side panel's window).
+  function thisWindowId() {
+    const r = state.cursor === null ? null : visibleTabs().find((x) => x.id === state.cursor);
+    return r ? r.windowId : state.currentWindowId;
+  }
+  // Opens the confirmation (app/dialogs.js saveClose); nothing closes before its button.
+  function confirmSaveClose(windowIds) {
+    const wins = state.session.windows.filter((w) => windowIds.includes(w.id));
+    const count = wins.reduce((n, w) => n + w.tabs.length, 0);
+    if (!count) { toast("Nothing to save in this window"); return; }
+    const label = wins.length === 1 ? windowLabel(wins[0]) : "All windows";
+    openDialog("saveClose", { windowIds: wins.map((w) => w.id), count, name: TV.snapshotName(label, Date.now()) });
+  }
+
   // ---- command palette (Alt+K) ----------------------------------------------------
   // Actions (lib/shortcuts.js by name plus the commands below) and tabs, ranked by lib/palette.js.
   // The page's own extra commands; each run(e) gets a stand-in event for the shortcut actions.
@@ -704,6 +722,7 @@
     { id: "export", label: "Export", run: () => openDialog("export") },
     { id: "snapshots", label: "Snapshots", run: () => openDialog("snapshots") },
     { id: "settings", label: "Settings", run: () => openDialog("settings") },
+    { id: "saveCloseAll", label: "Save and close all windows", run: () => confirmSaveClose(state.session.windows.map((w) => w.id)) },
   ];
   const palette = { open: false, rows: [], index: 0, returnFocus: null };
 

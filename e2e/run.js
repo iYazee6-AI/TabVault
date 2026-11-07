@@ -1291,6 +1291,52 @@ async function main() {
     await appPage.keyboard.press("Escape").catch(() => {});
     await resetUi();
 
+    // ---------------------------------------------------------------
+    // X. Save and close: Shift+S and the card button both ask first with
+    // the count; Cancel keeps the tabs; confirming stores a kept, named
+    // snapshot and closes the window's tabs
+    // ---------------------------------------------------------------
+    try {
+      const xUrls = [`${oneUrl}?x=1`, `${twoUrl}?x=1`];
+      const winX = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), xUrls);
+      const tabsX = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winX.id);
+        return ts.length === 2 && ts.every((t) => String(t.url || "").includes("?x=1")) ? ts.sort((a, b) => a.index - b.index) : null;
+      }, { timeout: 15000 });
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await appPage.waitForSelector(`.window[data-window="${winX.id}"]`);
+
+      await appPage.click(`.tab[data-tab="${tabsX[0].id}"] input[type=checkbox]`);
+      await blurAll();
+      await appPage.keyboard.press("Shift+S");
+      const askedByKey = await waitForTextContains(appPage, "#save-close-text", "Save 2 tabs and close them?");
+      const focusOn = await appPage.evaluate(() => document.activeElement && document.activeElement.id);
+      assert(focusOn === "save-close-cancel", `the confirmation opened with focus on ${focusOn}, not Cancel`);
+      await appPage.click("#save-close-cancel");
+      await waitFor(async () => appPage.$eval("#dialog-backdrop", (n) => n.hidden));
+      await clearSelection();
+      const stillOpen = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }).then((ts) => ts.length), winX.id);
+      assert(stillOpen === 2, `after Cancel the window has ${stillOpen} tabs`);
+
+      const indexBefore = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => (r.snapIndex || []).length));
+      await appPage.click(`.window[data-window="${winX.id}"] .whead button[title="Save and close window"]`);
+      await waitForTextContains(appPage, "#save-close-text", "Save 2 tabs and close them?");
+      await appPage.click("#save-close-go");
+      await waitFor(async () => (await worker()).evaluate((id) => chrome.windows.get(id).then(() => false, () => true), winX.id), { timeout: 10000 });
+      const snap = await waitFor(async () => {
+        const index = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => r.snapIndex || []));
+        return index.length > indexBefore ? index.find((s) => s.reason === "save-close") : null;
+      });
+      assert(snap && snap.pinned === true && snap.tabs === 2 && snap.windows === 1 && /· [0-9]/.test(snap.name || ""), `save-close snapshot ${JSON.stringify(snap)}`);
+      const full = await (await worker()).evaluate((id) => chrome.storage.local.get(`snap:${id}`), snap.id);
+      const urls = full[`snap:${snap.id}`].session.windows[0].tabs.map((t) => t.url);
+      assert(xUrls.every((u) => urls.includes(u)), `snapshot URLs ${JSON.stringify(urls)}`);
+      record("X", "PASS", `Shift+S on a row of window ${winX.id} asked "${askedByKey}" with focus on Cancel; Cancel kept both tabs; the card button asked again and confirming stored kept snapshot "${snap.name}" (2 tabs, both URLs) and closed the window`);
+    } catch (e) {
+      record("X", "FAIL", e.message);
+    }
+    await resetUi();
+
     // == 1.2 next ==    // ---------------------------------------------------------------
     // Z. Auto-discard: the settings round-trip, the plan on real tabs,
     // then the run itself. chrome.tabs.discard crashes Playwright's
