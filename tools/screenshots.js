@@ -436,6 +436,9 @@ async function main() {
     // 01 — the whole session at a glance, with the Recently closed section opened below
     await app.click("#recent-toggle");
     await app.waitForFunction(() => document.querySelectorAll("#recent-list .rrow").length >= 5);
+    // No hover or keyboard cursor on any row in the shots.
+    await app.mouse.move(640, 470);
+    await app.evaluate(() => { for (const n of document.querySelectorAll(".tab.cursor")) n.classList.remove("cursor"); if (document.activeElement) document.activeElement.blur(); });
     await app.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
     await sleep(500);
     await shot("01-all-windows.png");
