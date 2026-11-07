@@ -27,6 +27,7 @@
     recentOpen: false,
     // "panel" when loaded as the side panel (?panel=1), else "page".
     layout: new URLSearchParams(location.search).get("panel") === "1" ? "panel" : "page",
+    panelSeen: new Set(),
   };
 
   // ---- data ------------------------------------------------------------------
@@ -52,6 +53,7 @@
     }
     root.dataset.showUrls = String(Boolean(state.settings.showUrls));
     root.dataset.density = state.settings.density;
+    root.dataset.layout = state.layout;
   }
 
   async function readSession() {
@@ -63,9 +65,23 @@
 
   let refreshTimer = null;
   async function refresh() {
-    const [session, own] = await Promise.all([readSession(), chrome.tabs.getCurrent().catch(() => null)]);
+    // In the side panel there is no tab of our own: the panel's window is the current one.
+    const [session, own, panelWindow] = await Promise.all([
+      readSession(),
+      chrome.tabs.getCurrent().catch(() => null),
+      state.layout === "panel" ? chrome.windows.getCurrent().catch(() => null) : null,
+    ]);
     state.session = session;
-    state.currentWindowId = own ? own.windowId : null;
+    state.currentWindowId = own ? own.windowId : panelWindow ? panelWindow.id : null;
+    if (state.layout === "panel") {
+      // The panel opens on its own window; every other window starts collapsed (once, so a
+      // window the user expands stays expanded).
+      for (const w of session.windows) {
+        if (state.panelSeen.has(w.id)) continue;
+        state.panelSeen.add(w.id);
+        if (w.id !== state.currentWindowId) state.collapsedWindows.add(w.id);
+      }
+    }
     const live = new Set(state.session.windows.flatMap((w) => w.tabs.map((t) => t.id)));
     for (const id of state.selected) if (!live.has(id)) state.selected.delete(id);
     for (const id of state.failedFavicons.keys()) if (!live.has(id)) state.failedFavicons.delete(id);
@@ -248,7 +264,8 @@
 
   function windowColumn(w) {
     const dropTarget = w.type === "normal";
-    const collapsed = state.collapsedWindows.has(w.id);
+    // A search in the panel looks inside collapsed windows too.
+    const collapsed = state.collapsedWindows.has(w.id) && !(state.layout === "panel" && state.query.trim());
     const current = w.id === state.currentWindowId;
     const col = el("section", {
       class: `window${w.incognito ? " incognito" : ""}${collapsed ? " collapsed" : ""}${dropTarget ? "" : " nodrop"}${current ? " current" : ""}`,
@@ -310,7 +327,12 @@
     const grid = $("grid");
     grid.replaceChildren();
     if (filtered.windows.length === 0) grid.append(emptyState());
-    else for (const w of filtered.windows) grid.append(windowColumn(w));
+    else {
+      const wins = state.layout === "panel"
+        ? filtered.windows.slice().sort((a, b) => Number(b.id === state.currentWindowId) - Number(a.id === state.currentWindowId))
+        : filtered.windows;
+      for (const w of wins) grid.append(windowColumn(w));
+    }
     main.scrollTop = scrollTop;
     if (rowHadFocus) focusCursorRow(false);
     $("counts").textContent = TV.formatCounts({
@@ -722,9 +744,22 @@
     { id: "export", label: "Export", run: () => openDialog("export") },
     { id: "snapshots", label: "Snapshots", run: () => openDialog("snapshots") },
     { id: "settings", label: "Settings", run: () => openDialog("settings") },
+    { id: "sidePanel", label: "Open side panel", run: () => openSidePanel(), when: () => canOpenPanel() },
     { id: "saveCloseAll", label: "Save and close all windows", run: () => confirmSaveClose(state.session.windows.map((w) => w.id)) },
   ];
   const palette = { open: false, rows: [], index: 0, returnFocus: null };
+
+  // The side panel (Chrome 116+, the sidePanel permission). chrome.sidePanel.open must run inside
+  // the click or key press, so it is called without awaiting anything first.
+  function canOpenPanel() {
+    return state.layout !== "panel" && Boolean(chrome.sidePanel && chrome.sidePanel.open);
+  }
+  function openSidePanel() {
+    if (!canOpenPanel()) return;
+    const target = state.currentWindowId !== null ? { windowId: state.currentWindowId } : null;
+    if (!target) { toast("Could not find this window"); return; }
+    chrome.sidePanel.open(target).catch((e) => toast("Could not open the side panel: " + (e.message || e)));
+  }
 
   async function snapshotNow() {
     const r = await chrome.runtime.sendMessage({ type: "snapshotNow" }).catch((e) => ({ ok: false, error: e.message }));
@@ -830,6 +865,8 @@
     });
     $("palette-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closePalette(); });
     $("btn-palette").addEventListener("click", () => openPalette());
+    $("btn-panel").hidden = !canOpenPanel();
+    $("btn-panel").addEventListener("click", () => openSidePanel());
   }
 
   // ---- wiring -------------------------------------------------------------------------

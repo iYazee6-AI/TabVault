@@ -154,6 +154,17 @@
     .rrow .domain, .rrow .when, .bhead .when { flex: none; font-size: 11px; color: var(--t2); white-space: nowrap; }
     .rrow .domain { max-width: 30%; overflow: hidden; text-overflow: ellipsis; }
     .rrow button, .bhead button { padding: 1px 8px; font-size: 12px; }
+    /* == panel == */
+    /* ?panel=1: the same page in Chrome's side panel. One column, the panel's window first,
+       compact rows, the search on its own line at the top, the bulk bar along the bottom. */
+    :root[data-layout="panel"] { --row: 24px; }
+    :root[data-layout="panel"] #toolbar { padding: 6px 8px; gap: 6px; }
+    :root[data-layout="panel"] .search-wrap { order: 10; flex: 1 1 100%; min-width: 0; max-width: none; }
+    :root[data-layout="panel"] #main { padding: 8px; }
+    :root[data-layout="panel"] #grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    :root[data-layout="panel"] .tab .domain { display: none; }
+    :root[data-layout="panel"] #selbar { bottom: 0; width: 100%; justify-content: center; border-radius: 10px 10px 0 0; padding: 6px 8px; }
+    :root[data-layout="panel"] #hints { display: none; }
     /* == hints == */
     #hints { flex: none; padding: 6px 16px; background: var(--g2); border-top: 1px solid var(--l); color: var(--t2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #hints kbd { font-size: 10.5px; }
@@ -222,6 +233,7 @@
       <button id="btn-more" type="button" class="icon" title="More: export, import, settings, help, about" aria-label="More: export, import, settings, help, about" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
       <div id="more-menu" class="menu" role="menu" hidden>
         <button id="btn-palette" type="button" role="menuitem">Command palette <kbd>Alt+K</kbd></button>
+        <button id="btn-panel" type="button" role="menuitem">Open in side panel</button>
         <button id="btn-export" type="button" role="menuitem">Export</button>
         <button id="btn-import" type="button" role="menuitem">Import</button>
         <button id="btn-settings" type="button" role="menuitem">Settings</button>

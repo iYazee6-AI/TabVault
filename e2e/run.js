@@ -1337,6 +1337,56 @@ async function main() {
     }
     await resetUi();
 
+    // ---------------------------------------------------------------
+    // Y. Side panel layout (?panel=1). Playwright cannot drive Chrome's
+    // side panel itself, so the page is opened as a narrow tab of a
+    // fixture window: the layout is asserted, not the panel API.
+    // ---------------------------------------------------------------
+    let panelPage = null;
+    try {
+      const options = await (await worker()).evaluate(() => (chrome.sidePanel ? chrome.sidePanel.getOptions({}) : null));
+      assert(options && String(options.path || "").endsWith("app/index.html?panel=1"), `side panel options ${JSON.stringify(options)}`);
+      const winY = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), [`${oneUrl}?y=1`, `${twoUrl}?y=1`]);
+      const tabsY = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winY.id);
+        return ts.length === 2 && ts.every((t) => String(t.url || "").includes("?y=1")) ? ts.sort((a, b) => a.index - b.index) : null;
+      }, { timeout: 15000 });
+      const panelUrl = `${ownPrefix}app/index.html?panel=1`;
+      const pageEvent = context.waitForEvent("page", { timeout: 10000 });
+      await (await worker()).evaluate(({ wid, url }) => chrome.tabs.create({ windowId: wid, url, active: true }), { wid: winY.id, url: panelUrl });
+      panelPage = await pageEvent;
+      attachPageListeners(panelPage);
+      await panelPage.setViewportSize({ width: 380, height: 760 });
+      await panelPage.waitForSelector(".window");
+
+      const layout = await panelPage.evaluate(() => document.documentElement.dataset.layout);
+      assert(layout === "panel", `data-layout = "${layout}"`);
+      const columns = await panelPage.$eval("#grid", (n) => getComputedStyle(n).gridTemplateColumns.trim().split(/ +/).length);
+      assert(columns === 1, `the grid has ${columns} columns`);
+      const cards = await panelPage.$$eval("#grid .window", (ns) => ns.map((n) => ({ id: Number(n.dataset.window), current: n.classList.contains("current"), collapsed: n.classList.contains("collapsed") })));
+      assert(cards.length >= 2, `expected the panel window and at least one other, got ${JSON.stringify(cards)}`);
+      assert(cards[0].id === winY.id && cards[0].current && !cards[0].collapsed, `first card ${JSON.stringify(cards[0])}, the panel's window is ${winY.id}`);
+      assert(cards.slice(1).every((c) => c.collapsed && !c.current), `other cards not all collapsed: ${JSON.stringify(cards.slice(1))}`);
+      const searchTop = await panelPage.$eval("#search", (n) => n.getBoundingClientRect().top);
+      await panelPage.$eval("#main", (n) => { n.scrollTop = n.scrollHeight; });
+      const searchTopAfter = await panelPage.$eval("#search", (n) => n.getBoundingClientRect().top);
+      assert(searchTop < 120 && searchTopAfter === searchTop, `search box top ${searchTop} -> ${searchTopAfter} after scrolling`);
+      const panelEntry = await panelPage.$eval("#btn-panel", (n) => n.hidden);
+      assert(panelEntry === true, "the Open in side panel entry is visible inside the panel");
+      await panelPage.click(`.tab[data-tab="${tabsY[1].id}"] input[type=checkbox]`);
+      await panelPage.waitForSelector("#selbar:not([hidden])");
+      const bar = await panelPage.$eval("#selbar", (n) => { const r = n.getBoundingClientRect(); return { bottom: Math.round(r.bottom), width: Math.round(r.width) }; });
+      const vh = await panelPage.evaluate(() => window.innerHeight);
+      assert(bar.bottom >= vh - 60, `bulk bar bottom ${bar.bottom} in a ${vh} px panel`);
+      await panelPage.screenshot({ path: path.join(ROOT, "panel-layout.png") });
+      record("Y", "PASS", `side panel path ${options.path}; ?panel=1 page: data-layout=panel, 1 grid column, cards ${JSON.stringify(cards.map((c) => [c.id, c.current ? "current" : c.collapsed ? "collapsed" : "open"]))}, search pinned at ${searchTop}px through a scroll, menu entry hidden, bulk bar bottom ${bar.bottom}/${vh}px. Screenshot: panel-layout.png`);
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), winY.id).catch(() => {});
+    } catch (e) {
+      record("Y", "FAIL", e.message);
+    }
+    if (panelPage && !panelPage.isClosed()) await panelPage.close().catch(() => {});
+    await appPage.bringToFront().catch(() => {});
+
     // == 1.2 next ==    // ---------------------------------------------------------------
     // Z. Auto-discard: the settings round-trip, the plan on real tabs,
     // then the run itself. chrome.tabs.discard crashes Playwright's

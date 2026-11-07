@@ -27,7 +27,19 @@ async function openPage() {
 }
 
 chrome.action.onClicked.addListener(() => { openPage().catch((e) => console.warn("TabVault open failed", e)); });
-chrome.commands.onCommand.addListener((command) => { if (command === "open-tabvault") openPage().catch(() => {}); });
+// The toolbar click keeps opening the full page; the side panel (the same page with ?panel=1)
+// opens from the page's menu, the palette, or this command (bind it at chrome://extensions/shortcuts).
+// sidePanel.open must run inside the command's user gesture, so nothing is awaited before it.
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (command === "open-tabvault") openPage().catch(() => {});
+  if (command === "open-side-panel" && chrome.sidePanel && tab && typeof tab.windowId === "number") {
+    chrome.sidePanel.open({ windowId: tab.windowId }).catch((e) => console.warn("TabVault side panel failed", e));
+  }
+});
+if (chrome.sidePanel) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
+  chrome.sidePanel.setOptions({ path: "app/index.html?panel=1", enabled: true }).catch(() => {});
+}
 
 // ---- snapshots ------------------------------------------------------------
 // All writes to `snapshots` go through this queue so bursts of changes cannot interleave.
