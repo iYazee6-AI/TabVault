@@ -65,3 +65,9 @@ Lint 0 errors / 33 warnings; 36 unit tests; 21 e2e scenarios (I-b PASS or LIMITE
 3. **The badge throttle keeps one trailing update.** The 2 s timestamp gate alone would leave a stale count after a burst (closing ten tabs), so a gated call schedules one 2 s trailing refresh (it finishes within the worker's idle lifetime); the 5-minute alarm still corrects anything missed.
 4. **Recently closed uses a tab cache.** `tabs.onRemoved` carries no URL, so the worker keeps a memory cache of open tabs and falls back to the latest snapshot for a tab closed while the worker was asleep; a tab opened and closed between two snapshots while the worker slept is not recorded.
 5. **Settings layout.** The auto-discard settings sit inside `settings` as `settings.autoDiscard` (the spec's first section); the recently-closed list (`recentlyClosed`), the snapshot index and the last run (`storage.session` `autoDiscard.lastRun`) have their own keys.
+6. **Screenshots.** Five is the store's limit, so 02-search and 03-selection gave way to 02-command-palette (which also searches tabs) and 03-unload-idle-tabs; 01 shows Recently closed opened under the windows and 05 a named save-and-close snapshot. The "last run" line in 03 reads a run record the script writes, because a real run's `chrome.tabs.discard` crashes Playwright's Chromium.
+7. **Discard idle tabs now** runs the rule even when the schedule is off (it is the user's explicit request), with the same never-discard rules and the 25 cap.
+
+## Result (2026-11-07)
+
+Ten commits on `feature/1.2-keeper`; lint 0 errors (43 warnings, all `security/*`); 66 unit tests; e2e 27 scenarios, 25 PASS, I-b and Z LIMITED (the discard crash; Z's settings and plan parts ran live), no console errors; `dist/tabvault-1.2.0.zip`.
