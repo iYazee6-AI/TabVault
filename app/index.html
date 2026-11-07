@@ -161,6 +161,22 @@
     #hints button.link:hover { color: var(--t); background: transparent; }
     #dialog table.shortcuts td:first-child { width: 1%; white-space: nowrap; padding-right: 18px; }
     #dialog table.shortcuts kbd + kbd { margin-left: 4px; }
+    /* == palette == */
+    #palette-backdrop { position: fixed; inset: 0; z-index: 25; background: rgba(10, 12, 14, .35); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+    #palette { width: min(640px, 92vw); display: flex; flex-direction: column; overflow: hidden; background: var(--g2); color: var(--t); border: 1px solid var(--l); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); }
+    #palette-input { border: 0; border-bottom: 1px solid var(--l); border-radius: 0; padding: 12px 14px; font-size: 14px; background: var(--g2); }
+    #palette-input:focus-visible { outline: none; }
+    #palette-list { max-height: 50vh; overflow: auto; padding: 4px; }
+    .prow { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: 6px; cursor: pointer; }
+    .prow:hover { background: var(--g3); }
+    .prow.on { background: var(--pSoft); }
+    .prow .plabel { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .prow .pkind { flex: none; width: 16px; text-align: center; color: var(--pText); font-weight: 600; }
+    .prow .pwin, .prow .domain { flex: none; max-width: 28%; font-size: 11px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .prow .pkeys kbd + kbd { margin-left: 4px; }
+    .pempty { padding: 12px; color: var(--t2); }
+    .phint { padding: 6px 12px; border-top: 1px solid var(--l); color: var(--t2); font-size: 11px; }
+    .menu kbd { margin-left: 8px; color: var(--t2); }
     /* == dialogs == */
     #dialog-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(10, 12, 14, .45); display: flex; align-items: center; justify-content: center; }
     #dialog { background: var(--g2); color: var(--t); border: 1px solid var(--l); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); width: min(720px, 92vw); max-height: 88vh; overflow: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
@@ -205,6 +221,7 @@
     <div class="menu-wrap">
       <button id="btn-more" type="button" class="icon" title="More: export, import, settings, help, about" aria-label="More: export, import, settings, help, about" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
       <div id="more-menu" class="menu" role="menu" hidden>
+        <button id="btn-palette" type="button" role="menuitem">Command palette <kbd>Alt+K</kbd></button>
         <button id="btn-export" type="button" role="menuitem">Export</button>
         <button id="btn-import" type="button" role="menuitem">Import</button>
         <button id="btn-settings" type="button" role="menuitem">Settings</button>
@@ -238,6 +255,13 @@
   </main>
   <footer id="hints" aria-label="Keyboard shortcuts"></footer>
   <div id="dialog-backdrop" hidden><div id="dialog" role="dialog" aria-modal="true"></div></div>
+  <div id="palette-backdrop" hidden>
+    <div id="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+      <input type="text" id="palette-input" placeholder="Type an action or a tab" aria-label="Command palette: type an action or a tab" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="palette-list" />
+      <div id="palette-list" role="listbox" aria-label="Actions and tabs"></div>
+      <div class="phint"><kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> run · <kbd>Esc</kbd> close</div>
+    </div>
+  </div>
   <div id="toast"></div>
   <script src="../lib/settings.js"></script>
   <script src="../lib/session.js"></script>
@@ -251,6 +275,7 @@
   <script src="../lib/restore-plan.js"></script>
   <script src="../lib/ui.js"></script>
   <script src="../lib/shortcuts.js"></script>
+  <script src="../lib/palette.js"></script>
   <script src="app.js"></script>
   <script src="dialogs.js"></script>
 </body>

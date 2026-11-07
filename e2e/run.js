@@ -1248,6 +1248,49 @@ async function main() {
     }
     await resetUi();
 
+    // ---------------------------------------------------------------
+    // W. Command palette: Alt+K opens it, typing filters actions and
+    // tabs, Enter runs the action, Esc closes
+    // ---------------------------------------------------------------
+    try {
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await blurAll();
+      await appPage.keyboard.press("Alt+K");
+      await appPage.waitForSelector("#palette-backdrop:not([hidden])");
+      const focusedInput = await appPage.evaluate(() => document.activeElement && document.activeElement.id);
+      assert(focusedInput === "palette-input", `focus after Alt+K is on ${focusedInput}`);
+      const allRows = await appPage.$$eval("#palette-list .prow", (rs) => rs.length);
+
+      await appPage.keyboard.type("duplicates");
+      await waitFor(async () => (await appPage.$eval("#palette-list .prow.on", (n) => n.dataset.action).catch(() => null)) === "dupes");
+      const dupeKeys = await appPage.$eval('#palette-list .prow[data-action="dupes"] .pkeys', (n) => n.textContent);
+      assert(dupeKeys === "d", `the duplicates row shows keys "${dupeKeys}"`);
+
+      await appPage.fill("#palette-input", "Three");
+      const tabRow = await waitFor(async () => appPage.$eval('#palette-list .prow[data-kind="tab"]', (n) => n.textContent).catch(() => null));
+      assert(/Three/.test(tabRow), `tab row text "${tabRow}"`);
+
+      const indexBefore = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => (r.snapIndex || []).length));
+      await appPage.fill("#palette-input", "snapshot now");
+      await waitFor(async () => (await appPage.$eval("#palette-list .prow.on", (n) => n.dataset.action).catch(() => null)) === "snapshot");
+      await appPage.keyboard.press("Enter");
+      await appPage.waitForSelector("#palette-backdrop[hidden]", { state: "attached" });
+      const newest = await waitFor(async () => {
+        const index = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => r.snapIndex || []));
+        return index.length > indexBefore && index[0].reason === "manual" ? index[0] : null;
+      }, { timeout: 8000 });
+
+      await appPage.keyboard.press("Alt+K");
+      await appPage.waitForSelector("#palette-backdrop:not([hidden])");
+      await appPage.keyboard.press("Escape");
+      await appPage.waitForSelector("#palette-backdrop[hidden]", { state: "attached" });
+      record("W", "PASS", `Alt+K opened the palette with focus in its input (${allRows} rows on an empty query); "duplicates" selected the dupes action showing key "d"; "Three" listed a tab row; "snapshot now" + Enter closed it and stored manual snapshot ${newest.id}; Esc closed it again`);
+    } catch (e) {
+      record("W", "FAIL", e.message);
+    }
+    await appPage.keyboard.press("Escape").catch(() => {});
+    await resetUi();
+
     // == 1.2 next ==    // ---------------------------------------------------------------
     // Z. Auto-discard: the settings round-trip, the plan on real tabs,
     // then the run itself. chrome.tabs.discard crashes Playwright's

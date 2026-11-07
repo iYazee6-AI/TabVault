@@ -668,6 +668,7 @@
   };
 
   document.addEventListener("keydown", (e) => {
+    if (palette.open) { if (e.key === "Escape") { e.preventDefault(); closePalette(); } return; }
     if (e.key === "Escape" && closeMenus(true)) { e.preventDefault(); return; }
     const openMenu = document.querySelector(".menu:not([hidden])");
     if (openMenu) {
@@ -681,6 +682,9 @@
       return; // Enter and Space activate the focused item natively
     }
     if (!$("dialog-backdrop").hidden) { if (e.key === "Escape") closeDialog(); return; }
+    // Alt+K opens the command palette from anywhere on the page, a field included. Matched on
+    // the physical key so it works on any keyboard layout.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyK") { e.preventDefault(); openPalette(); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const s = TV.findShortcut(e.key);
     if (!s || !s.action) return;
@@ -691,9 +695,128 @@
     ACTIONS[s.action](e);
   });
 
+  // ---- command palette (Alt+K) ----------------------------------------------------
+  // Actions (lib/shortcuts.js by name plus the commands below) and tabs, ranked by lib/palette.js.
+  // The page's own extra commands; each run(e) gets a stand-in event for the shortcut actions.
+  const PALETTE_COMMANDS = [
+    { id: "snapshot", label: "Snapshot now", run: () => snapshotNow() },
+    { id: "discardIdle", label: "Discard idle tabs now", run: () => discardIdleNow() },
+    { id: "export", label: "Export", run: () => openDialog("export") },
+    { id: "snapshots", label: "Snapshots", run: () => openDialog("snapshots") },
+    { id: "settings", label: "Settings", run: () => openDialog("settings") },
+  ];
+  const palette = { open: false, rows: [], index: 0, returnFocus: null };
+
+  async function snapshotNow() {
+    const r = await chrome.runtime.sendMessage({ type: "snapshotNow" }).catch((e) => ({ ok: false, error: e.message }));
+    if (r && r.skipped) toast("Nothing to snapshot (no other windows open)");
+    else toast(r && r.ok ? "Snapshot saved" : `Snapshot failed: ${r && r.error}`);
+  }
+  async function discardIdleNow() {
+    const r = await chrome.runtime.sendMessage({ type: "discardIdleNow" }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) { toast(`Could not unload: ${r && r.error}`); return; }
+    toast(`Unloaded ${r.unloaded} idle tab${r.unloaded === 1 ? "" : "s"}${r.waiting ? `; ${r.waiting} wait for the next run` : ""}`);
+  }
+
+  function paletteCommands() {
+    return PALETTE_COMMANDS.filter((c) => !c.when || c.when());
+  }
+  function paletteRows(query) {
+    const actions = TV.paletteActions(TV.SHORTCUTS, paletteCommands());
+    const tabs = state.session.windows.flatMap((w) => w.tabs.map((tab) => ({ tab, windowId: w.id, windowLabel: windowLabel(w) })));
+    return TV.filterPalette(query, actions, tabs, { domainOf: TV.domainOf });
+  }
+  function openPalette() {
+    if (palette.open) { $("palette-input").select(); return; }
+    closeMenus();
+    palette.open = true;
+    palette.returnFocus = document.activeElement;
+    $("palette-backdrop").hidden = false;
+    $("palette-input").value = "";
+    drawPalette();
+    $("palette-input").focus();
+  }
+  function closePalette(refocus = true) {
+    if (!palette.open) return;
+    palette.open = false;
+    $("palette-backdrop").hidden = true;
+    $("palette-list").replaceChildren();
+    const back = palette.returnFocus;
+    palette.returnFocus = null;
+    if (refocus && back && back.isConnected && typeof back.focus === "function") back.focus();
+  }
+  function drawPalette() {
+    palette.rows = paletteRows($("palette-input").value);
+    palette.index = 0;
+    renderPaletteList();
+  }
+  function renderPaletteList() {
+    const list = $("palette-list");
+    if (!palette.rows.length) {
+      list.replaceChildren(el("div", { class: "pempty" }, "No action or tab matches."));
+      $("palette-input").removeAttribute("aria-activedescendant");
+      return;
+    }
+    list.replaceChildren(...palette.rows.map((r, i) => {
+      const on = i === palette.index;
+      const id = `palette-row-${i}`;
+      const attrs = { id, class: `prow${on ? " on" : ""}`, role: "option", "aria-selected": String(on), dataset: { kind: r.kind, index: String(i) } };
+      if (r.kind === "action") {
+        attrs.dataset.action = r.action.id;
+        return el("div", attrs,
+          el("span", { class: "pkind", "aria-hidden": "true" }, "›"),
+          el("span", { class: "plabel" }, r.action.label),
+          el("span", { class: "pkeys" }, ...r.action.keys.map((k) => el("kbd", {}, k))));
+      }
+      const domain = TV.domainOf(r.tab.url);
+      attrs.dataset.tab = String(r.tab.id);
+      return el("div", attrs,
+        favicon(r.tab, domain),
+        el("span", { class: "plabel" }, r.tab.title || r.tab.url),
+        el("span", { class: "pwin" }, r.windowLabel.slice(0, 30)),
+        el("span", { class: "domain mono" }, domain));
+    }));
+    $("palette-input").setAttribute("aria-activedescendant", `palette-row-${palette.index}`);
+    const current = list.querySelector(".prow.on");
+    if (current) current.scrollIntoView({ block: "nearest" });
+  }
+  function runPaletteRow(i) {
+    const r = palette.rows[i];
+    if (!r) return;
+    closePalette(false);
+    if (r.kind === "tab") { focusTab(r.tab.id, r.windowId).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
+    const command = PALETTE_COMMANDS.find((c) => c.id === r.action.id);
+    const stand = { target: document.body, preventDefault() {} };
+    if (command) Promise.resolve(command.run(stand)).catch((e) => toast(`${r.action.label} failed: ${e.message || e}`));
+    else if (ACTIONS[r.action.id]) ACTIONS[r.action.id](stand);
+  }
+  function wirePalette() {
+    const input = $("palette-input");
+    input.addEventListener("input", drawPalette);
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Escape") { e.preventDefault(); closePalette(); return; }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!palette.rows.length) return;
+        palette.index = (palette.index + (e.key === "ArrowDown" ? 1 : -1) + palette.rows.length) % palette.rows.length;
+        renderPaletteList();
+        return;
+      }
+      if (e.key === "Enter") { e.preventDefault(); runPaletteRow(palette.index); }
+    });
+    $("palette-list").addEventListener("click", (e) => {
+      const row = e.target.closest(".prow");
+      if (row) runPaletteRow(Number(row.dataset.index));
+    });
+    $("palette-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closePalette(); });
+    $("btn-palette").addEventListener("click", () => openPalette());
+  }
+
   // ---- wiring -------------------------------------------------------------------------
   function wire() {
     renderHints();
+    wirePalette();
     $("search").addEventListener("input", (e) => { state.query = e.target.value; render(); });
     $("search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { const r = visibleTabs()[0]; if (r) focusTab(r.id, r.windowId); }
@@ -758,7 +881,7 @@
   }
 
   window.TabVaultApp = {
-    getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel,
+    getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel, openPalette,
   };
 
   loadSettings().then(refresh).then(wire).then(loadRecent).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
