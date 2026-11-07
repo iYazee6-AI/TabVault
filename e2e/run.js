@@ -725,7 +725,7 @@ async function main() {
 
       await appPage.click('#dialog button:has-text("Snapshot now")');
       const snap1 = await waitFor(async () => {
-        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })));
         return snapshots.find((s) => s.reason === "manual" && s.pinned) || null;
       });
       await waitForTextContains(appPage, `[data-snapshot="${snap1.id}"]`, "manual");
@@ -737,19 +737,19 @@ async function main() {
 
       await appPage.click(`[data-snapshot="${snap1.id}"] button:has-text("Delete")`);
       await waitFor(async () => (await appPage.$(`[data-snapshot="${snap1.id}"]`)) === null);
-      const gone = await (await worker()).evaluate((id) => chrome.storage.local.get("snapshots").then((r) => !(r.snapshots || []).some((s) => s.id === id)), snap1.id);
+      const gone = await (await worker()).evaluate((id) => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })).then((r) => !(r.snapshots || []).some((s) => s.id === id)), snap1.id);
       assert(gone, "deleted snapshot still present in storage");
 
       await appPage.click('#dialog button:has-text("Snapshot now")');
       const snap2 = await waitFor(async () => {
-        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })));
         return snapshots.find((s) => s.reason === "manual" && s.pinned) || null;
       });
       await waitForTextContains(appPage, `[data-snapshot="${snap2.id}"]`, "manual");
 
       await appPage.click(`[data-snapshot="${snap2.id}"] button:has-text("Unkeep")`);
       await waitFor(async () => {
-        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })));
         const s = snapshots.find((x) => x.id === snap2.id);
         return s && s.pinned === false;
       });
@@ -757,7 +757,7 @@ async function main() {
 
       await appPage.click(`[data-snapshot="${snap2.id}"] button:has-text("Keep")`);
       await waitFor(async () => {
-        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })));
         const s = snapshots.find((x) => x.id === snap2.id);
         return s && s.pinned === true;
       });
@@ -1189,7 +1189,7 @@ async function main() {
     // K. Change-driven snapshot (slow, kept last)
     // ---------------------------------------------------------------
     try {
-      const before = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapshots")).snapshots || []);
+      const before = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] }))).snapshots || []);
       const countBefore = before.length;
 
       // winC no longer necessarily exists (Import, and any relaunch after
@@ -1207,7 +1207,7 @@ async function main() {
       // its own, this is where it would happen. worker() already does this
       // re-acquisition on every call, but the wait is called out here since
       // this is specifically the scenario it matters most for.
-      const after = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapshots")).snapshots || []);
+      const after = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] }))).snapshots || []);
       assert(after.length >= countBefore + 1, `snapshot count did not increase: before=${countBefore}, after=${after.length}`);
       const newest = after.slice().sort((a, b) => b.takenAt - a.takenAt)[0];
       assert(newest.reason === "change", `newest snapshot reason = "${newest.reason}"`);

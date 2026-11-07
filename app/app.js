@@ -2,7 +2,6 @@
   const TV = self.TabVault;
   const $ = (id) => document.getElementById(id);
   const OWN_PREFIX = chrome.runtime.getURL("");
-  const DEFAULT_SETTINGS = { debounceSeconds: 30, keepSnapshots: 20, ignoreHash: true, theme: "system", showUrls: false, density: "comfortable", lazyRestore: true };
   const THEME_MIRROR = "tabvault.theme"; // read by app/theme-boot.js before first paint
   const GROUP_COLORS = { grey: "#8a8a8a", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038", pink: "#d01884", purple: "#a142f4", cyan: "#007b83", orange: "#fa903e" };
   // The picker offers the spec's eight; an existing orange group still renders orange.
@@ -10,7 +9,7 @@
 
   const state = {
     session: { schema: 1, windows: [] },
-    settings: { ...DEFAULT_SETTINGS },
+    settings: TV.withDefaults({}),
     query: "",
     selected: new Set(),
     cursor: null,
@@ -29,11 +28,11 @@
   // ---- data ------------------------------------------------------------------
   async function loadSettings() {
     const { settings = {} } = await chrome.storage.local.get("settings");
-    state.settings = { ...DEFAULT_SETTINGS, ...settings };
+    state.settings = TV.withDefaults(settings);
     applySettings();
   }
   async function saveSettings(patch) {
-    state.settings = { ...state.settings, ...patch };
+    state.settings = TV.withDefaults({ ...state.settings, ...patch });
     await chrome.storage.local.set({ settings: state.settings });
     applySettings();
     render();
@@ -133,9 +132,12 @@
       e.dataTransfer.setData("text/plain", JSON.stringify({ tabIds: ids }));
       e.dataTransfer.effectAllowed = "move";
     });
-    row.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.add("dragover"); });
-    row.addEventListener("dragleave", () => row.classList.remove("dragover"));
-    row.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.remove("dragover"); dropTabs(e, { windowId: w.id, index: t.index, groupId: t.groupId }); });
+    // Rows in a popup or app window (the column's nodrop) take no drops: Chrome refuses the move.
+    if (w.type === "normal") {
+      row.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.add("dragover"); });
+      row.addEventListener("dragleave", () => row.classList.remove("dragover"));
+      row.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.remove("dragover"); dropTabs(e, { windowId: w.id, index: t.index, groupId: t.groupId }); });
+    }
     return row;
   }
 
@@ -157,9 +159,11 @@
     sec.append(head);
     if (picking) sec.append(colorPicker(g));
     sec.append(...tabs.map((t) => tabRow(w, t)));
-    sec.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.add("drop"); });
-    sec.addEventListener("dragleave", () => sec.classList.remove("drop"));
-    sec.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.remove("drop"); dropTabs(e, { windowId: w.id, index: -1, groupId: g.id }); });
+    if (w.type === "normal") {
+      sec.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.add("drop"); });
+      sec.addEventListener("dragleave", () => sec.classList.remove("drop"));
+      sec.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.remove("drop"); dropTabs(e, { windowId: w.id, index: -1, groupId: g.id }); });
+    }
     return sec;
   }
 

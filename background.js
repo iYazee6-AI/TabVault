@@ -1,14 +1,18 @@
-importScripts("lib/session.js", "lib/snapshots.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
 const ALARM = "tabvault-snapshot";
-const DEFAULT_SETTINGS = { debounceSeconds: 30, keepSnapshots: 20, ignoreHash: true, theme: "system", showUrls: false, density: "comfortable", lazyRestore: true };
+const TV = self.TabVault;
 
 async function getSettings() {
   const { settings = {} } = await chrome.storage.local.get("settings");
-  return { ...DEFAULT_SETTINGS, ...settings };
+  return TV.withDefaults(settings);
 }
+
+// Snapshot storage version 2 (lib/snapstore.js): moved over once from 1.x's single "snapshots"
+// key. Every snapshot read or write waits for this, so nothing sees a half-migrated store.
+const ready = TV.migrate(chrome.storage.local).catch((e) => console.warn("TabVault storage migration failed", e));
 
 // ---- open the page -------------------------------------------------------
 async function openPage() {
@@ -27,7 +31,7 @@ chrome.commands.onCommand.addListener((command) => { if (command === "open-tabva
 
 // ---- snapshots ------------------------------------------------------------
 // All writes to `snapshots` go through this queue so bursts of changes cannot interleave.
-let queue = Promise.resolve();
+let queue = ready;
 function enqueue(fn) {
   const run = queue.then(fn);
   queue = run.catch(() => {});
@@ -43,27 +47,25 @@ async function captureSession() {
   return self.TabVault.buildSession({ windows, groups, now: Date.now(), browser: { name: "Chrome", version, os: info && info.os }, excludeUrlPrefix: OWN_PREFIX, windowNames });
 }
 
-async function takeSnapshot(reason) {
+// opts.windowIds limits the snapshot to those windows; opts.name labels it; opts.pinned keeps it.
+// Change and startup snapshots are skipped when nothing changed since the latest one.
+async function takeSnapshot(reason, opts = {}) {
   return enqueue(async () => {
-    const session = await captureSession();
+    let session = await captureSession();
+    if (opts.windowIds) {
+      const want = new Set(opts.windowIds);
+      session = { ...session, windows: session.windows.filter((w) => want.has(w.id)) };
+    }
     if (session.windows.length === 0) return { ok: true, skipped: true };
     const settings = await getSettings();
-    const { snapshots = [] } = await chrome.storage.local.get("snapshots");
-    const latest = snapshots[0];
-    if (reason !== "manual" && latest && self.TabVault.isSameSession(latest.session, session)) return { ok: true, skipped: true };
-    const snap = self.TabVault.makeSnapshot(session, reason, Date.now());
-    if (reason === "manual") snap.pinned = true;
-    const next = self.TabVault.rotate([snap, ...snapshots], settings.keepSnapshots);
-    try {
-      await chrome.storage.local.set({ snapshots: next });
-    } catch (e) {
-      // Quota: drop the oldest unpinned and retry once.
-      const idx = next.map((s) => s.pinned).lastIndexOf(false);
-      if (idx < 0) throw e;
-      next.splice(idx, 1);
-      await chrome.storage.local.set({ snapshots: next });
+    if (reason === "change" || reason === "startup") {
+      const latest = await TV.latestSnapshot(chrome.storage.local);
+      if (latest && TV.isSameSession(latest.session, session)) return { ok: true, skipped: true };
     }
-    return { ok: true, id: snap.id };
+    const snap = TV.makeSnapshot(session, reason, Date.now(), opts.name || "");
+    if (reason === "manual" || opts.pinned) snap.pinned = true;
+    await TV.addSnapshot(chrome.storage.local, snap, settings.keepSnapshots);
+    return { ok: true, id: snap.id, tabs: snap.tabs };
   });
 }
 
@@ -74,11 +76,16 @@ async function scheduleSnapshot() {
   const settings = await getSettings();
   const now = Date.now();
   const { pendingSince } = await chrome.storage.session.get("pendingSince");
-  if (pendingSince === undefined) {
-    await chrome.storage.session.set({ pendingSince: now });
-  } else if (now - pendingSince > Math.max(10 * settings.debounceSeconds * 1000, 300000)) {
-    return; // max wait exceeded: let the pending alarm fire rather than re-creating it
+  const args = { pendingSince, now, debounceSeconds: settings.debounceSeconds };
+  let decision = TV.scheduleDecision(args);
+  if (decision === "wait") {
+    // Past the cap: leave the pending alarm to fire. If it is gone (the pendingSince clear in
+    // onAlarm rejected after it fired), waiting would stop change snapshots for the session.
+    const pending = await chrome.alarms.get(ALARM).catch(() => null);
+    decision = TV.scheduleDecision({ ...args, alarmPending: Boolean(pending) });
   }
+  if (decision === "wait") return;
+  if (decision === "start") await chrome.storage.session.set({ pendingSince: now });
   const minutes = Math.max(0.5, settings.debounceSeconds / 60);
   await chrome.alarms.create(ALARM, { delayInMinutes: minutes }); // re-creating replaces the pending alarm
 }
@@ -106,9 +113,6 @@ chrome.runtime.onStartup.addListener(() => {
     .catch(() => {});
 });
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get("storageVersion").then(({ storageVersion }) => {
-    if (storageVersion === undefined) return chrome.storage.local.set({ storageVersion: 1 });
-  }).catch(() => {});
   takeSnapshot("startup").catch(() => {});
 });
 
@@ -124,10 +128,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     case "snapshotNow": takeSnapshot("manual").then(reply, fail); return true;
     case "deleteSnapshot":
-      enqueue(async () => { const { snapshots = [] } = await chrome.storage.local.get("snapshots"); await chrome.storage.local.set({ snapshots: snapshots.filter((s) => s.id !== msg.id) }); return { ok: true }; }).then(reply, fail);
+      enqueue(async () => { await TV.deleteSnapshot(chrome.storage.local, msg.id); return { ok: true }; }).then(reply, fail);
       return true;
     case "pinSnapshot":
-      enqueue(async () => { const { snapshots = [] } = await chrome.storage.local.get("snapshots"); for (const s of snapshots) if (s.id === msg.id) s.pinned = Boolean(msg.pinned); await chrome.storage.local.set({ snapshots }); return { ok: true }; }).then(reply, fail);
+      enqueue(async () => { await TV.pinSnapshot(chrome.storage.local, msg.id, msg.pinned); return { ok: true }; }).then(reply, fail);
       return true;
     case "openPage": openPage().then(() => reply({ ok: true }), fail); return true;
     default: return;

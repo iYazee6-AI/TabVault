@@ -230,16 +230,23 @@
   // ---- snapshots ------------------------------------------------------------------
   App.dialogs.snapshots = async (box) => {
     const draw = async () => {
-      const { snapshots = [] } = await chrome.storage.local.get("snapshots");
+      // Version 2 storage: the index holds the metadata; a snapshot's session is read only when
+      // it is restored or exported.
+      const snapshots = await TV.listSnapshots(chrome.storage.local);
+      const full = async (s) => {
+        const snap = await TV.getSnapshot(chrome.storage.local, s.id);
+        if (!snap) { toast("That snapshot is gone"); draw(); }
+        return snap;
+      };
       const list = el("div", { class: "list" });
       if (!snapshots.length) list.append(el("p", { class: "muted" }, "No snapshots yet. They are taken automatically when your tabs change."));
       for (const s of snapshots) {
         list.append(el("div", { class: "row snap", dataset: { snapshot: s.id } },
-          el("span", { title: fmt(s.takenAt) }, fmt(s.takenAt)),
+          el("span", { title: s.name ? `${s.name} · ${fmt(s.takenAt)}` : fmt(s.takenAt) }, s.name || fmt(s.takenAt)),
           el("span", { class: "muted" }, `${s.reason}${s.pinned ? " · kept" : ""}`),
           el("span", { class: "muted" }, `${s.windows} windows · ${s.tabs} tabs`),
-          el("button", { onclick: () => showRestore(box, s.session, "Snapshot") }, "Restore"),
-          el("button", { onclick: () => { const f = TV.toJsonFile(s.session, { now: s.takenAt, version: VERSION }); download(f.filename, f.text); toast("Exported"); } }, "Export"),
+          el("button", { onclick: async () => { const snap = await full(s); if (snap) showRestore(box, snap.session, "Snapshot"); } }, "Restore"),
+          el("button", { onclick: async () => { const snap = await full(s); if (!snap) return; const f = TV.toJsonFile(snap.session, { now: s.takenAt, version: VERSION }); download(f.filename, f.text); toast("Exported"); } }, "Export"),
           el("button", { onclick: async () => { await chrome.runtime.sendMessage({ type: "pinSnapshot", id: s.id, pinned: !s.pinned }); draw(); } }, s.pinned ? "Unkeep" : "Keep"),
           el("button", { class: "danger", onclick: async () => { await chrome.runtime.sendMessage({ type: "deleteSnapshot", id: s.id }); draw(); } }, "Delete")));
       }

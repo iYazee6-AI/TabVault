@@ -351,10 +351,8 @@ async function main() {
         { session: slice(2), reason: "change", at: minutes(233) },
         { session: slice(1), reason: "startup", at: minutes(391) },
       ];
-      const snapshots = plan
-        .map((x) => self.TabVault.makeSnapshot(x.session, x.reason, x.at))
-        .sort((a, b) => b.takenAt - a.takenAt);
-      await chrome.storage.local.set({ snapshots });
+      // Written through lib/snapstore.js (storage version 2: an index plus one key per snapshot).
+      for (const x of plan.slice().reverse()) await self.TabVault.addSnapshot(chrome.storage.local, self.TabVault.makeSnapshot(x.session, x.reason, x.at), 20);
     });
 
     // Window names (1.1) live in chrome.storage.local under TabVault.WINDOW_NAMES_KEY
