@@ -1,4 +1,4 @@
-importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
@@ -115,6 +115,37 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.runtime.onInstalled.addListener(() => {
   takeSnapshot("startup").catch(() => {});
 });
+
+// ---- badge ------------------------------------------------------------------
+// The icon shows the tab count (or the unloaded count, or nothing: settings.badge). Updates are
+// gated to one per 2 s; a gated call leaves one trailing update so a burst (ten tabs closed at
+// once) still ends on the right number. The 5-minute idle alarm also refreshes it.
+let badgeLastAt = 0;
+let badgeTrailing = null;
+async function refreshBadge() {
+  const [settings, tabs] = await Promise.all([getSettings(), chrome.tabs.query({})]);
+  await chrome.action.setBadgeText({ text: TV.badgeText(settings.badge, TV.countForBadge(tabs, OWN_PREFIX)) });
+}
+function scheduleBadge() {
+  const now = Date.now();
+  if (now - badgeLastAt >= 2000) {
+    badgeLastAt = now;
+    refreshBadge().catch((e) => console.warn("TabVault badge failed", e));
+    return;
+  }
+  if (badgeTrailing) return;
+  badgeTrailing = setTimeout(() => {
+    badgeTrailing = null;
+    badgeLastAt = Date.now();
+    refreshBadge().catch((e) => console.warn("TabVault badge failed", e));
+  }, 2000 - (now - badgeLastAt));
+}
+chrome.action.setBadgeBackgroundColor({ color: TV.BADGE_COLOR }).catch(() => {});
+if (chrome.action.setBadgeTextColor) chrome.action.setBadgeTextColor({ color: TV.BADGE_TEXT_COLOR }).catch(() => {});
+for (const ev of [chrome.tabs.onCreated, chrome.tabs.onRemoved, chrome.tabs.onAttached, chrome.tabs.onDetached, chrome.tabs.onReplaced]) ev.addListener(() => scheduleBadge());
+chrome.tabs.onUpdated.addListener((_id, info) => { if (info.discarded !== undefined || info.url) scheduleBadge(); });
+chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.settings) scheduleBadge(); });
+scheduleBadge();
 
 // ---- messages from the page ------------------------------------------------
 function safeRespond(sendResponse, payload) { try { sendResponse(payload); } catch { /* page closed */ } }

@@ -9,7 +9,7 @@ const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"];
 const byId = new Map();
 const consoleErrors = { worker: [], app: [] };
 
@@ -1152,6 +1152,49 @@ async function main() {
       record("T", "FAIL", e.message);
     }
     await resetUi();
+
+    // ---------------------------------------------------------------
+    // 1.2 Keeper scenarios U-Z. Z (auto-discard) may crash Playwright's
+    // Chromium (chrome.tabs.discard), so it runs last of them and relaunches.
+    // ---------------------------------------------------------------
+    const badgeText = async () => (await worker()).evaluate(() => chrome.action.getBadgeText({}));
+    async function expectBadge(label) {
+      let want = null;
+      let got = null;
+      try {
+        await waitFor(async () => {
+          want = String((await expectedCounts()).tabCount);
+          got = await badgeText();
+          return got === want;
+        }, { timeout: 8000 });
+      } catch {
+        throw new Error(`${label}: badge "${got}", expected "${want}"`);
+      }
+      return got;
+    }
+    async function anyNormalWindowId() {
+      const wins = await (await worker()).evaluate(() => chrome.windows.getAll({ windowTypes: ["normal"] }));
+      return wins[0].id;
+    }
+
+    // ---------------------------------------------------------------
+    // U. The icon badge counts tabs after opening and closing one
+    // ---------------------------------------------------------------
+    try {
+      const first = await expectBadge("at start");
+      const windowId = await anyNormalWindowId();
+      const created = await (await worker()).evaluate(({ windowId: wid, url }) => chrome.tabs.create({ windowId: wid, url, active: false }), { windowId, url: `${oneUrl}?badge=1` });
+      const opened = await expectBadge("after opening a tab");
+      assert(Number(opened) === Number(first) + 1, `badge went ${first} -> ${opened} after opening a tab`);
+      await (await worker()).evaluate((id) => chrome.tabs.remove(id), created.id);
+      const closed = await expectBadge("after closing it");
+      assert(closed === first, `badge went ${opened} -> ${closed} after closing the tab`);
+      record("U", "PASS", `badge "${first}" -> "${opened}" after opening a tab -> "${closed}" after closing it (each equal to the non-TabVault tab count)`);
+    } catch (e) {
+      record("U", "FAIL", e.message);
+    }
+
+    // == 1.2 next ==
 
     // ---------------------------------------------------------------
     // L. Settings persistence (run before K; K's real-time wait is kept

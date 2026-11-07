@@ -272,6 +272,7 @@
     const urls = el("input", { type: "checkbox", checked: s.showUrls ? "" : null });
     const density = el("select", {}, ...["comfortable", "compact"].map((d) => el("option", { value: d, selected: d === s.density ? "" : null }, d)));
     const lazy = el("input", { type: "checkbox", checked: s.lazyRestore !== false ? "" : null });
+    const badge = el("select", { "aria-label": "Icon badge" }, ...[["total", "Tab count"], ["unloaded", "Unloaded tabs"], ["off", "Off"]].map(([value, label]) => el("option", { value, selected: value === s.badge ? "" : null }, label)));
     const err = el("p", { class: "muted" });
     box.replaceChildren(el("h2", {}, "Settings"),
       el("label", { class: "row" }, "Snapshot after tabs stop changing for ", debounce, " seconds (30–600)"),
@@ -281,12 +282,13 @@
       el("label", { class: "row" }, urls, " Show URLs under titles"),
       el("label", { class: "row" }, "Density ", density),
       el("label", { class: "row" }, lazy, " Load restored tabs only when opened (lazy)"),
+      el("label", { class: "row" }, "Icon badge ", badge),
       err,
       el("div", { class: "row" }, el("button", { class: "primary", onclick: async () => {
         const d = Number(debounce.value), k = Number(keep.value);
         if (!Number.isInteger(d) || d < 30 || d > 600) { err.textContent = "Debounce must be a whole number between 30 and 600."; return; }
         if (!Number.isInteger(k) || k < 5 || k > 200) { err.textContent = "Keep must be a whole number between 5 and 200."; return; }
-        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked });
+        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked, badge: badge.value });
         toast("Settings saved"); closeDialog();
       } }, "Save"), el("button", { onclick: closeDialog }, "Cancel")));
   };
