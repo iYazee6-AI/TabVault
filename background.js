@@ -12,7 +12,14 @@ async function getSettings() {
 
 // Snapshot storage version 2 (lib/snapstore.js): moved over once from 1.x's single "snapshots"
 // key. Every snapshot read or write waits for this, so nothing sees a half-migrated store.
-const ready = TV.migrate(chrome.storage.local).catch((e) => console.warn("TabVault storage migration failed", e));
+// A failed migration leaves storageReady false: snapshots still go on (migrate merges them in
+// on the next try), but save and close refuses, since it closes tabs on the strength of a
+// snapshot (see saveAndClose).
+let storageReady = false;
+function runMigration() {
+  return getSettings().then((s) => TV.migrate(chrome.storage.local, s.keepSnapshots)).then(() => { storageReady = true; });
+}
+const ready = runMigration().catch((e) => console.warn("TabVault storage migration failed", e));
 
 // ---- open the page -------------------------------------------------------
 async function openPage() {
@@ -319,6 +326,9 @@ chrome.windows.onRemoved.addListener((windowId) => flushClosingWindow(windowId))
 async function saveAndClose({ windowIds, name }) {
   const ids = (Array.isArray(windowIds) ? windowIds : []).map(Number).filter(Number.isInteger);
   if (!ids.length) return { ok: false, error: "no window chosen" };
+  await ready;
+  if (!storageReady) await enqueue(runMigration).catch((e) => console.warn("TabVault storage migration failed again", e));
+  if (!storageReady) return { ok: false, error: "TabVault could not finish upgrading its snapshot storage, so nothing was saved or closed. Restart the browser and try again." };
   const saved = await takeSnapshot("save-close", { windowIds: ids, name, pinned: true });
   if (!saved.ok || saved.skipped) return { ok: true, skipped: true, closed: 0 };
   const snap = await TV.getSnapshot(chrome.storage.local, saved.id);

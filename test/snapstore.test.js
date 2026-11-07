@@ -56,3 +56,27 @@ test("a quota error drops the oldest unpinned snapshot and retries once", async 
   assert.deepEqual((await store.listSnapshots(area)).map((s) => s.id), ["new", "kept"]);
   assert.equal(area.data["snap:old"], undefined);
 });
+
+// Naqid finding 1: a migration that fails, then a snapshot taken in that session (written as
+// version 2 with no storageVersion), then a second start. Nothing may be lost or orphaned.
+test("a failed migration, a snapshot in that session, then a second start: both kept, no orphan key", async () => {
+  const area = fakeArea({ storageVersion: 1, snapshots: [snap("old", 10, true)] }, { failSetOnce: true });
+  await assert.rejects(store.migrate(area));
+  assert.equal(await store.isMigrated(area), false, "the version is not stamped after a failed migration");
+  await store.addSnapshot(area, { ...snap("saved", 20, true), reason: "save-close", name: "Work · 12:40" }, 20);
+  assert.equal(await store.migrate(area), "migrated");
+  assert.equal(await store.isMigrated(area), true);
+  assert.deepEqual((await store.listSnapshots(area)).map((s) => s.id), ["saved", "old"]);
+  assert.equal((await store.listSnapshots(area))[0].name, "Work · 12:40");
+  assert.equal(area.data.snapshots, undefined);
+  const keys = Object.keys(area.data).filter((k) => k.startsWith("snap:")).sort();
+  assert.deepEqual(keys, ["snap:old", "snap:saved"]);
+});
+
+test("the migration merge applies the keep cap and removes the keys it drops", async () => {
+  const area = fakeArea({ storageVersion: 1, snapshots: [snap("a", 1), snap("b", 2)] });
+  await store.addSnapshot(area, snap("c", 3), 20);
+  await store.migrate(area, 2);
+  assert.deepEqual((await store.listSnapshots(area)).map((s) => s.id), ["c", "b"]);
+  assert.deepEqual(Object.keys(area.data).filter((k) => k.startsWith("snap:")).sort(), ["snap:b", "snap:c"]);
+});
