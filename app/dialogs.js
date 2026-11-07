@@ -244,7 +244,7 @@
         list.append(el("div", { class: "row snap", dataset: { snapshot: s.id } },
           el("span", { title: s.name ? `${s.name} · ${fmt(s.takenAt)}` : fmt(s.takenAt) }, s.name || fmt(s.takenAt)),
           el("span", { class: "muted" }, `${s.reason}${s.pinned ? " · kept" : ""}`),
-          el("span", { class: "muted" }, `${s.windows} windows · ${s.tabs} tabs`),
+          el("span", { class: "muted" }, `${s.windows} window${s.windows === 1 ? "" : "s"} · ${s.tabs} tab${s.tabs === 1 ? "" : "s"}`),
           el("button", { onclick: async () => { const snap = await full(s); if (snap) showRestore(box, snap.session, "Snapshot"); } }, "Restore"),
           el("button", { onclick: async () => { const snap = await full(s); if (!snap) return; const f = TV.toJsonFile(snap.session, { now: s.takenAt, version: VERSION }); download(f.filename, f.text); toast("Exported"); } }, "Export"),
           el("button", { onclick: async () => { await chrome.runtime.sendMessage({ type: "pinSnapshot", id: s.id, pinned: !s.pinned }); draw(); } }, s.pinned ? "Unkeep" : "Keep"),
