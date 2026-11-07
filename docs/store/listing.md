@@ -32,7 +32,7 @@ once the repository is public.
 
 ## 1. Pre-submission checklist
 
-- [ ] `npm test` passes (66 tests).
+- [ ] `npm test` passes (70 tests).
 - [ ] `npm run e2e` passes (27 scenarios; scenarios I-b and Z are expected to
       report LIMITED on this machine — `chrome.tabs.discard` crashes Playwright's
       bundled Chromium, see `e2e/README.md`. LIMITED is a pass for release

@@ -71,3 +71,11 @@ Lint 0 errors / 33 warnings; 36 unit tests; 21 e2e scenarios (I-b PASS or LIMITE
 ## Result (2026-11-07)
 
 Ten commits on `feature/1.2-keeper`; lint 0 errors (43 warnings, all `security/*`); 66 unit tests; e2e 27 scenarios, 25 PASS, I-b and Z LIMITED (the discard crash; Z's settings and plan parts ran live), no console errors; `dist/tabvault-1.2.0.zip`.
+
+## Review round (Naqid, 2026-11-07)
+
+Fix first on 1 and 2, with 3 and 4 in the same round, each with a test: (1) the migration merges an existing index (union by id, the keep cap, dropped keys removed), stamps `storageVersion` last, and save and close refuses until it has completed; (2) no unsaved-form promise anywhere (Wakeel's ruling; the note says "tabs an extension marked as not discardable"); (3) the quota retry frees the dropped key before writing again; (4) Alt+K leaves Option+K to text fields other than the search box (`opensPalette`). Screenshots regenerated for the new note.
+
+After the round: lint 0 errors (46 warnings, all `security/*`); 70 unit tests; e2e 27 scenarios, 25 PASS, I-b and Z LIMITED (the discard crash), no console errors; `dist/tabvault-1.2.0.zip` rebuilt.
+
+**For the owner's hands before upload:** the side panel itself (⋯ → Open in side panel, the palette entry), the `open-side-panel` command once bound at chrome://extensions/shortcuts, and auto-discard in real Chrome (on at 15 minutes, `zz` on the idle tabs, the "last run" line). Playwright can drive none of the three.
