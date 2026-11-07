@@ -370,3 +370,8 @@ NEW IN 1.2
 • Side panel: open TabVault beside the page you are reading, in one column, from the ⋯ menu or the palette.
 • Save and close: put a window away in one step. TabVault asks first with the count, keeps a named snapshot you can restore, then closes the tabs.
 ```
+
+The three owner's source images ("ChatGPT Image Sep 23 ...", untracked) now sit in
+`docs/store/marketing-sources/`, not beside the store screenshots, so they are not
+uploaded by mistake. Upload only the five `0*-*.png` files in
+`docs/store/screenshots/` (the `marketing-0*` images are separate marketing art).
