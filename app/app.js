@@ -2,7 +2,6 @@
   const TV = self.TabVault;
   const $ = (id) => document.getElementById(id);
   const OWN_PREFIX = chrome.runtime.getURL("");
-  const DEFAULT_SETTINGS = { debounceSeconds: 30, keepSnapshots: 20, ignoreHash: true, theme: "system", showUrls: false, density: "comfortable", lazyRestore: true };
   const THEME_MIRROR = "tabvault.theme"; // read by app/theme-boot.js before first paint
   const GROUP_COLORS = { grey: "#8a8a8a", blue: "#1a73e8", red: "#d93025", yellow: "#f9ab00", green: "#188038", pink: "#d01884", purple: "#a142f4", cyan: "#007b83", orange: "#fa903e" };
   // The picker offers the spec's eight; an existing orange group still renders orange.
@@ -10,7 +9,7 @@
 
   const state = {
     session: { schema: 1, windows: [] },
-    settings: { ...DEFAULT_SETTINGS },
+    settings: TV.withDefaults({}),
     query: "",
     selected: new Set(),
     cursor: null,
@@ -24,16 +23,21 @@
     dupes: new Set(),
     // tab id -> the favIconUrl that failed to load; that tab shows its letter badge until its URL changes.
     failedFavicons: new Map(),
+    recent: [],
+    recentOpen: false,
+    // "panel" when loaded as the side panel (?panel=1), else "page".
+    layout: new URLSearchParams(location.search).get("panel") === "1" ? "panel" : "page",
+    panelSeen: new Set(),
   };
 
   // ---- data ------------------------------------------------------------------
   async function loadSettings() {
     const { settings = {} } = await chrome.storage.local.get("settings");
-    state.settings = { ...DEFAULT_SETTINGS, ...settings };
+    state.settings = TV.withDefaults(settings);
     applySettings();
   }
   async function saveSettings(patch) {
-    state.settings = { ...state.settings, ...patch };
+    state.settings = TV.withDefaults({ ...state.settings, ...patch });
     await chrome.storage.local.set({ settings: state.settings });
     applySettings();
     render();
@@ -49,6 +53,7 @@
     }
     root.dataset.showUrls = String(Boolean(state.settings.showUrls));
     root.dataset.density = state.settings.density;
+    root.dataset.layout = state.layout;
   }
 
   async function readSession() {
@@ -60,9 +65,23 @@
 
   let refreshTimer = null;
   async function refresh() {
-    const [session, own] = await Promise.all([readSession(), chrome.tabs.getCurrent().catch(() => null)]);
+    // In the side panel there is no tab of our own: the panel's window is the current one.
+    const [session, own, panelWindow] = await Promise.all([
+      readSession(),
+      chrome.tabs.getCurrent().catch(() => null),
+      state.layout === "panel" ? chrome.windows.getCurrent().catch(() => null) : null,
+    ]);
     state.session = session;
-    state.currentWindowId = own ? own.windowId : null;
+    state.currentWindowId = own ? own.windowId : panelWindow ? panelWindow.id : null;
+    if (state.layout === "panel") {
+      // The panel opens on its own window; every other window starts collapsed (once, so a
+      // window the user expands stays expanded).
+      for (const w of session.windows) {
+        if (state.panelSeen.has(w.id)) continue;
+        state.panelSeen.add(w.id);
+        if (w.id !== state.currentWindowId) state.collapsedWindows.add(w.id);
+      }
+    }
     const live = new Set(state.session.windows.flatMap((w) => w.tabs.map((t) => t.id)));
     for (const id of state.selected) if (!live.has(id)) state.selected.delete(id);
     for (const id of state.failedFavicons.keys()) if (!live.has(id)) state.failedFavicons.delete(id);
@@ -133,9 +152,12 @@
       e.dataTransfer.setData("text/plain", JSON.stringify({ tabIds: ids }));
       e.dataTransfer.effectAllowed = "move";
     });
-    row.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.add("dragover"); });
-    row.addEventListener("dragleave", () => row.classList.remove("dragover"));
-    row.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.remove("dragover"); dropTabs(e, { windowId: w.id, index: t.index, groupId: t.groupId }); });
+    // Rows in a popup or app window (the column's nodrop) take no drops: Chrome refuses the move.
+    if (w.type === "normal") {
+      row.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.add("dragover"); });
+      row.addEventListener("dragleave", () => row.classList.remove("dragover"));
+      row.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); row.classList.remove("dragover"); dropTabs(e, { windowId: w.id, index: t.index, groupId: t.groupId }); });
+    }
     return row;
   }
 
@@ -157,9 +179,11 @@
     sec.append(head);
     if (picking) sec.append(colorPicker(g));
     sec.append(...tabs.map((t) => tabRow(w, t)));
-    sec.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.add("drop"); });
-    sec.addEventListener("dragleave", () => sec.classList.remove("drop"));
-    sec.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.remove("drop"); dropTabs(e, { windowId: w.id, index: -1, groupId: g.id }); });
+    if (w.type === "normal") {
+      sec.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.add("drop"); });
+      sec.addEventListener("dragleave", () => sec.classList.remove("drop"));
+      sec.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); sec.classList.remove("drop"); dropTabs(e, { windowId: w.id, index: -1, groupId: g.id }); });
+    }
     return sec;
   }
 
@@ -240,7 +264,8 @@
 
   function windowColumn(w) {
     const dropTarget = w.type === "normal";
-    const collapsed = state.collapsedWindows.has(w.id);
+    // A search in the panel looks inside collapsed windows too.
+    const collapsed = state.collapsedWindows.has(w.id) && !(state.layout === "panel" && state.query.trim());
     const current = w.id === state.currentWindowId;
     const col = el("section", {
       class: `window${w.incognito ? " incognito" : ""}${collapsed ? " collapsed" : ""}${dropTarget ? "" : " nodrop"}${current ? " current" : ""}`,
@@ -262,6 +287,7 @@
         el("span", { class: "count", title: `${w.tabs.length} tabs` }, String(w.tabs.length)),
         iconButton("✎", "Rename window", () => renameWindow(w, name)),
         iconButton("☑", "Select all in window", () => { for (const t of w.tabs) state.selected.add(t.id); render(); }),
+        iconButton("⤓", "Save and close window", () => confirmSaveClose([w.id])),
         iconButton("⤴", "Focus window", () => chrome.windows.update(w.id, { focused: true }).catch((e) => toast(`Could not focus: ${e.message || e}`))),
         iconButton("×", "Close window", () => { state.confirmClose = w.id; render(); }, "danger"));
     }
@@ -301,7 +327,12 @@
     const grid = $("grid");
     grid.replaceChildren();
     if (filtered.windows.length === 0) grid.append(emptyState());
-    else for (const w of filtered.windows) grid.append(windowColumn(w));
+    else {
+      const wins = state.layout === "panel"
+        ? filtered.windows.slice().sort((a, b) => Number(b.id === state.currentWindowId) - Number(a.id === state.currentWindowId))
+        : filtered.windows;
+      for (const w of wins) grid.append(windowColumn(w));
+    }
     main.scrollTop = scrollTop;
     if (rowHadFocus) focusCursorRow(false);
     $("counts").textContent = TV.formatCounts({
@@ -350,6 +381,65 @@
       else parts.push(el("span", {}, ...caps, ` ${label}`));
     });
     $("hints").replaceChildren(...parts);
+  }
+
+  // ---- recently closed ---------------------------------------------------------
+  // The worker records closed tabs (lib/recent.js); the page lists them under the windows,
+  // collapsed by default. Removing and clearing go through the worker so writes never race.
+  async function loadRecent() {
+    const { [TV.RECENT_KEY]: list = [] } = await chrome.storage.local.get(TV.RECENT_KEY).catch(() => ({}));
+    state.recent = Array.isArray(list) ? list : [];
+    renderRecent();
+  }
+  function clockTime(ts) {
+    return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  async function reopenEntries(entries, newWindow) {
+    const urls = entries.map((e) => e.url);
+    try {
+      if (newWindow) await chrome.windows.create({ url: urls, focused: false });
+      else {
+        for (const url of urls) {
+          const props = { url, active: state.layout === "panel" };
+          if (state.currentWindowId !== null) props.windowId = state.currentWindowId;
+          await chrome.tabs.create(props);
+        }
+      }
+      await chrome.runtime.sendMessage({ type: "recentRemove", ids: entries.map((e) => e.id) });
+      toast(newWindow ? `Reopened ${urls.length} tab${urls.length === 1 ? "" : "s"} in a new window` : "Reopened");
+    } catch (err) {
+      toast(`Could not reopen: ${err.message || err}`);
+    }
+  }
+  function recentRow(e) {
+    const domain = TV.domainOf(e.url);
+    return el("div", { class: "rrow", title: e.url, dataset: { recent: e.id } },
+      favicon({ id: `recent-${e.id}`, favIconUrl: e.favIconUrl }, domain),
+      el("span", { class: "rtitle" }, e.title || e.url),
+      e.groupTitle ? el("span", { class: "when", title: "Group" }, e.groupTitle) : null,
+      el("span", { class: "domain mono" }, domain),
+      el("span", { class: "when mono", title: new Date(e.closedAt).toLocaleString() }, clockTime(e.closedAt)),
+      el("button", { type: "button", class: "reopen", title: "Reopen in this window", onclick: () => reopenEntries([e], false) }, "Reopen"));
+  }
+  function renderRecent() {
+    const list = state.recent;
+    const open = state.recentOpen && list.length > 0;
+    $("recent").hidden = list.length === 0;
+    $("recent-count").textContent = String(list.length);
+    $("recent-toggle").setAttribute("aria-expanded", String(open));
+    $("recent-toggle").querySelector(".caret").textContent = open ? "▾" : "▸";
+    $("recent-list").hidden = !open;
+    if (!open) { $("recent-list").replaceChildren(); return; }
+    $("recent-list").replaceChildren(...TV.sections(list).flatMap((s) => {
+      if (!s.batch) return s.entries.map(recentRow);
+      const n = s.entries.length;
+      return [el("div", { class: "rbatch", dataset: { batch: s.batch } },
+        el("div", { class: "bhead" },
+          el("span", { class: "btitle" }, `Window closed · ${n} tab${n === 1 ? "" : "s"}`),
+          el("span", { class: "when mono" }, clockTime(s.entries[0].closedAt)),
+          el("button", { type: "button", class: "reopen-all", title: "Reopen these tabs in a new window", onclick: () => reopenEntries(s.entries, true) }, "Reopen all")),
+        ...s.entries.map(recentRow))];
+    }));
   }
 
   function selectedTabs() {
@@ -598,9 +688,11 @@
       render();
     },
     help: () => openDialog("help"),
+    saveClose: () => { const id = thisWindowId(); if (id === null) toast("Move to a tab first (j or k)"); else confirmSaveClose([id]); },
   };
 
   document.addEventListener("keydown", (e) => {
+    if (palette.open) { if (e.key === "Escape") { e.preventDefault(); closePalette(); } return; }
     if (e.key === "Escape" && closeMenus(true)) { e.preventDefault(); return; }
     const openMenu = document.querySelector(".menu:not([hidden])");
     if (openMenu) {
@@ -614,6 +706,10 @@
       return; // Enter and Space activate the focused item natively
     }
     if (!$("dialog-backdrop").hidden) { if (e.key === "Escape") closeDialog(); return; }
+    // Alt+K opens the command palette (lib/palette.js opensPalette: not while typing in a field
+    // other than the search box, where Option+K types a character on macOS).
+    const field = { editable: Boolean(e.target && e.target.matches && e.target.matches("input, textarea, select, [contenteditable], [contenteditable] *")), id: e.target && e.target.id };
+    if (TV.opensPalette(e, field)) { e.preventDefault(); openPalette(); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const s = TV.findShortcut(e.key);
     if (!s || !s.action) return;
@@ -624,9 +720,160 @@
     ACTIONS[s.action](e);
   });
 
+  // ---- save and close ------------------------------------------------------------
+  // "This window": the focused row's window when the cursor is on screen, else the window
+  // TabVault is in (the page's tab, or the side panel's window).
+  function thisWindowId() {
+    const r = state.cursor === null ? null : visibleTabs().find((x) => x.id === state.cursor);
+    return r ? r.windowId : state.currentWindowId;
+  }
+  // Opens the confirmation (app/dialogs.js saveClose); nothing closes before its button.
+  function confirmSaveClose(windowIds) {
+    const wins = state.session.windows.filter((w) => windowIds.includes(w.id));
+    const count = wins.reduce((n, w) => n + w.tabs.length, 0);
+    if (!count) { toast("Nothing to save in this window"); return; }
+    const label = wins.length === 1 ? windowLabel(wins[0]) : "All windows";
+    openDialog("saveClose", { windowIds: wins.map((w) => w.id), count, name: TV.snapshotName(label, Date.now()) });
+  }
+
+  // ---- command palette (Alt+K) ----------------------------------------------------
+  // Actions (lib/shortcuts.js by name plus the commands below) and tabs, ranked by lib/palette.js.
+  // The page's own extra commands; each run(e) gets a stand-in event for the shortcut actions.
+  const PALETTE_COMMANDS = [
+    { id: "snapshot", label: "Snapshot now", run: () => snapshotNow() },
+    { id: "discardIdle", label: "Discard idle tabs now", run: () => discardIdleNow() },
+    { id: "export", label: "Export", run: () => openDialog("export") },
+    { id: "snapshots", label: "Snapshots", run: () => openDialog("snapshots") },
+    { id: "settings", label: "Settings", run: () => openDialog("settings") },
+    { id: "sidePanel", label: "Open side panel", run: () => openSidePanel(), when: () => canOpenPanel() },
+    { id: "saveCloseAll", label: "Save and close all windows", run: () => confirmSaveClose(state.session.windows.map((w) => w.id)) },
+  ];
+  const palette = { open: false, rows: [], index: 0, returnFocus: null };
+
+  // The side panel (Chrome 116+, the sidePanel permission). chrome.sidePanel.open must run inside
+  // the click or key press, so it is called without awaiting anything first.
+  function canOpenPanel() {
+    return state.layout !== "panel" && Boolean(chrome.sidePanel && chrome.sidePanel.open);
+  }
+  function openSidePanel() {
+    if (!canOpenPanel()) return;
+    const target = state.currentWindowId !== null ? { windowId: state.currentWindowId } : null;
+    if (!target) { toast("Could not find this window"); return; }
+    chrome.sidePanel.open(target).catch((e) => toast("Could not open the side panel: " + (e.message || e)));
+  }
+
+  async function snapshotNow() {
+    const r = await chrome.runtime.sendMessage({ type: "snapshotNow" }).catch((e) => ({ ok: false, error: e.message }));
+    if (r && r.skipped) toast("Nothing to snapshot (no other windows open)");
+    else toast(r && r.ok ? "Snapshot saved" : `Snapshot failed: ${r && r.error}`);
+  }
+  async function discardIdleNow() {
+    const r = await chrome.runtime.sendMessage({ type: "discardIdleNow" }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) { toast(`Could not unload: ${r && r.error}`); return; }
+    toast(`Unloaded ${r.unloaded} idle tab${r.unloaded === 1 ? "" : "s"}${r.waiting ? `; ${r.waiting} wait for the next run` : ""}`);
+  }
+
+  function paletteCommands() {
+    return PALETTE_COMMANDS.filter((c) => !c.when || c.when());
+  }
+  function paletteRows(query) {
+    const actions = TV.paletteActions(TV.SHORTCUTS, paletteCommands());
+    const tabs = state.session.windows.flatMap((w) => w.tabs.map((tab) => ({ tab, windowId: w.id, windowLabel: windowLabel(w) })));
+    return TV.filterPalette(query, actions, tabs, { domainOf: TV.domainOf });
+  }
+  function openPalette() {
+    if (palette.open) { $("palette-input").select(); return; }
+    closeMenus();
+    palette.open = true;
+    palette.returnFocus = document.activeElement;
+    $("palette-backdrop").hidden = false;
+    $("palette-input").value = "";
+    drawPalette();
+    $("palette-input").focus();
+  }
+  function closePalette(refocus = true) {
+    if (!palette.open) return;
+    palette.open = false;
+    $("palette-backdrop").hidden = true;
+    $("palette-list").replaceChildren();
+    const back = palette.returnFocus;
+    palette.returnFocus = null;
+    if (refocus && back && back.isConnected && typeof back.focus === "function") back.focus();
+  }
+  function drawPalette() {
+    palette.rows = paletteRows($("palette-input").value);
+    palette.index = 0;
+    renderPaletteList();
+  }
+  function renderPaletteList() {
+    const list = $("palette-list");
+    if (!palette.rows.length) {
+      list.replaceChildren(el("div", { class: "pempty" }, "No action or tab matches."));
+      $("palette-input").removeAttribute("aria-activedescendant");
+      return;
+    }
+    list.replaceChildren(...palette.rows.map((r, i) => {
+      const on = i === palette.index;
+      const id = `palette-row-${i}`;
+      const attrs = { id, class: `prow${on ? " on" : ""}`, role: "option", "aria-selected": String(on), dataset: { kind: r.kind, index: String(i) } };
+      if (r.kind === "action") {
+        attrs.dataset.action = r.action.id;
+        return el("div", attrs,
+          el("span", { class: "pkind", "aria-hidden": "true" }, "›"),
+          el("span", { class: "plabel" }, r.action.label),
+          el("span", { class: "pkeys" }, ...r.action.keys.map((k) => el("kbd", {}, k))));
+      }
+      const domain = TV.domainOf(r.tab.url);
+      attrs.dataset.tab = String(r.tab.id);
+      return el("div", attrs,
+        favicon(r.tab, domain),
+        el("span", { class: "plabel" }, r.tab.title || r.tab.url),
+        el("span", { class: "pwin" }, r.windowLabel.slice(0, 30)),
+        el("span", { class: "domain mono" }, domain));
+    }));
+    $("palette-input").setAttribute("aria-activedescendant", `palette-row-${palette.index}`);
+    const current = list.querySelector(".prow.on");
+    if (current) current.scrollIntoView({ block: "nearest" });
+  }
+  function runPaletteRow(i) {
+    const r = palette.rows[i];
+    if (!r) return;
+    closePalette(false);
+    if (r.kind === "tab") { focusTab(r.tab.id, r.windowId).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
+    const command = PALETTE_COMMANDS.find((c) => c.id === r.action.id);
+    const stand = { target: document.body, preventDefault() {} };
+    if (command) Promise.resolve(command.run(stand)).catch((e) => toast(`${r.action.label} failed: ${e.message || e}`));
+    else if (ACTIONS[r.action.id]) ACTIONS[r.action.id](stand);
+  }
+  function wirePalette() {
+    const input = $("palette-input");
+    input.addEventListener("input", drawPalette);
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Escape") { e.preventDefault(); closePalette(); return; }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!palette.rows.length) return;
+        palette.index = (palette.index + (e.key === "ArrowDown" ? 1 : -1) + palette.rows.length) % palette.rows.length;
+        renderPaletteList();
+        return;
+      }
+      if (e.key === "Enter") { e.preventDefault(); runPaletteRow(palette.index); }
+    });
+    $("palette-list").addEventListener("click", (e) => {
+      const row = e.target.closest(".prow");
+      if (row) runPaletteRow(Number(row.dataset.index));
+    });
+    $("palette-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closePalette(); });
+    $("btn-palette").addEventListener("click", () => openPalette());
+    $("btn-panel").hidden = !canOpenPanel();
+    $("btn-panel").addEventListener("click", () => openSidePanel());
+  }
+
   // ---- wiring -------------------------------------------------------------------------
   function wire() {
     renderHints();
+    wirePalette();
     $("search").addEventListener("input", (e) => { state.query = e.target.value; render(); });
     $("search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { const r = visibleTabs()[0]; if (r) focusTab(r.id, r.windowId); }
@@ -667,7 +914,13 @@
     $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("more-menu"); });
     $("more-menu").addEventListener("click", () => closeMenus());
     document.addEventListener("click", (e) => { if (!e.target.closest(".menu-wrap")) closeMenus(); });
-    chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[TV.WINDOW_NAMES_KEY]) scheduleRefresh(); });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local") return;
+      if (changes[TV.WINDOW_NAMES_KEY]) scheduleRefresh();
+      if (changes[TV.RECENT_KEY]) loadRecent().catch(console.error);
+    });
+    $("recent-toggle").addEventListener("click", () => { state.recentOpen = !state.recentOpen; renderRecent(); });
+    $("recent-clear").addEventListener("click", () => chrome.runtime.sendMessage({ type: "recentClear" }).then(() => toast("Recently closed cleared"), (e) => toast("Could not clear: " + (e.message || e))));
     $("dialog-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(); });
 
     for (const container of [$("grid"), $("selbar")]) {
@@ -685,8 +938,8 @@
   }
 
   window.TabVaultApp = {
-    getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel,
+    getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel, openPalette,
   };
 
-  loadSettings().then(refresh).then(wire).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
+  loadSettings().then(refresh).then(wire).then(loadRecent).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
 })();

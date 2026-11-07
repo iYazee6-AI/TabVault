@@ -8,7 +8,8 @@
 // Run: npm run screenshots
 //
 // Output:
-//   docs/store/screenshots/01..05-*.png   1280x800
+//   docs/store/screenshots/01..05-*.png   1280x800 (all windows, command palette,
+//                                         unload idle tabs, duplicates, snapshots)
 //   docs/store/promo-tile-440x280.png     440x280 (from docs/store/promo-tile.html)
 //
 // The example pages are served locally on port 8771 (e2e/server.js owns 8765;
@@ -67,9 +68,21 @@ const PAGES = [
   { host: "music.example.com", p: "/focus", title: "Focus playlist", color: "#7c2d12", letter: "M" },
 ];
 
-const byPath = new Map(PAGES.map((x) => [x.p, x]));
+// Pages opened and closed again before the screenshots, so the Recently closed list (1.2)
+// holds real entries recorded by the worker.
+const CLOSED_PAGES = [
+  { host: "news.example.com", p: "/long-read", title: "The long read: thirty years of browsers", color: "#b45309", letter: "N" },
+  { host: "shop.example.com", p: "/checkout", title: "Checkout - 3 items", color: "#c2410c", letter: "S" },
+  { host: "travel.example.com", p: "/hotels", title: "Hotels near Gion, Kyoto", color: "#0369a1", letter: "T" },
+  { host: "recipes.example.com", p: "/miso-soup", title: "Weeknight miso soup", color: "#15803d", letter: "R" },
+  { host: "docs.example.com", p: "/alarms-api", title: "chrome.alarms API reference", color: "#0f766e", letter: "D" },
+];
+
+const byPath = new Map(PAGES.concat(CLOSED_PAGES).map((x) => [x.p, x]));
 const U = {};
 for (const x of PAGES) U[x.p] = "http://" + x.host + x.p;
+const C = {};
+for (const x of CLOSED_PAGES) C[x.p] = "http://" + x.host + x.p;
 
 function faviconHref(color, letter) {
   const svg =
@@ -333,6 +346,44 @@ async function main() {
     const workTabs = await tabsOf(work.id);
     await sw((id) => chrome.tabs.update(id, { pinned: true }), pick(workTabs, "/inbox").id);
 
+    // ---- seed the Recently closed list ---------------------------------------
+    // Real closes recorded by the worker: one tab, then a window of three, then one more.
+    const openAndWait = async (urls) => {
+      const win = await newWindow(urls, 160, 160);
+      const deadlineClosed = Date.now() + 20000;
+      for (;;) {
+        const list = await tabsOf(win.id);
+        const ready = urls.every((u) => list.some((t) => t.url === u && t.title && t.title === byPath.get(new URL(u).pathname).title));
+        if (ready) return { win, list };
+        if (Date.now() > deadlineClosed) throw new Error("closed-list pages did not load: " + JSON.stringify(list.map((t) => [t.url, t.title])));
+        await sleep(300);
+      }
+    };
+    const single = await openAndWait([C["/long-read"], U["/weekly"]]);
+    await sw((id) => chrome.tabs.remove(id), pick(single.list, "/long-read").id);
+    await sleep(300);
+    await sw((id) => chrome.windows.remove(id), single.win.id);
+    await sleep(400);
+    const batch = await openAndWait([C["/checkout"], C["/hotels"], C["/miso-soup"]]);
+    await sw((id) => chrome.windows.remove(id), batch.win.id);
+    await sleep(600);
+    const last = await openAndWait([C["/alarms-api"], U["/weekly"]]);
+    await sw((id) => chrome.tabs.remove(id), pick(last.list, "/alarms-api").id);
+    await sleep(300);
+    await sw((id) => chrome.windows.remove(id), last.win.id);
+    // The two helper windows' leftover tabs (/weekly) were recorded too; keep only the five
+    // closes above, newest first, so the list reads like an afternoon's work.
+    await sw(async (wanted) => {
+      const deadline = Date.now() + 10000;
+      let list = [];
+      while (Date.now() < deadline) {
+        list = (await chrome.storage.local.get("recentlyClosed")).recentlyClosed || [];
+        if (wanted.every((u) => list.some((e) => e.url === u))) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      await chrome.storage.local.set({ recentlyClosed: list.filter((e) => wanted.includes(e.url)) });
+    }, [C["/long-read"], C["/checkout"], C["/hotels"], C["/miso-soup"], C["/alarms-api"]]);
+
     // ---- seed a snapshot history ------------------------------------------
     // Real snapshot records built by the extension's own lib/snapshots.js from
     // the live session, back-dated so the list looks like a normal day's
@@ -351,10 +402,12 @@ async function main() {
         { session: slice(2), reason: "change", at: minutes(233) },
         { session: slice(1), reason: "startup", at: minutes(391) },
       ];
-      const snapshots = plan
-        .map((x) => self.TabVault.makeSnapshot(x.session, x.reason, x.at))
-        .sort((a, b) => b.takenAt - a.takenAt);
-      await chrome.storage.local.set({ snapshots });
+      // Written through lib/snapstore.js (storage version 2: an index plus one key per snapshot),
+      // after dropping whatever the worker took while the fixtures opened, and with the pending
+      // change alarm cleared so no new row lands while the screenshots are taken.
+      await chrome.alarms.clear("tabvault-snapshot");
+      for (const old of await self.TabVault.listSnapshots(chrome.storage.local)) await self.TabVault.deleteSnapshot(chrome.storage.local, old.id);
+      for (const x of plan.slice().reverse()) await self.TabVault.addSnapshot(chrome.storage.local, self.TabVault.makeSnapshot(x.session, x.reason, x.at), 20);
     });
 
     // Window names (1.1) live in chrome.storage.local under TabVault.WINDOW_NAMES_KEY
@@ -380,33 +433,45 @@ async function main() {
       console.log("wrote " + file);
     };
 
-    // 01 — the whole session at a glance
+    // 01 — the whole session at a glance, with the Recently closed section opened below
+    await app.click("#recent-toggle");
+    await app.waitForFunction(() => document.querySelectorAll("#recent-list .rrow").length >= 5);
+    // No hover or keyboard cursor on any row in the shots.
+    await app.mouse.move(640, 470);
+    await app.evaluate(() => { for (const n of document.querySelectorAll(".tab.cursor")) n.classList.remove("cursor"); if (document.activeElement) document.activeElement.blur(); });
+    await app.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
+    await sleep(500);
     await shot("01-all-windows.png");
 
-    // 02 — search across every window
-    await app.click("#search");
-    await app.fill("#search", "release");
-    await app.waitForFunction(() => document.querySelector("#counts").textContent.includes(" of "));
+    // 02 — the command palette (Alt+K): actions with their keys, then matching tabs
+    await app.keyboard.press("Alt+K");
+    await app.waitForSelector("#palette-backdrop:not([hidden])");
+    await app.keyboard.type("s");
+    await app.waitForFunction(() => document.querySelectorAll('#palette-list .prow[data-kind="tab"]').length > 0);
+    await app.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
     await sleep(400);
-    await shot("02-search.png");
-    await app.fill("#search", "");
-    await app.waitForFunction(() => !document.querySelector("#counts").textContent.includes(" of "));
+    await shot("02-command-palette.png");
+    await app.keyboard.press("Escape");
+    await app.waitForFunction(() => document.getElementById("palette-backdrop").hidden);
 
-    // 03 — multi-select and the bulk-action bar
-    const personalTabs = await tabsOf(personal.id);
-    const selection = [
-      pick(personalTabs, "/cart").id,
-      pick(personalTabs, "/desk-lamp").id,
-      pick(personalTabs, "/gift-ideas").id,
-      pick(personalTabs, "/weekly").id,
-    ];
-    for (const id of selection) {
-      await app.click('.tab[data-tab="' + id + '"] input[type=checkbox]');
-    }
-    await app.waitForSelector("#selbar:not([hidden])");
+    // 03 — Settings: unload idle tabs. The boxes are ticked and filled on screen only (Cancel
+    // below, nothing saved), so no alarm discards anything while this script runs; the last-run
+    // line reads a run record written here, since a real run's chrome.tabs.discard crashes
+    // Playwright's Chromium (see CLAUDE.md).
+    await app.evaluate(() => chrome.storage.session.set({ "autoDiscard.lastRun": { at: Date.now() - 4 * 60000, unloaded: 7, failed: 0, waiting: 0, manual: false } }));
+    await app.click("#btn-more");
+    await app.click("#btn-settings");
+    await app.waitForSelector("#ad-enabled");
+    await app.check("#ad-enabled");
+    await app.fill("#ad-allow", ["mail.example.com", "*.tracker.example.com"].join(String.fromCharCode(10)));
+    await app.waitForFunction(() => document.getElementById("ad-last-run").textContent.includes("unloaded"));
+    // From the top: the title and every 1.2 row show; only the Save row falls below the fold.
+    await app.$eval("#dialog", (box) => { box.scrollTop = 0; });
+    await app.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
     await sleep(400);
-    await shot("03-selection.png");
-    await app.click("#sel-clear");
+    await shot("03-unload-idle-tabs.png");
+    await app.click('#dialog button:has-text("Cancel")');
+    await app.waitForFunction(() => document.getElementById("dialog-backdrop").hidden);
 
     // 04 — the duplicate finder (two URLs are open twice in the seeded session)
     await app.click("#btn-dupes");
@@ -417,12 +482,14 @@ async function main() {
     await app.click("#dialog-backdrop", { position: { x: 5, y: 5 } });
     await app.waitForFunction(() => document.getElementById("dialog-backdrop").hidden);
 
-    // 05 — snapshots, including a manual one taken right now through the UI
+    // 05 — snapshots: a named, kept save-and-close snapshot of the Personal window (the worker's
+    // own takeSnapshot, without closing anything), and a manual one taken through the UI
+    await sw((id) => self.takeSnapshot("save-close", { windowIds: [id], name: self.TabVault.snapshotName("Personal", Date.now() - 52 * 60000), pinned: true }), personal.id);
     await app.click("#btn-snapshots");
     await app.waitForSelector("#dialog h2");
     await app.click('#dialog button:has-text("Snapshot now")');
-    await app.waitForFunction(() => document.querySelectorAll("#dialog .row[data-snapshot]").length >= 5, null, { timeout: 15000 });
-    await sleep(800);
+    await app.waitForFunction(() => document.querySelectorAll("#dialog .row[data-snapshot]").length >= 6, null, { timeout: 15000 });
+    await sleep(2200); // let the "Snapshot saved" toast fade
     await shot("05-snapshots.png");
     await app.click("#dialog-backdrop", { position: { x: 5, y: 5 } });
 

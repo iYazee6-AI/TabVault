@@ -32,9 +32,9 @@ once the repository is public.
 
 ## 1. Pre-submission checklist
 
-- [ ] `npm test` passes (23 tests).
-- [ ] `npm run e2e` passes (13 scenarios; scenario I-b is expected to report
-      LIMITED on this machine — `chrome.tabs.discard` crashes Playwright's
+- [ ] `npm test` passes (70 tests).
+- [ ] `npm run e2e` passes (27 scenarios; scenarios I-b and Z are expected to
+      report LIMITED on this machine — `chrome.tabs.discard` crashes Playwright's
       bundled Chromium, see `e2e/README.md`. LIMITED is a pass for release
       purposes; FAIL or NOT RUN is not).
 - [ ] The manual checks from `README.md` → "Manual checks before release",
@@ -47,19 +47,27 @@ once the repository is public.
       - Lazy restore: Settings → "Load restored tabs only when opened (lazy)"
         on, then restore a snapshot, and confirm the non-first tabs open
         unloaded and load on click.
+      - Unload idle tabs (1.2): Settings → "Unload tabs not used for" 15
+        minutes on, leave a few tabs alone past that, and confirm they show
+        `zz` within 5 minutes after, with the "last run" line under the
+        setting; the active, playing and pinned tabs stay loaded.
+      - Side panel (1.2): ⋯ → "Open in side panel" opens the one-column
+        layout beside the page; the toolbar icon still opens the full page.
 - [ ] `PRIVACY.md` contact email filled in and the file is reachable at a
       public URL.
 - [ ] `manifest.json` `version` is the base you want to publish (currently
-      `1.1.1`). The Release workflow appends the run number, so the uploaded
-      package is `1.1.1.<run number>`; every later upload must be higher.
+      `1.2.0`). The Release workflow appends the run number, so the uploaded
+      package is `1.2.0.<run number>`; every later upload must be higher.
 - [ ] `manifest.json` `name` is `TabVault: Open-Source Tab Manager` (33 characters; Chrome
       allows 75, and this kit keeps the title at or under 45 so store cards
       and search do not cut it). The store title is read from this field, so
       the listing title changes only with a new package.
 - [ ] The listing makes no claim the code does not back: the memory line says
-      TabVault unloads only the tabs you select (the Discard action and lazy
-      restore); there is no automatic unloading of idle tabs and no memory
-      meter. Change that line only when such a feature ships.
+      TabVault unloads the tabs you select (Discard, lazy restore) and, since
+      1.2 and only when you turn it on, tabs idle past a threshold you pick;
+      it never closes a tab on its own, and there is no memory meter (the
+      `processes` API is Dev channel only). Change that line only when the
+      code changes.
 - [ ] The zip you are about to upload came from **Actions → Release build →
       Run workflow**, and was downloaded from the GitHub Release
       `v<manifest version>.<run number>` that the workflow created (for
@@ -102,7 +110,7 @@ the `setup-trivy` tag it depended on).
 | Field | Value |
 |---|---|
 | Title (from manifest `name`, 33 characters, kept at or under 45) | `TabVault: Open-Source Tab Manager` |
-| Summary (from manifest `description`, 125 characters, max 132) | `Every window and tab in one page. Search, move, group, clean duplicates, unload tabs you pick, and keep snapshots and export.` |
+| Summary (from manifest `description`, 128 characters, max 132) | `Every window and tab in one page or the side panel. Search, group, dedupe, unload idle tabs, reopen closed tabs, keep snapshots.` |
 | Category | `Productivity` → subcategory `Tools`. TabVault manages the browser's own windows and tabs rather than acting on page content, which is what the Tools subcategory covers; if the dashboard offers only one level, choose `Productivity`. |
 | Language | `English` |
 
@@ -111,7 +119,7 @@ the `setup-trivy` tag it depended on).
 ```
 TabVault is an open-source tab manager. It puts every window and tab you have open into a single page, and keeps local snapshots of your session so a crash or a stray click does not cost you your tabs.
 
-Free memory on your terms: TabVault unloads only the tabs you select. Pick the tabs you are not using and click Discard; they stay in their windows and reload when you click them. Restored sessions open unloaded too. Nothing is unloaded automatically.
+Free memory on your terms: pick the tabs you are not using and click Discard, or turn on Unload idle tabs in Settings and TabVault unloads tabs you have not used for the time you choose (15 minutes to 4 hours). Unloaded tabs stay in their windows and reload when you click them; the tab you are on, tabs playing sound, pinned tabs (unless you allow it), protected groups and the sites you list are never unloaded, and nothing is ever closed. It is off until you turn it on.
 
 WHAT YOU CAN DO
 • See every window as a card and every tab as a row with its favicon and site, with your native tab groups shown inline. The window TabVault is open in is marked CURRENT, and you can give any window a name.
@@ -121,9 +129,14 @@ WHAT YOU CAN DO
 • Create, rename, recolour, collapse and ungroup native tab groups.
 • Find tabs that share a URL, choose which copy to keep and which extra copies to close, row by row.
 • Navigate entirely from the keyboard: j and k (or the arrows) to move, x to select, g to group, d for duplicates, Enter to go to a tab, Delete to close, ? for the full list. The shortcuts are always shown at the bottom of the page.
+• Press Alt+K for the command palette: type a few letters to run any action or jump to any tab.
+• Open TabVault in Chrome's side panel for a one-column view beside the page you are reading.
+• The toolbar icon shows how many tabs you have open (or how many are unloaded, or nothing).
+• Reopen recently closed tabs, one at a time or a whole closed window at once.
 • Light and dark themes that follow Chrome, or pick one in Settings.
 
 SNAPSHOTS, EXPORT AND RESTORE
+• Save and close: put a whole window away in one step. TabVault asks first with the count, keeps a named snapshot, then closes the tabs.
 • Snapshots are taken after your tabs stop changing for a while, and on browser startup — not on a fixed timer, so an idle browser does not fill your storage. Identical sessions are never stored twice.
 • Take one yourself with Snapshot now, and mark any snapshot Keep so it is never rotated away.
 • Export the current session, or any snapshot, to a JSON file with every window, tab, group, pinned state and position.
@@ -147,18 +160,22 @@ Open source, plain HTML and JavaScript, no build step and no dependencies, MIT l
 | Field | File | Size |
 |---|---|---|
 | Store icon | `icons/icon128.png` | 128×128 |
-| Screenshots (upload in this order) | `docs/store/screenshots/01-all-windows.png` — the whole session: three named window cards (Research, Work, Personal), three colour-coded tab groups, a pinned tab, the header counter and the shortcut strip | 1280×800 |
-| | `docs/store/screenshots/02-search.png` — searching "release": only matching tabs remain, the counter reads "3 win · 4 of 27 tabs" | 1280×800 |
-| | `docs/store/screenshots/03-selection.png` — four tabs selected with the floating bar: Move to ▾, Group, Pin, Discard, Close, Esc to clear | 1280×800 |
+| Screenshots (upload in this order) | `docs/store/screenshots/01-all-windows.png` — the whole session: three named window cards (Research, Work, Personal), three colour-coded tab groups, a pinned tab, the header counter, the shortcut strip, and the Recently closed section opened below (a single tab, a closed window of three with Reopen all) | 1280×800 |
+| | `docs/store/screenshots/02-command-palette.png` — the Alt+K palette after typing "s": actions with their keys first, then matching tabs with their window and site | 1280×800 |
+| | `docs/store/screenshots/03-unload-idle-tabs.png` — Settings: the icon badge, Remember recently closed tabs, and Unload idle tabs (threshold, pinned spared, a site list, what is never unloaded, the "last run" line) | 1280×800 |
 | | `docs/store/screenshots/04-duplicates.png` — the duplicate finder listing two duplicated URLs: a Keep radio per copy with the kept copy marked, a close checkbox on each extra copy, Select all / Select none, and the "Close 2 selected" button | 1280×800 |
-| | `docs/store/screenshots/05-snapshots.png` — the snapshot list: automatic, startup and a kept manual snapshot, with Restore/Export/Keep/Delete | 1280×800 |
+| | `docs/store/screenshots/05-snapshots.png` — the snapshot list: a kept manual snapshot, a kept "Personal" save-and-close snapshot, automatic and startup ones, with Restore/Export/Keep/Delete | 1280×800 |
 | Small promo tile | `docs/store/promo-tile-440x280.png` | 440×280 |
 | Marquee promo tile | leave empty (optional) | 1400×560 |
 | Video | leave empty (none) | |
 
 All five screenshots were captured by `npm run screenshots` from the real
 extension running in Chromium, using example pages served locally on port
-8771 and mapped to `*.example.com`. Nothing in them is mocked up.
+8771 and mapped to `*.example.com`. Nothing in them is mocked up; the
+snapshot history is seeded through the extension's own `lib/snapstore.js`,
+the recently closed entries are real closes the worker recorded, and the
+"last run" line under Unload idle tabs reads a run record the script writes
+(a real run's `chrome.tabs.discard` crashes Playwright's Chromium).
 
 **Additional fields**
 
@@ -180,7 +197,7 @@ output onto white; check byte 25 of each file is 2 after regenerating.
 **Single purpose** (paste):
 
 ```
-TabVault lists every browser window and tab in one page so the user can search, organise and clean them up, and keeps local snapshots of that session so it can be exported and restored. All data stays in the browser's local extension storage.
+TabVault lists every browser window and tab in one page (or in the side panel) so the user can search, organise, unload and clean them up, and keeps local snapshots of that session and a list of recently closed tabs so they can be exported, restored and reopened. All data stays in the browser's local extension storage.
 ```
 
 **Permission justifications** (one box per permission; these are every
@@ -191,9 +208,10 @@ permissions)
 |---|---|---|---|
 | `tabs` | At install, for the life of the extension. | Reads the title, URL, favicon, pinned/muted state, position and group of every tab via `chrome.windows.getAll({populate:true})` so the page can list them, and calls `chrome.tabs.move`, `group`, `ungroup`, `update`, `discard`, `create` and `remove` when the user moves, groups, pins, unloads, opens or closes tabs — plus the same calls when restoring a snapshot or an imported file. | The extension has nothing to show and nothing to restore. |
 | `tabGroups` | At install. | Reads native tab groups (`chrome.tabGroups.query`) so they appear inline under their window, and calls `chrome.tabGroups.update` to rename, recolour and collapse them, including when recreating them during a restore. | Groups would be invisible in the listing and lost on restore. |
-| `storage` | At install. | `chrome.storage.local` holds the user's settings and the snapshot history; a single value in `chrome.storage.session` tracks when the current burst of tab changes started so a busy browser cannot postpone a snapshot forever. This is the only place any data is kept. | No snapshots, no settings; the extension becomes a read-only viewer. |
+| `storage` | At install. | `chrome.storage.local` holds the user's settings, the snapshot history and the recently closed list (at most 200 tabs, off switch in Settings); `chrome.storage.session` holds short-lived values: when the current burst of tab changes started (so a busy browser cannot postpone a snapshot forever), when the browser session started, and the idle-tab rule's last run. This is the only place any data is kept. | No snapshots, no settings, no recently closed list; the extension becomes a read-only viewer. |
 | `unlimitedStorage` | At install. | A snapshot stores a full session, and the history is many snapshots; a user with hundreds of tabs exceeds the default extension storage quota, and a quota failure would silently lose a snapshot. This permission lifts that cap. It grants no additional access to anything — only more room in the extension's own local storage. | Snapshots would start failing to save once the history grew past the default quota. |
-| `alarms` | At install. | Snapshots are debounced: after tabs stop changing for N seconds (30 by default) one is taken. A Manifest V3 service worker is torn down while idle and cannot hold a timer, so the delay is measured with a single re-armed `chrome.alarms` alarm. No alarm is ever used to poll or to run on a schedule. | Automatic snapshots would be impossible; only manual ones would remain. |
+| `alarms` | At install. | Snapshots are debounced: after tabs stop changing for N seconds (30 by default) one is taken. A Manifest V3 service worker is torn down while idle and cannot hold a timer, so the delay is measured with a single re-armed `chrome.alarms` alarm. A second alarm fires every 5 minutes: it refreshes the tab count on the toolbar icon and, only when the user has turned on Unload idle tabs, unloads (never closes) at most 25 tabs idle past the user's threshold. | Automatic snapshots and idle-tab unloading would be impossible, and the icon count could go stale. |
+| `sidePanel` | At install. | Shows the same TabVault page (`app/index.html?panel=1`, a one-column layout) in Chrome's side panel when the user opens it from TabVault's menu, the command palette, or a keyboard shortcut they assign. The toolbar icon still opens the full page. It grants no access to any website. | TabVault could only be used as a full tab. |
 | Host permissions | none | The manifest declares no `host_permissions` and no `optional_host_permissions`, and the extension registers no content scripts and calls no scripting API. It never reads page content. | — |
 
 **Remote code**
@@ -214,7 +232,7 @@ the future?" Tick:
 | Authentication information | No | It reads no page content, no cookies and no credentials. |
 | Personal communications | No | |
 | Location | No | |
-| Web history | Yes | The addresses and titles of the tabs the user has open, and of the tabs in each stored snapshot. Written only to local extension storage; never transmitted. |
+| Web history | Yes | The addresses and titles of the tabs the user has open, of the tabs in each stored snapshot, and of the last 200 tabs the user closed (the recently closed list, which can be turned off and cleared). Written only to local extension storage; never transmitted. |
 | User activity | No | No clicks, keystrokes or analytics are recorded. |
 | Website content | No | No host permissions and no content scripts: the content of pages is never readable. |
 
@@ -330,3 +348,30 @@ NEW IN 1.1
 • About in the ⋯ menu: version, the open-source repository, privacy policy.
 • Fonts are bundled with the extension. TabVault still sends nothing to any server of its own and has no analytics; the only network activity is the browser fetching each tab's favicon from that tab's own site, as in 1.0.
 ```
+
+## 12. What's new in 1.2.0 "Keeper" (for the update)
+
+1.2.0 supersedes 1.1.1 (spec assumption 6): upload 1.2.0 instead of 1.1.1; the
+rename ("TabVault: Open-Source Tab Manager") goes out inside it. If 1.1.1 is
+already in review, cancel that review first or wait for it (section 10). Upload the 1.2.0
+package as in section 8 (the dashboard asks for the new `sidePanel`
+justification from section 5 before it accepts the package), replace all five
+screenshots with the regenerated ones in the new order (section 4: two files
+changed name), update the description from section 4, and paste this block at
+the top of it, above "TabVault is an open-source tab manager...", with one
+blank line after it:
+
+```
+NEW IN 1.2
+• Unload idle tabs: turn it on in Settings and tabs you have not used for 15 minutes to 4 hours are unloaded every few minutes, at most 25 at a time. Never the tab you are on, tabs playing sound, pinned tabs (unless you allow it), a group whose name starts with 📌, or the sites you list. Nothing is ever closed, and Settings shows when it last ran.
+• The toolbar icon counts your tabs (or your unloaded tabs, or nothing).
+• Recently closed: reopen a tab you closed, or a whole closed window at once. Kept on your computer only, the last 200, with a Clear button and an off switch.
+• Command palette: press Alt+K and type to run any action or jump to any tab.
+• Side panel: open TabVault beside the page you are reading, in one column, from the ⋯ menu or the palette.
+• Save and close: put a window away in one step. TabVault asks first with the count, keeps a named snapshot you can restore, then closes the tabs.
+```
+
+The three owner's source images ("ChatGPT Image Sep 23 ...", untracked) now sit in
+`docs/store/marketing-sources/`, not beside the store screenshots, so they are not
+uploaded by mistake. Upload only the five `0*-*.png` files in
+`docs/store/screenshots/` (the `marketing-0*` images are separate marketing art).

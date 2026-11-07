@@ -2,7 +2,7 @@
 
 <!-- TODO: add the Chrome Web Store badge and listing link here once the listing URL is known (not yet pasted by the owner; do not guess it). -->
 
-TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that puts every window and tab into one page: search across all of them, select and move tabs between windows, group and rename, clean up duplicates, unload the tabs you select to free their memory, and keep your session safe with automatic snapshots plus manual JSON export/import. It's a from-scratch reimplementation inspired by [Tab Manager v2](https://github.com/xcv58/Tab-Manager-v2), written in plain JavaScript with no build step and no runtime dependencies. Licensed under the [MIT License](LICENSE).
+TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that puts every window and tab into one page: search across all of them, select and move tabs between windows, group and rename, clean up duplicates, unload the tabs you select (or, when you turn it on, the tabs you have left idle) to free their memory, reopen recently closed tabs, and keep your session safe with automatic snapshots plus manual JSON export/import. It's a from-scratch reimplementation inspired by [Tab Manager v2](https://github.com/xcv58/Tab-Manager-v2), written in plain JavaScript with no build step and no runtime dependencies. Licensed under the [MIT License](LICENSE).
 
 ## Features
 
@@ -19,6 +19,12 @@ TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that pu
 - Export the current session, or any snapshot, to a JSON file; import and restore selected windows from a file
 - Restored tabs load lazily by default: only the first tab of each window loads immediately, the rest open discarded and load when you click them (configurable in Settings)
 - Light and dark themes that follow Chrome, an Appearance override (System/Light/Dark), compact density, and an option to show URLs under titles; IBM Plex fonts bundled
+- Unload idle tabs (1.2, off by default): every 5 minutes, tabs not used for 15 minutes to 4 hours are unloaded, at most 25 a run; never the active tab, a tab playing sound, a tab an extension marked as not discardable, pinned tabs (unless you allow it), a group whose name starts with 📌, or the hosts you list (`*.example.com` covers subdomains); nothing is ever closed, and Settings shows the last run
+- The toolbar icon counts your tabs (or the unloaded ones, or nothing)
+- Recently closed tabs, kept locally (the last 200): reopen one in the current window, or a whole closed window at once; Clear and an off switch
+- Command palette (`Alt+K`): every action by name and every tab, ranked as you type
+- Save and close: a kept, named snapshot of a window, then its tabs close, always after a confirmation with the count
+- Side panel: the same page in one column in Chrome's side panel (⋯ → Open in side panel, the palette, or a shortcut you assign)
 
 ## Installing (load unpacked)
 
@@ -38,12 +44,16 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 - **Groups** — select tabs and click **Group** to create a native tab group; click a group's ✎ to rename it, pick one of its eight colour dots to recolor it, and **⊟** to ungroup. Click a group's header to collapse/expand it.
 - **Duplicates** — click **Find duplicates** to see tabs that share a URL (optionally ignoring `#hash`), and choose which copy to keep and which extra copies to close, row by row: each copy has a **Keep** radio (the most recently used copy is picked by default and marked "kept"), every other copy has a close checkbox (all ticked by default, with **Select all** / **Select none**), and **Close N selected** closes only the ticked rows.
 - **Snapshots** — click **Snapshots** to browse automatic and manual snapshots, restore one (into new windows), export it to a file, keep it so it's never rotated away, or delete it. **Snapshot now** takes one immediately.
+- **Recently closed** — below the windows, collapsed by default with the count in its heading. **Reopen** puts one tab back in the window TabVault is in; a closed window is listed as one block with **Reopen all**, which brings its tabs back in a new window. **Clear** forgets the list.
+- **Command palette** — press `Alt+K` (or ⋯ → Command palette) and type: actions show their keys, tabs show their window and site; arrows move, `Enter` runs or goes to the tab, `Esc` closes.
+- **Save and close** — the ⤓ on a window card, `Shift+S` with a row of that window focused, or the palette ("Save and close this window", "Save and close all windows"). TabVault asks first ("Save 23 tabs and close them?"), keeps a named snapshot, then closes the tabs; if that would close the last window, one New Tab keeps it open.
+- **Side panel** — ⋯ → **Open in side panel** (or the palette, or the "Open TabVault in the side panel" shortcut you set at `chrome://extensions/shortcuts`). The panel shows its own window first and the others collapsed; the toolbar icon still opens the full page.
 - **Export** — click **Export** to download the current session (all windows, tabs, groups, pinned state and positions) as a JSON file.
 - **Import** — click **Import**, pick a previously exported (or snapshot-exported) JSON file (up to 50 MB), choose which of its windows to restore, and click **Restore selected windows**. Each window reopens with the same tabs, groups and pinned state; with the **Settings** → "Load restored tabs only when opened (lazy)" option on (the default), only the first tab in each window loads right away and the rest load the next time you click them.
 
 ## Settings
 
-Available from **Settings** in the **⋯** menu (which also holds Export, Import, Help and **About**: the version, the repository, the issue tracker and the privacy policy): the snapshot debounce (how many seconds of no tab changes before an automatic snapshot is taken) and how many snapshots to keep; whether duplicate-finding ignores the URL `#hash`; Appearance (System/Light/Dark) and density (comfortable/compact); whether URLs are shown under titles; and **"Load restored tabs only when opened (lazy)"**, which controls whether Import/Restore loads only the first tab of each restored window immediately (the rest open discarded, loading on click) or loads every restored tab right away. It's on by default.
+Available from **Settings** in the **⋯** menu (which also holds Export, Import, Help and **About**: the version, the repository, the issue tracker and the privacy policy): the snapshot debounce (how many seconds of no tab changes before an automatic snapshot is taken) and how many snapshots to keep; whether duplicate-finding ignores the URL `#hash`; Appearance (System/Light/Dark) and density (comfortable/compact); whether URLs are shown under titles; and **"Load restored tabs only when opened (lazy)"**, which controls whether Import/Restore loads only the first tab of each restored window immediately (the rest open discarded, loading on click) or loads every restored tab right away. It's on by default. Since 1.2 also: **Icon badge** (tab count, unloaded tabs, or off), **Remember recently closed tabs** (on by default), and **Unload idle tabs** (off by default: the idle time, whether pinned tabs are spared, a list of sites never to unload, the "last run" line and an **Unload idle tabs now** button).
 
 ## Keyboard shortcuts
 
@@ -57,6 +67,8 @@ Available from **Settings** in the **⋯** menu (which also holds Export, Import
 | `g` | Group the selected tabs (Ungroup when all are grouped) |
 | `d` | Find duplicates |
 | `Delete` | Close selected tabs |
+| `Shift+S` | Save and close the focused tab's window (asks first) |
+| `Alt+K` | Command palette |
 | `Ctrl`/`Cmd`+click | Toggle a tab's selection |
 | `Shift`+click | Select a range of tabs |
 | `Esc` | Close a menu; otherwise clear search and selection |
@@ -70,8 +82,8 @@ The list lives in one place, `lib/shortcuts.js`; the page's key handler, the hin
 | Path | Purpose |
 |---|---|
 | `manifest.json` | Extension manifest (Manifest V3) |
-| `background.js` | Service worker: opens the app page, takes snapshots, handles messages from the page |
-| `app/index.html` | The full-page UI |
+| `background.js` | Service worker: opens the app page, takes snapshots, the badge, the idle-tab alarm, recently closed, save and close, handles messages from the page |
+| `app/index.html` | The full-page UI (and, with `?panel=1`, the side panel layout) |
 | `app/app.js` | Rendering, selection, drag-and-drop, keyboard handling |
 | `app/dialogs.js` | Duplicates, export, import/restore, snapshots, settings, help and about dialogs |
 | `app/theme-boot.js` | Applies an explicit Light/Dark choice before first paint |
@@ -81,7 +93,14 @@ The list lives in one place, `lib/shortcuts.js`; the page's key handler, the hin
 | `lib/session.js` | Builds a normalized session snapshot from `chrome.windows`/`chrome.tabGroups` |
 | `lib/search.js` | Tab search/filtering |
 | `lib/dedupe.js` | Duplicate-tab detection |
-| `lib/snapshots.js` | Snapshot creation, comparison and rotation |
+| `lib/snapshots.js` | Snapshot creation, comparison and rotation; the change-debounce decision |
+| `lib/snapstore.js` | Snapshot storage (an index plus one key per snapshot) and the migration from 1.x |
+| `lib/settings.js` | The settings defaults, shared by the page and the worker |
+| `lib/badge.js` | The toolbar badge text |
+| `lib/discard-rule.js` | Which idle tabs a run unloads; the host allowlist |
+| `lib/recent.js` | The recently closed list |
+| `lib/palette.js` | Command palette entries and ranking |
+| `lib/save-close.js` | Which tabs save and close closes, and the window kept open |
 | `lib/exporters.js` | Export-to-JSON and import-file parsing |
 | `lib/restore-plan.js` | Turns a session into an ordered list of `chrome.*` restore steps |
 | `icons/` | Toolbar and store icons |
@@ -95,18 +114,21 @@ The list lives in one place, `lib/shortcuts.js`; the page's key handler, the hin
 
 Everything lives in `chrome.storage.local` (the `unlimitedStorage` permission removes the usual ~10 MB cap, since sessions with many tabs and snapshots can grow):
 
-- **`settings`** — theme, density, whether URLs are shown, the snapshot debounce (seconds) and how many snapshots to keep, whether duplicate-finding ignores `#hash`, and whether restored tabs load lazily. A few hundred bytes.
-- **`snapshots`** — an array of past sessions, newest first, each with its own full window/tab/group snapshot. Automatic snapshots beyond the configured "keep" count are rotated out oldest-first; snapshots you've explicitly kept are never rotated out. Typical size is a few KB per snapshot for a normal session, so tens to low hundreds of KB for a full history.
+- **`settings`** — theme, density, whether URLs are shown, the snapshot debounce (seconds) and how many snapshots to keep, whether duplicate-finding ignores `#hash`, whether restored tabs load lazily, the badge mode, whether closed tabs are remembered, and `autoDiscard` (on/off, minutes, keep pinned, the host list). A few hundred bytes.
+- **`snapIndex`** and **`snap:<id>`** (storage version 2, since 1.2) — the index lists every snapshot's metadata newest first; each snapshot's full window/tab/group session lives under its own key, so a new snapshot no longer rewrites the whole history. Automatic snapshots beyond the configured "keep" count are rotated out oldest-first; snapshots you've explicitly kept (and save-and-close snapshots) are never rotated out. Typical size is a few KB per snapshot for a normal session. A 1.x store (one `snapshots` array) is moved over once when the 1.2 worker first starts.
+- **`recentlyClosed`** — the last 200 closed tabs (title, URL, favicon, window, group name, time), newest first; a window close shares one batch id.
 - **`windowNames`** — the names you give windows, keyed by window id. The worker clears it when the browser starts, because window ids change with every browser session; the names also travel inside snapshots and exports.
 
-One small thing lives elsewhere: the page keeps a copy of your Appearance choice in its own `localStorage` so the right theme paints first. There is no server, account or sync involved (see [Privacy](#privacy)).
+A few things live elsewhere: the page keeps a copy of your Appearance choice in its own `localStorage` so the right theme paints first, and `chrome.storage.session` (cleared when the browser closes) holds the snapshot debounce timer, when the browser session started, and the idle-tab rule's last run (`autoDiscard.lastRun`). There is no server, account or sync involved (see [Privacy](#privacy)).
 
 ## Limitations
 
 - **Incognito** — TabVault can only see and restore incognito windows if it's explicitly allowed to run in incognito (`chrome://extensions` → TabVault → **Allow in Incognito**). Without that, incognito windows are skipped on export/import.
 - **Restored tabs** — with lazy loading on (the default; **Settings** → "Load restored tabs only when opened (lazy)"), restored tabs load when opened: only the first tab in each restored window loads immediately, and the rest are created discarded and load the next time you click them, to avoid restoring dozens of tabs' worth of network traffic and memory at once. Turning the option off loads every restored tab immediately instead.
 - **Chrome and Edge only** — TabVault uses `chrome.tabGroups` and other Chromium-only APIs; it does not run on Firefox or Safari.
-- **No history search** — TabVault only shows tabs that are currently open. It does not search browser history or bookmarks.
+- **No history search** — TabVault only shows tabs that are currently open (and the ones it saw close). It does not search browser history or bookmarks.
+- **Idle time needs Chrome 121+** — the idle rule reads each tab's `lastAccessed`, which Chrome added in 121; on Chrome 120 (the minimum) a tab without it is skipped, never guessed.
+- **No toolbar-icon context menu** — an "Open in side panel" entry there would need the `contextMenus` permission; the panel opens from ⋯, the palette or a shortcut instead.
 
 ## Testing
 
@@ -124,6 +146,7 @@ A few things the automated tests can't (fully) cover, worth checking by hand in 
 
 - `Alt+Shift+T` actually opens TabVault — it may collide with Chrome's own focus-the-toolbar shortcut on Windows, so confirm at `chrome://extensions/shortcuts` and rebind if needed.
 - Restore with `file://` tabs in the exported/imported session (these need "Allow access to file URLs" in `chrome://extensions` to reopen correctly).
+- Unload idle tabs in real Chrome (turn it on at 15 minutes, wait, and confirm `zz` on the idle tabs and the "last run" line), and the side panel itself (⋯ → Open in side panel): Playwright can neither run `chrome.tabs.discard()` (below) nor drive the panel.
 - Lazy restore (Settings → "Load restored tabs only when opened (lazy)") in real, non-automated Chrome, since `npm run e2e`'s `chrome.tabs.discard()` coverage is limited by a Playwright/Chromium environment defect (see `e2e/README.md`).
 
 ## Privacy

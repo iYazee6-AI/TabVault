@@ -1,6 +1,6 @@
 # TabVault Privacy Policy
 
-Effective date: 2026-09-28
+Effective date: 2026-11-07
 
 TabVault is a browser extension that shows every window and tab you have open
 in one page, and keeps local snapshots of your session so you can get it back.
@@ -18,9 +18,16 @@ TabVault stores, on your device only:
   automatically after your tabs stop changing for a while, on browser startup,
   and whenever you click **Snapshot now**. Each snapshot records the time it
   was taken and why.
+- **Recently closed tabs** — the title, URL, favicon address, window and
+  group name of each tab you close while TabVault is installed, kept only in
+  your browser's local extension storage, at most the last 200, cleared with
+  the **Clear** button, and not recorded at all when you turn off **Remember
+  recently closed tabs** in Settings.
 - **Your settings** — appearance (theme), density, whether URLs are shown under titles, the
   snapshot debounce in seconds, how many snapshots to keep, whether duplicate
-  finding ignores the URL `#hash`, and whether restored tabs load lazily.
+  finding ignores the URL `#hash`, whether restored tabs load lazily, what the
+  icon badge counts, and the idle-tab rule (on or off, the idle time, whether
+  pinned tabs are spared, and the sites you never want unloaded).
 - **Window names** — any names you type for your windows. They are kept until
   the browser next starts and are also saved inside snapshots and exports.
 
@@ -33,8 +40,8 @@ whatever the pages you have open happen to be.
   permissions and injects no content scripts, so it can see the address,
   title and favicon of a tab, and nothing inside it.
 - It never captures what you type, your cookies, your passwords, your
-  bookmarks, or your browsing history. Only tabs that are open right now (and
-  the snapshots you have kept) are recorded.
+  bookmarks, or your browsing history. Only tabs that are open right now, the
+  snapshots you have kept, and the recently closed list above are recorded.
 - It has no account, no login, and no identifier for you.
 
 ## Where the data is kept
@@ -42,7 +49,9 @@ whatever the pages you have open happen to be.
 All data is stored only on your device, in the browser's extension storage
 (`chrome.storage.local`, which also holds your window names until the browser
 next starts; `chrome.storage.session`, which the browser clears when it
-closes, for a short-lived value that times the snapshot debounce; and the
+closes, for short-lived values: the snapshot debounce timer, when the browser
+session started, and when the idle-tab rule last ran and how many tabs it
+unloaded; and the
 extension page's own `localStorage`, for a copy of your Appearance choice).
 TabVault has no
 server. It sends nothing to any server of its own, contains no analytics or
@@ -77,7 +86,12 @@ to the download location you pick. That file is yours and under your control.
   storage, so a large session history does not silently start failing to save.
 - **alarms**: to run the debounce timer that takes an automatic snapshot after
   your tabs have stopped changing. A Manifest V3 service worker cannot hold a
-  timer on its own, so this is how the delay is measured.
+  timer on its own, so this is how the delay is measured. A second alarm,
+  every 5 minutes, refreshes the tab count on the icon and, only if you turned
+  on **Unload idle tabs**, unloads tabs idle past your threshold (it never
+  closes a tab).
+- **sidePanel**: to show the same TabVault page in Chrome's side panel when
+  you open it there. It grants no access to any website.
 
 TabVault requests no access to websites (no host permissions) and no optional
 permissions.

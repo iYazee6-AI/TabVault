@@ -230,16 +230,23 @@
   // ---- snapshots ------------------------------------------------------------------
   App.dialogs.snapshots = async (box) => {
     const draw = async () => {
-      const { snapshots = [] } = await chrome.storage.local.get("snapshots");
+      // Version 2 storage: the index holds the metadata; a snapshot's session is read only when
+      // it is restored or exported.
+      const snapshots = await TV.listSnapshots(chrome.storage.local);
+      const full = async (s) => {
+        const snap = await TV.getSnapshot(chrome.storage.local, s.id);
+        if (!snap) { toast("That snapshot is gone"); draw(); }
+        return snap;
+      };
       const list = el("div", { class: "list" });
       if (!snapshots.length) list.append(el("p", { class: "muted" }, "No snapshots yet. They are taken automatically when your tabs change."));
       for (const s of snapshots) {
         list.append(el("div", { class: "row snap", dataset: { snapshot: s.id } },
-          el("span", { title: fmt(s.takenAt) }, fmt(s.takenAt)),
+          el("span", { title: s.name ? `${s.name} · ${fmt(s.takenAt)}` : fmt(s.takenAt) }, s.name || fmt(s.takenAt)),
           el("span", { class: "muted" }, `${s.reason}${s.pinned ? " · kept" : ""}`),
-          el("span", { class: "muted" }, `${s.windows} windows · ${s.tabs} tabs`),
-          el("button", { onclick: () => showRestore(box, s.session, "Snapshot") }, "Restore"),
-          el("button", { onclick: () => { const f = TV.toJsonFile(s.session, { now: s.takenAt, version: VERSION }); download(f.filename, f.text); toast("Exported"); } }, "Export"),
+          el("span", { class: "muted" }, `${s.windows} window${s.windows === 1 ? "" : "s"} · ${s.tabs} tab${s.tabs === 1 ? "" : "s"}`),
+          el("button", { onclick: async () => { const snap = await full(s); if (snap) showRestore(box, snap.session, "Snapshot"); } }, "Restore"),
+          el("button", { onclick: async () => { const snap = await full(s); if (!snap) return; const f = TV.toJsonFile(snap.session, { now: s.takenAt, version: VERSION }); download(f.filename, f.text); toast("Exported"); } }, "Export"),
           el("button", { onclick: async () => { await chrome.runtime.sendMessage({ type: "pinSnapshot", id: s.id, pinned: !s.pinned }); draw(); } }, s.pinned ? "Unkeep" : "Keep"),
           el("button", { class: "danger", onclick: async () => { await chrome.runtime.sendMessage({ type: "deleteSnapshot", id: s.id }); draw(); } }, "Delete")));
       }
@@ -265,6 +272,26 @@
     const urls = el("input", { type: "checkbox", checked: s.showUrls ? "" : null });
     const density = el("select", {}, ...["comfortable", "compact"].map((d) => el("option", { value: d, selected: d === s.density ? "" : null }, d)));
     const lazy = el("input", { type: "checkbox", checked: s.lazyRestore !== false ? "" : null });
+    const badge = el("select", { "aria-label": "Icon badge" }, ...[["total", "Tab count"], ["unloaded", "Unloaded tabs"], ["off", "Off"]].map(([value, label]) => el("option", { value, selected: value === s.badge ? "" : null }, label)));
+    // Unload idle tabs (auto-discard): off by default; the worker reads these at every alarm.
+    const ad = s.autoDiscard;
+    const idleLabel = (m) => (m < 60 ? `${m} minutes` : m === 60 ? "1 hour" : `${m / 60} hours`);
+    const adOn = el("input", { type: "checkbox", id: "ad-enabled", checked: ad.enabled ? "" : null });
+    const adMinutes = el("select", { id: "ad-minutes", "aria-label": "Idle threshold" }, ...TV.IDLE_MINUTES.map((m) => el("option", { value: String(m), selected: m === ad.minutes ? "" : null }, idleLabel(m))));
+    const adPinned = el("input", { type: "checkbox", id: "ad-pinned", checked: ad.keepPinned ? "" : null });
+    const adAllow = el("textarea", { id: "ad-allow", rows: "3", "aria-label": "Never unload tabs on these sites", placeholder: "*.example.com" });
+    adAllow.value = ad.allowlist.join(String.fromCharCode(10));
+    const lastRun = el("span", { id: "ad-last-run", class: "muted" }, "");
+    const showLastRun = () => chrome.storage.session.get("autoDiscard.lastRun").then((r) => { lastRun.textContent = TV.lastRunText(r["autoDiscard.lastRun"]); }, () => { lastRun.textContent = ""; });
+    showLastRun();
+    const runNow = el("button", { type: "button", class: "small", onclick: async () => {
+      runNow.disabled = true;
+      const r = await chrome.runtime.sendMessage({ type: "discardIdleNow" }).catch((e) => ({ ok: false, error: e.message }));
+      runNow.disabled = false;
+      if (!r || !r.ok) toast(`Could not unload: ${r && r.error}`);
+      showLastRun();
+    } }, "Unload idle tabs now");
+    const recordClosed = el("input", { type: "checkbox", id: "record-closed", checked: s.recordClosed ? "" : null });
     const err = el("p", { class: "muted" });
     box.replaceChildren(el("h2", {}, "Settings"),
       el("label", { class: "row" }, "Snapshot after tabs stop changing for ", debounce, " seconds (30–600)"),
@@ -274,12 +301,21 @@
       el("label", { class: "row" }, urls, " Show URLs under titles"),
       el("label", { class: "row" }, "Density ", density),
       el("label", { class: "row" }, lazy, " Load restored tabs only when opened (lazy)"),
+      el("label", { class: "row" }, "Icon badge ", badge),
+      el("label", { class: "row" }, recordClosed, " Remember recently closed tabs (kept on this computer, last 200)"),
+      el("h3", {}, "Unload idle tabs"),
+      el("label", { class: "row" }, adOn, " Unload tabs not used for ", adMinutes),
+      el("label", { class: "row" }, adPinned, " Never unload pinned tabs"),
+      el("label", { class: "col" }, "Never unload tabs on these sites (one per line; *.example.com covers its subdomains)", adAllow),
+      el("p", { class: "muted" }, `Never unloaded: the tab you are on in each window, tabs playing sound, tabs an extension marked as not discardable, and tabs in a group whose name starts with ${TV.PROTECT_EMOJI}. Unloaded tabs stay where they are and reload when you open them; nothing is closed.`),
+      el("div", { class: "row" }, lastRun, runNow),
       err,
       el("div", { class: "row" }, el("button", { class: "primary", onclick: async () => {
         const d = Number(debounce.value), k = Number(keep.value);
         if (!Number.isInteger(d) || d < 30 || d > 600) { err.textContent = "Debounce must be a whole number between 30 and 600."; return; }
         if (!Number.isInteger(k) || k < 5 || k > 200) { err.textContent = "Keep must be a whole number between 5 and 200."; return; }
-        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked });
+        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked, badge: badge.value, recordClosed: recordClosed.checked,
+          autoDiscard: { enabled: adOn.checked, minutes: Number(adMinutes.value), keepPinned: adPinned.checked, allowlist: TV.parseAllowlist(adAllow.value) } });
         toast("Settings saved"); closeDialog();
       } }, "Save"), el("button", { onclick: closeDialog }, "Cancel")));
   };
@@ -309,6 +345,28 @@
         el("li", {}, link(REPO_URL + "/blob/main/PRIVACY.md", "Privacy policy"))),
       el("p", { class: "muted" }, "MIT licence. Type: IBM Plex Sans and Plex Mono (SIL Open Font License)."),
       el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
+  };
+
+  // ---- save and close -----------------------------------------------------------------
+  // The confirmation is never skipped (no "do not ask again"); focus starts on Cancel.
+  App.dialogs.saveClose = (box, { windowIds, count, name }) => {
+    const plural = count === 1 ? "" : "s";
+    const go = el("button", { type: "button", class: "primary", id: "save-close-go" }, `Save and close ${count} tab${plural}`);
+    const cancel = el("button", { type: "button", id: "save-close-cancel", onclick: closeDialog }, "Cancel");
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      const r = await chrome.runtime.sendMessage({ type: "saveAndClose", windowIds, name }).catch((e) => ({ ok: false, error: e.message || String(e) }));
+      closeDialog();
+      if (r && r.ok && !r.skipped) toast(`Saved ${r.closed} tab${r.closed === 1 ? "" : "s"} to Snapshots and closed them`);
+      else if (r && r.skipped) toast("Nothing to save");
+      else toast(`Could not save and close: ${r && r.error}`);
+    });
+    box.replaceChildren(
+      el("h2", {}, "Save and close"),
+      el("p", { id: "save-close-text" }, `Save ${count} tab${plural} and close them? The snapshot is kept and can be restored from Snapshots.`),
+      el("p", { class: "muted" }, `Snapshot name: ${name}`),
+      el("div", { class: "row" }, go, cancel));
+    cancel.focus();
   };
 
   App.restoreSession = restoreSession;

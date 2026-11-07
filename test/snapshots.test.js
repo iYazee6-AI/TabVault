@@ -30,3 +30,17 @@ test("rotate keeps pinned snapshots and the newest N unpinned, newest first", ()
   const kept = rotate(snaps, 2);
   assert.deepEqual(kept.map((s) => s.id), ["s5", "s4", "s2"]);
 });
+
+test("makeSnapshot keeps an optional name", () => {
+  assert.equal(makeSnapshot(s1(), "save-close", 1, "Work · 12:40").name, "Work · 12:40");
+  assert.equal("name" in makeSnapshot(s1(), "change", 1), false);
+});
+
+test("scheduleDecision: start, re-arm, wait at the cap, start again when the alarm is gone", () => {
+  const { scheduleDecision } = require("../lib/snapshots.js");
+  assert.equal(scheduleDecision({ pendingSince: undefined, now: 1000, debounceSeconds: 30 }), "start");
+  assert.equal(scheduleDecision({ pendingSince: 0, now: 60000, debounceSeconds: 30 }), "rearm");
+  assert.equal(scheduleDecision({ pendingSince: 0, now: 300001, debounceSeconds: 30, alarmPending: true }), "wait");
+  assert.equal(scheduleDecision({ pendingSince: 0, now: 300001, debounceSeconds: 30, alarmPending: false }), "start");
+  assert.equal(scheduleDecision({ pendingSince: 0, now: 500000, debounceSeconds: 60 }), "rearm", "cap is 10 x debounce when that is longer");
+});

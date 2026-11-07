@@ -9,7 +9,7 @@ const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"];
 const byId = new Map();
 const consoleErrors = { worker: [], app: [] };
 
@@ -725,7 +725,7 @@ async function main() {
 
       await appPage.click('#dialog button:has-text("Snapshot now")');
       const snap1 = await waitFor(async () => {
-        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })));
         return snapshots.find((s) => s.reason === "manual" && s.pinned) || null;
       });
       await waitForTextContains(appPage, `[data-snapshot="${snap1.id}"]`, "manual");
@@ -737,19 +737,19 @@ async function main() {
 
       await appPage.click(`[data-snapshot="${snap1.id}"] button:has-text("Delete")`);
       await waitFor(async () => (await appPage.$(`[data-snapshot="${snap1.id}"]`)) === null);
-      const gone = await (await worker()).evaluate((id) => chrome.storage.local.get("snapshots").then((r) => !(r.snapshots || []).some((s) => s.id === id)), snap1.id);
+      const gone = await (await worker()).evaluate((id) => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })).then((r) => !(r.snapshots || []).some((s) => s.id === id)), snap1.id);
       assert(gone, "deleted snapshot still present in storage");
 
       await appPage.click('#dialog button:has-text("Snapshot now")');
       const snap2 = await waitFor(async () => {
-        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })));
         return snapshots.find((s) => s.reason === "manual" && s.pinned) || null;
       });
       await waitForTextContains(appPage, `[data-snapshot="${snap2.id}"]`, "manual");
 
       await appPage.click(`[data-snapshot="${snap2.id}"] button:has-text("Unkeep")`);
       await waitFor(async () => {
-        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })));
         const s = snapshots.find((x) => x.id === snap2.id);
         return s && s.pinned === false;
       });
@@ -757,7 +757,7 @@ async function main() {
 
       await appPage.click(`[data-snapshot="${snap2.id}"] button:has-text("Keep")`);
       await waitFor(async () => {
-        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapshots"));
+        const { snapshots = [] } = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] })));
         const s = snapshots.find((x) => x.id === snap2.id);
         return s && s.pinned === true;
       });
@@ -1154,6 +1154,313 @@ async function main() {
     await resetUi();
 
     // ---------------------------------------------------------------
+    // 1.2 Keeper scenarios U-Z. Z (auto-discard) may crash Playwright's
+    // Chromium (chrome.tabs.discard), so it runs last of them and relaunches.
+    // ---------------------------------------------------------------
+    const badgeText = async () => (await worker()).evaluate(() => chrome.action.getBadgeText({}));
+    async function expectBadge(label) {
+      let want = null;
+      let got = null;
+      try {
+        await waitFor(async () => {
+          want = String((await expectedCounts()).tabCount);
+          got = await badgeText();
+          return got === want;
+        }, { timeout: 8000 });
+      } catch {
+        throw new Error(`${label}: badge "${got}", expected "${want}"`);
+      }
+      return got;
+    }
+    async function anyNormalWindowId() {
+      const wins = await (await worker()).evaluate(() => chrome.windows.getAll({ windowTypes: ["normal"] }));
+      return wins[0].id;
+    }
+
+    // ---------------------------------------------------------------
+    // U. The icon badge counts tabs after opening and closing one
+    // ---------------------------------------------------------------
+    try {
+      const first = await expectBadge("at start");
+      const windowId = await anyNormalWindowId();
+      const created = await (await worker()).evaluate(({ windowId: wid, url }) => chrome.tabs.create({ windowId: wid, url, active: false }), { windowId, url: `${oneUrl}?badge=1` });
+      const opened = await expectBadge("after opening a tab");
+      assert(Number(opened) === Number(first) + 1, `badge went ${first} -> ${opened} after opening a tab`);
+      await (await worker()).evaluate((id) => chrome.tabs.remove(id), created.id);
+      const closed = await expectBadge("after closing it");
+      assert(closed === first, `badge went ${opened} -> ${closed} after closing the tab`);
+      record("U", "PASS", `badge "${first}" -> "${opened}" after opening a tab -> "${closed}" after closing it (each equal to the non-TabVault tab count)`);
+    } catch (e) {
+      record("U", "FAIL", e.message);
+    }
+
+    // ---------------------------------------------------------------
+    // V. Recently closed: a closed tab is listed and reopens in the
+    // current window; a closed window's tabs reopen together
+    // ---------------------------------------------------------------
+    try {
+      const recentList = async () => (await worker()).evaluate(() => chrome.storage.local.get("recentlyClosed").then((r) => r.recentlyClosed || []));
+      const windowId = await anyNormalWindowId();
+      const rcUrl = `${threeUrl}?rc=1`;
+      const t = await (await worker()).evaluate(({ wid, url }) => chrome.tabs.create({ windowId: wid, url, active: false }), { wid: windowId, url: rcUrl });
+      await waitFor(async () => (await (await worker()).evaluate((id) => chrome.tabs.get(id), t.id)).url === rcUrl, { timeout: 10000 });
+      await (await worker()).evaluate((id) => chrome.tabs.remove(id), t.id);
+      const entry = await waitFor(async () => (await recentList()).find((e) => e.url === rcUrl), { timeout: 8000 });
+
+      await appPage.waitForSelector("#recent:not([hidden])");
+      const heading = await appPage.$eval("#recent-toggle", (n) => n.textContent);
+      assert((await appPage.$eval("#recent-list", (n) => n.hidden)) === true, "the section is not collapsed by default");
+      await appPage.click("#recent-toggle");
+      await appPage.waitForSelector(`#recent-list [data-recent="${entry.id}"]`);
+      const ownWindow = await appPage.evaluate(() => chrome.tabs.getCurrent().then((x) => x.windowId));
+      await appPage.click(`#recent-list [data-recent="${entry.id}"] button.reopen`);
+      const reopened = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((url) => chrome.tabs.query({ url }), rcUrl);
+        return ts[0] || null;
+      }, { timeout: 10000 });
+      assert(reopened.windowId === ownWindow, `reopened in window ${reopened.windowId}, the current window is ${ownWindow}`);
+      await waitFor(async () => !(await recentList()).some((e) => e.id === entry.id));
+      await (await worker()).evaluate((id) => chrome.tabs.remove(id), reopened.id);
+
+      const batchUrls = [`${oneUrl}?rcw=1`, `${twoUrl}?rcw=1`];
+      const winV = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), batchUrls);
+      await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winV.id);
+        return ts.length === 2 && ts.every((x) => String(x.url || "").includes("?rcw=1"));
+      }, { timeout: 15000 });
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), winV.id);
+      const batch = await waitFor(async () => {
+        const list = await recentList();
+        const mine = list.filter((e) => batchUrls.includes(e.url) && e.batch);
+        return mine.length === 2 && mine[0].batch === mine[1].batch ? mine[0].batch : null;
+      }, { timeout: 8000 });
+      await appPage.waitForSelector(`#recent-list [data-batch="${batch}"] button.reopen-all`);
+      await appPage.click(`#recent-list [data-batch="${batch}"] button.reopen-all`);
+      const back = await waitFor(async () => {
+        const all = await (await worker()).evaluate(() => chrome.tabs.query({}));
+        const mine = all.filter((x) => batchUrls.includes(x.url));
+        return mine.length === 2 && mine[0].windowId === mine[1].windowId ? mine : null;
+      }, { timeout: 10000 });
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), back[0].windowId);
+      record("V", "PASS", `closed ${rcUrl}: listed (heading "${heading.trim()}", collapsed by default), Reopen put it back in the current window ${ownWindow} and removed the entry; a closed 2-tab window was listed as batch ${batch} and Reopen all brought both back in one window`);
+    } catch (e) {
+      record("V", "FAIL", e.message);
+    }
+    await resetUi();
+
+    // ---------------------------------------------------------------
+    // W. Command palette: Alt+K opens it, typing filters actions and
+    // tabs, Enter runs the action, Esc closes
+    // ---------------------------------------------------------------
+    try {
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await blurAll();
+      await appPage.keyboard.press("Alt+K");
+      await appPage.waitForSelector("#palette-backdrop:not([hidden])");
+      const focusedInput = await appPage.evaluate(() => document.activeElement && document.activeElement.id);
+      assert(focusedInput === "palette-input", `focus after Alt+K is on ${focusedInput}`);
+      const allRows = await appPage.$$eval("#palette-list .prow", (rs) => rs.length);
+
+      await appPage.keyboard.type("duplicates");
+      await waitFor(async () => (await appPage.$eval("#palette-list .prow.on", (n) => n.dataset.action).catch(() => null)) === "dupes");
+      const dupeKeys = await appPage.$eval('#palette-list .prow[data-action="dupes"] .pkeys', (n) => n.textContent);
+      assert(dupeKeys === "d", `the duplicates row shows keys "${dupeKeys}"`);
+
+      await appPage.fill("#palette-input", "Three");
+      const tabRow = await waitFor(async () => appPage.$eval('#palette-list .prow[data-kind="tab"]', (n) => n.textContent).catch(() => null));
+      assert(/Three/.test(tabRow), `tab row text "${tabRow}"`);
+
+      const indexBefore = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => (r.snapIndex || []).length));
+      await appPage.fill("#palette-input", "snapshot now");
+      await waitFor(async () => (await appPage.$eval("#palette-list .prow.on", (n) => n.dataset.action).catch(() => null)) === "snapshot");
+      await appPage.keyboard.press("Enter");
+      await appPage.waitForSelector("#palette-backdrop[hidden]", { state: "attached" });
+      const newest = await waitFor(async () => {
+        const index = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => r.snapIndex || []));
+        return index.length > indexBefore && index[0].reason === "manual" ? index[0] : null;
+      }, { timeout: 8000 });
+
+      await appPage.keyboard.press("Alt+K");
+      await appPage.waitForSelector("#palette-backdrop:not([hidden])");
+      await appPage.keyboard.press("Escape");
+      await appPage.waitForSelector("#palette-backdrop[hidden]", { state: "attached" });
+      record("W", "PASS", `Alt+K opened the palette with focus in its input (${allRows} rows on an empty query); "duplicates" selected the dupes action showing key "d"; "Three" listed a tab row; "snapshot now" + Enter closed it and stored manual snapshot ${newest.id}; Esc closed it again`);
+    } catch (e) {
+      record("W", "FAIL", e.message);
+    }
+    await appPage.keyboard.press("Escape").catch(() => {});
+    await resetUi();
+
+    // ---------------------------------------------------------------
+    // X. Save and close: Shift+S and the card button both ask first with
+    // the count; Cancel keeps the tabs; confirming stores a kept, named
+    // snapshot and closes the window's tabs
+    // ---------------------------------------------------------------
+    try {
+      const xUrls = [`${oneUrl}?x=1`, `${twoUrl}?x=1`];
+      const winX = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), xUrls);
+      const tabsX = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winX.id);
+        return ts.length === 2 && ts.every((t) => String(t.url || "").includes("?x=1")) ? ts.sort((a, b) => a.index - b.index) : null;
+      }, { timeout: 15000 });
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await appPage.waitForSelector(`.window[data-window="${winX.id}"]`);
+
+      await appPage.click(`.tab[data-tab="${tabsX[0].id}"] input[type=checkbox]`);
+      await blurAll();
+      await appPage.keyboard.press("Shift+S");
+      const askedByKey = await waitForTextContains(appPage, "#save-close-text", "Save 2 tabs and close them?");
+      const focusOn = await appPage.evaluate(() => document.activeElement && document.activeElement.id);
+      assert(focusOn === "save-close-cancel", `the confirmation opened with focus on ${focusOn}, not Cancel`);
+      await appPage.click("#save-close-cancel");
+      await waitFor(async () => appPage.$eval("#dialog-backdrop", (n) => n.hidden));
+      await clearSelection();
+      const stillOpen = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }).then((ts) => ts.length), winX.id);
+      assert(stillOpen === 2, `after Cancel the window has ${stillOpen} tabs`);
+
+      const indexBefore = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => (r.snapIndex || []).length));
+      await appPage.click(`.window[data-window="${winX.id}"] .whead button[title="Save and close window"]`);
+      await waitForTextContains(appPage, "#save-close-text", "Save 2 tabs and close them?");
+      await appPage.click("#save-close-go");
+      await waitFor(async () => (await worker()).evaluate((id) => chrome.windows.get(id).then(() => false, () => true), winX.id), { timeout: 10000 });
+      const snap = await waitFor(async () => {
+        const index = await (await worker()).evaluate(() => chrome.storage.local.get("snapIndex").then((r) => r.snapIndex || []));
+        return index.length > indexBefore ? index.find((s) => s.reason === "save-close") : null;
+      });
+      assert(snap && snap.pinned === true && snap.tabs === 2 && snap.windows === 1 && /· [0-9]/.test(snap.name || ""), `save-close snapshot ${JSON.stringify(snap)}`);
+      const full = await (await worker()).evaluate((id) => chrome.storage.local.get(`snap:${id}`), snap.id);
+      const urls = full[`snap:${snap.id}`].session.windows[0].tabs.map((t) => t.url);
+      assert(xUrls.every((u) => urls.includes(u)), `snapshot URLs ${JSON.stringify(urls)}`);
+      record("X", "PASS", `Shift+S on a row of window ${winX.id} asked "${askedByKey}" with focus on Cancel; Cancel kept both tabs; the card button asked again and confirming stored kept snapshot "${snap.name}" (2 tabs, both URLs) and closed the window`);
+    } catch (e) {
+      record("X", "FAIL", e.message);
+    }
+    await resetUi();
+
+    // ---------------------------------------------------------------
+    // Y. Side panel layout (?panel=1). Playwright cannot drive Chrome's
+    // side panel itself, so the page is opened as a narrow tab of a
+    // fixture window: the layout is asserted, not the panel API.
+    // ---------------------------------------------------------------
+    let panelPage = null;
+    try {
+      const options = await (await worker()).evaluate(() => (chrome.sidePanel ? chrome.sidePanel.getOptions({}) : null));
+      assert(options && String(options.path || "").endsWith("app/index.html?panel=1"), `side panel options ${JSON.stringify(options)}`);
+      const winY = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), [`${oneUrl}?y=1`, `${twoUrl}?y=1`]);
+      const tabsY = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winY.id);
+        return ts.length === 2 && ts.every((t) => String(t.url || "").includes("?y=1")) ? ts.sort((a, b) => a.index - b.index) : null;
+      }, { timeout: 15000 });
+      const panelUrl = `${ownPrefix}app/index.html?panel=1`;
+      const pageEvent = context.waitForEvent("page", { timeout: 10000 });
+      await (await worker()).evaluate(({ wid, url }) => chrome.tabs.create({ windowId: wid, url, active: true }), { wid: winY.id, url: panelUrl });
+      panelPage = await pageEvent;
+      attachPageListeners(panelPage);
+      await panelPage.setViewportSize({ width: 380, height: 760 });
+      await panelPage.waitForSelector(".window");
+
+      const layout = await panelPage.evaluate(() => document.documentElement.dataset.layout);
+      assert(layout === "panel", `data-layout = "${layout}"`);
+      const columns = await panelPage.$eval("#grid", (n) => getComputedStyle(n).gridTemplateColumns.trim().split(/ +/).length);
+      assert(columns === 1, `the grid has ${columns} columns`);
+      const cards = await panelPage.$$eval("#grid .window", (ns) => ns.map((n) => ({ id: Number(n.dataset.window), current: n.classList.contains("current"), collapsed: n.classList.contains("collapsed") })));
+      assert(cards.length >= 2, `expected the panel window and at least one other, got ${JSON.stringify(cards)}`);
+      assert(cards[0].id === winY.id && cards[0].current && !cards[0].collapsed, `first card ${JSON.stringify(cards[0])}, the panel's window is ${winY.id}`);
+      assert(cards.slice(1).every((c) => c.collapsed && !c.current), `other cards not all collapsed: ${JSON.stringify(cards.slice(1))}`);
+      const searchTop = await panelPage.$eval("#search", (n) => n.getBoundingClientRect().top);
+      await panelPage.$eval("#main", (n) => { n.scrollTop = n.scrollHeight; });
+      const searchTopAfter = await panelPage.$eval("#search", (n) => n.getBoundingClientRect().top);
+      assert(searchTop < 120 && searchTopAfter === searchTop, `search box top ${searchTop} -> ${searchTopAfter} after scrolling`);
+      const panelEntry = await panelPage.$eval("#btn-panel", (n) => n.hidden);
+      assert(panelEntry === true, "the Open in side panel entry is visible inside the panel");
+      await panelPage.click(`.tab[data-tab="${tabsY[1].id}"] input[type=checkbox]`);
+      await panelPage.waitForSelector("#selbar:not([hidden])");
+      const bar = await panelPage.$eval("#selbar", (n) => { const r = n.getBoundingClientRect(); return { bottom: Math.round(r.bottom), width: Math.round(r.width) }; });
+      const vh = await panelPage.evaluate(() => window.innerHeight);
+      assert(bar.bottom >= vh - 60, `bulk bar bottom ${bar.bottom} in a ${vh} px panel`);
+      await panelPage.screenshot({ path: path.join(ROOT, "panel-layout.png") });
+      record("Y", "PASS", `side panel path ${options.path}; ?panel=1 page: data-layout=panel, 1 grid column, cards ${JSON.stringify(cards.map((c) => [c.id, c.current ? "current" : c.collapsed ? "collapsed" : "open"]))}, search pinned at ${searchTop}px through a scroll, menu entry hidden, bulk bar bottom ${bar.bottom}/${vh}px. Screenshot: panel-layout.png`);
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), winY.id).catch(() => {});
+    } catch (e) {
+      record("Y", "FAIL", e.message);
+    }
+    if (panelPage && !panelPage.isClosed()) await panelPage.close().catch(() => {});
+    await appPage.bringToFront().catch(() => {});
+
+    // == 1.2 next ==    // ---------------------------------------------------------------
+    // Z. Auto-discard: the settings round-trip, the plan on real tabs,
+    // then the run itself. chrome.tabs.discard crashes Playwright's
+    // Chromium here (see I-b), so the run is PASS when it survives and
+    // LIMITED when the browser dies; the plan part must pass either way.
+    // ---------------------------------------------------------------
+    try {
+      const winZ = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), [`${oneUrl}?z=1`, `${twoUrl}?z=1`, `${threeUrl}?z=1`]);
+      const tabsZ = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winZ.id);
+        return ts.length === 3 && ts.every((t) => String(t.url || "").includes("?z=1")) ? ts.sort((a, b) => a.index - b.index) : null;
+      }, { timeout: 15000 });
+      await (await worker()).evaluate((id) => chrome.tabs.update(id, { pinned: true }), tabsZ[1].id);
+
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await openMenuItem("#btn-settings");
+      await appPage.waitForSelector("#ad-enabled");
+      const lineBefore = await appPage.$eval("#ad-last-run", (n) => n.textContent);
+      // Naqid finding 2: only autoDiscardable can be checked, so no promise about forms is made.
+      const note = await appPage.$eval("#dialog", (n) => n.textContent);
+      assert(note.includes("tabs an extension marked as not discardable") && !/form you are/i.test(note), "the never-unloaded note still promises unsaved forms or lacks the not-discardable line");
+      await appPage.check("#ad-enabled");
+      await appPage.selectOption("#ad-minutes", "15");
+      await appPage.fill("#ad-allow", "*.example.org");
+      await appPage.click('#dialog button:has-text("Save")');
+      const saved = await waitFor(async () => {
+        const { settings } = await (await worker()).evaluate(() => chrome.storage.local.get("settings"));
+        const ad = settings && settings.autoDiscard;
+        return ad && ad.enabled === true && ad.minutes === 15 && ad.allowlist.join() === "*.example.org" ? ad : null;
+      });
+      // Off again before anything can fire: the 5-minute alarm must not discard during L and K.
+      await (await worker()).evaluate(async () => {
+        const { settings } = await chrome.storage.local.get("settings");
+        await chrome.storage.local.set({ settings: { ...settings, autoDiscard: { ...settings.autoDiscard, enabled: false } } });
+      });
+
+      const later = Date.now() + 3 * 3600000;
+      const { plan } = await (await worker()).evaluate((now) => self.planAutoDiscard({ now }), later);
+      const [activeZ, pinnedZ, idleZ] = tabsZ;
+      assert(plan.ids.includes(idleZ.id), `the idle tab ${idleZ.id} is not in the plan ${JSON.stringify(plan)}`);
+      assert(!plan.ids.includes(activeZ.id), `the active tab ${activeZ.id} is in the plan`);
+      assert(!plan.ids.includes(pinnedZ.id), `the pinned tab ${pinnedZ.id} is in the plan`);
+      assert(plan.ids.length <= 25, `plan exceeds the cap: ${plan.ids.length}`);
+      const planEvidence = `settings saved ${JSON.stringify(saved)} (line before: "${lineBefore}"); plan at +3h: ${plan.ids.length} of ${plan.eligible} eligible, includes idle ${idleZ.id}, excludes active ${activeZ.id} and pinned ${pinnedZ.id}`;
+
+      let run = null;
+      let threw = false;
+      try {
+        run = await (await worker()).evaluate((now) => self.runAutoDiscard({ now, force: true }), later);
+      } catch (e) {
+        if (!looksLikeDisconnect(e)) throw e;
+        threw = true;
+      }
+      const relaunched = await settleAndRelaunchIfDisconnected("after the auto-discard run");
+      if (threw || relaunched) {
+        record("Z", "LIMITED", `${planEvidence}; the run's chrome.tabs.discard crashed Playwright's Chromium (the documented quirk), browser relaunched`);
+      } else {
+        assert(run && run.ok && run.unloaded >= 1, `run result ${JSON.stringify(run)}`);
+        const lastRun = await (await worker()).evaluate(() => chrome.storage.session.get("autoDiscard.lastRun"));
+        assert(lastRun["autoDiscard.lastRun"] && lastRun["autoDiscard.lastRun"].unloaded === run.unloaded, `lastRun ${JSON.stringify(lastRun)}`);
+        await appPage.evaluate(() => window.TabVaultApp.refresh());
+        const zz = await waitFor(async () => appPage.$eval(`.tab[data-tab="${idleZ.id}"] .flags`, (n) => n.textContent).catch(() => null).then((x) => (x && x.includes("zz") ? x : null)), { timeout: 8000 }).catch(() => "(row replaced: discard gave the tab a new id)");
+        await openMenuItem("#btn-settings");
+        const line = await waitForTextContains(appPage, "#ad-last-run", "unloaded");
+        record("Z", "PASS", `${planEvidence}; run: ${JSON.stringify(run)}; flags of ${idleZ.id}: ${zz}; settings line "${line}"`);
+      }
+    } catch (e) {
+      record("Z", "FAIL", e.message);
+    }
+    await resetUi().catch(() => {});
+
+
+
+    // ---------------------------------------------------------------
     // L. Settings persistence (run before K; K's real-time wait is kept
     // last so it does not slow down debugging of the others)
     // ---------------------------------------------------------------
@@ -1189,7 +1496,7 @@ async function main() {
     // K. Change-driven snapshot (slow, kept last)
     // ---------------------------------------------------------------
     try {
-      const before = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapshots")).snapshots || []);
+      const before = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] }))).snapshots || []);
       const countBefore = before.length;
 
       // winC no longer necessarily exists (Import, and any relaunch after
@@ -1207,7 +1514,7 @@ async function main() {
       // its own, this is where it would happen. worker() already does this
       // re-acquisition on every call, but the wait is called out here since
       // this is specifically the scenario it matters most for.
-      const after = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapshots")).snapshots || []);
+      const after = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] }))).snapshots || []);
       assert(after.length >= countBefore + 1, `snapshot count did not increase: before=${countBefore}, after=${after.length}`);
       const newest = after.slice().sort((a, b) => b.takenAt - a.takenAt)[0];
       assert(newest.reason === "change", `newest snapshot reason = "${newest.reason}"`);
