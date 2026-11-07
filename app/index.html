@@ -47,7 +47,7 @@
     button.icon { padding: 2px 6px; line-height: 1.2; background: transparent; border-color: transparent; color: var(--t2); }
     button.icon:hover { background: var(--g3); color: var(--t); }
     button.icon.danger { color: var(--danger); }
-    input[type=text], input[type=search], input[type=number], select { font: inherit; color: inherit; background: var(--g2); border: 1px solid var(--l); border-radius: 6px; padding: 4px 8px; }
+    input[type=text], input[type=search], input[type=number], select, textarea { font: inherit; color: inherit; background: var(--g2); border: 1px solid var(--l); border-radius: 6px; padding: 4px 8px; }
     input[type=checkbox], input[type=radio] { accent-color: var(--p); }
     :focus-visible { outline: 2px solid var(--p); outline-offset: 1px; }
     input:focus-visible, select:focus-visible { outline-offset: 0; }
@@ -147,6 +147,9 @@
     #dialog-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(10, 12, 14, .45); display: flex; align-items: center; justify-content: center; }
     #dialog { background: var(--g2); color: var(--t); border: 1px solid var(--l); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); width: min(720px, 92vw); max-height: 88vh; overflow: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
     #dialog h2 { margin: 0; font: 600 15px var(--sans); }
+    #dialog h3 { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--l); font: 600 13px var(--sans); }
+    #dialog label.col { display: flex; flex-direction: column; gap: 4px; }
+    #dialog textarea { width: 100%; resize: vertical; font: 500 12px/1.4 var(--mono); font-synthesis: none; }
     #dialog table { border-collapse: collapse; width: 100%; }
     #dialog td, #dialog th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--l); vertical-align: top; }
     #dialog th { font-weight: 500; color: var(--t2); }
@@ -217,6 +220,7 @@
   <script src="../lib/dedupe.js"></script>
   <script src="../lib/snapshots.js"></script>
   <script src="../lib/snapstore.js"></script>
+  <script src="../lib/discard-rule.js"></script>
   <script src="../lib/exporters.js"></script>
   <script src="../lib/restore-plan.js"></script>
   <script src="../lib/ui.js"></script>

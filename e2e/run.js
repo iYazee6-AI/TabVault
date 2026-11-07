@@ -1194,7 +1194,75 @@ async function main() {
       record("U", "FAIL", e.message);
     }
 
-    // == 1.2 next ==
+    // == 1.2 next ==    // ---------------------------------------------------------------
+    // Z. Auto-discard: the settings round-trip, the plan on real tabs,
+    // then the run itself. chrome.tabs.discard crashes Playwright's
+    // Chromium here (see I-b), so the run is PASS when it survives and
+    // LIMITED when the browser dies; the plan part must pass either way.
+    // ---------------------------------------------------------------
+    try {
+      const winZ = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), [`${oneUrl}?z=1`, `${twoUrl}?z=1`, `${threeUrl}?z=1`]);
+      const tabsZ = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winZ.id);
+        return ts.length === 3 && ts.every((t) => String(t.url || "").includes("?z=1")) ? ts.sort((a, b) => a.index - b.index) : null;
+      }, { timeout: 15000 });
+      await (await worker()).evaluate((id) => chrome.tabs.update(id, { pinned: true }), tabsZ[1].id);
+
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await openMenuItem("#btn-settings");
+      await appPage.waitForSelector("#ad-enabled");
+      const lineBefore = await appPage.$eval("#ad-last-run", (n) => n.textContent);
+      await appPage.check("#ad-enabled");
+      await appPage.selectOption("#ad-minutes", "15");
+      await appPage.fill("#ad-allow", "*.example.org");
+      await appPage.click('#dialog button:has-text("Save")');
+      const saved = await waitFor(async () => {
+        const { settings } = await (await worker()).evaluate(() => chrome.storage.local.get("settings"));
+        const ad = settings && settings.autoDiscard;
+        return ad && ad.enabled === true && ad.minutes === 15 && ad.allowlist.join() === "*.example.org" ? ad : null;
+      });
+      // Off again before anything can fire: the 5-minute alarm must not discard during L and K.
+      await (await worker()).evaluate(async () => {
+        const { settings } = await chrome.storage.local.get("settings");
+        await chrome.storage.local.set({ settings: { ...settings, autoDiscard: { ...settings.autoDiscard, enabled: false } } });
+      });
+
+      const later = Date.now() + 3 * 3600000;
+      const { plan } = await (await worker()).evaluate((now) => self.planAutoDiscard({ now }), later);
+      const [activeZ, pinnedZ, idleZ] = tabsZ;
+      assert(plan.ids.includes(idleZ.id), `the idle tab ${idleZ.id} is not in the plan ${JSON.stringify(plan)}`);
+      assert(!plan.ids.includes(activeZ.id), `the active tab ${activeZ.id} is in the plan`);
+      assert(!plan.ids.includes(pinnedZ.id), `the pinned tab ${pinnedZ.id} is in the plan`);
+      assert(plan.ids.length <= 25, `plan exceeds the cap: ${plan.ids.length}`);
+      const planEvidence = `settings saved ${JSON.stringify(saved)} (line before: "${lineBefore}"); plan at +3h: ${plan.ids.length} of ${plan.eligible} eligible, includes idle ${idleZ.id}, excludes active ${activeZ.id} and pinned ${pinnedZ.id}`;
+
+      let run = null;
+      let threw = false;
+      try {
+        run = await (await worker()).evaluate((now) => self.runAutoDiscard({ now, force: true }), later);
+      } catch (e) {
+        if (!looksLikeDisconnect(e)) throw e;
+        threw = true;
+      }
+      const relaunched = await settleAndRelaunchIfDisconnected("after the auto-discard run");
+      if (threw || relaunched) {
+        record("Z", "LIMITED", `${planEvidence}; the run's chrome.tabs.discard crashed Playwright's Chromium (the documented quirk), browser relaunched`);
+      } else {
+        assert(run && run.ok && run.unloaded >= 1, `run result ${JSON.stringify(run)}`);
+        const lastRun = await (await worker()).evaluate(() => chrome.storage.session.get("autoDiscard.lastRun"));
+        assert(lastRun["autoDiscard.lastRun"] && lastRun["autoDiscard.lastRun"].unloaded === run.unloaded, `lastRun ${JSON.stringify(lastRun)}`);
+        await appPage.evaluate(() => window.TabVaultApp.refresh());
+        const zz = await waitFor(async () => appPage.$eval(`.tab[data-tab="${idleZ.id}"] .flags`, (n) => n.textContent).catch(() => null).then((x) => (x && x.includes("zz") ? x : null)), { timeout: 8000 }).catch(() => "(row replaced: discard gave the tab a new id)");
+        await openMenuItem("#btn-settings");
+        const line = await waitForTextContains(appPage, "#ad-last-run", "unloaded");
+        record("Z", "PASS", `${planEvidence}; run: ${JSON.stringify(run)}; flags of ${idleZ.id}: ${zz}; settings line "${line}"`);
+      }
+    } catch (e) {
+      record("Z", "FAIL", e.message);
+    }
+    await resetUi().catch(() => {});
+
+
 
     // ---------------------------------------------------------------
     // L. Settings persistence (run before K; K's real-time wait is kept

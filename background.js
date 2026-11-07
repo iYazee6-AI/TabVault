@@ -1,4 +1,4 @@
-importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
@@ -147,6 +147,60 @@ chrome.tabs.onUpdated.addListener((_id, info) => { if (info.discarded !== undefi
 chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.settings) scheduleBadge(); });
 scheduleBadge();
 
+// ---- auto-discard idle tabs --------------------------------------------------
+// One alarm every 5 minutes (MV3 workers cannot hold timers). Off by default; the rule is
+// lib/discard-rule.js. Each run is recorded in storage.session so the Settings dialog can say
+// when it last ran and what it unloaded. Nothing is ever closed. The same alarm refreshes the badge.
+const IDLE_ALARM = "tabvault-idle";
+const LAST_RUN_KEY = "autoDiscard.lastRun";
+
+async function ensureIdleAlarm() {
+  const existing = await chrome.alarms.get(IDLE_ALARM).catch(() => null);
+  if (!existing) await chrome.alarms.create(IDLE_ALARM, { delayInMinutes: 5, periodInMinutes: 5 });
+}
+
+// The plan without acting on it (the e2e harness asserts on it; force runs ignore "enabled").
+async function planAutoDiscard({ now = Date.now() } = {}) {
+  const settings = await getSettings();
+  const [tabs, groups] = await Promise.all([
+    chrome.tabs.query({ discarded: false, active: false, audible: false }),
+    chrome.tabGroups ? chrome.tabGroups.query({}) : [],
+  ]);
+  return { settings, plan: TV.planDiscard(tabs, { settings: settings.autoDiscard, now, groups, ownPrefix: OWN_PREFIX }) };
+}
+
+let discardRunning = null;
+// force: run even when the setting is off ("Discard idle tabs now" from the page).
+function runAutoDiscard({ now = Date.now(), force = false } = {}) {
+  if (discardRunning) return discardRunning;
+  discardRunning = (async () => {
+    const { settings, plan } = await planAutoDiscard({ now });
+    if (!settings.autoDiscard.enabled && !force) return { ok: true, skipped: true };
+    let unloaded = 0;
+    let failed = 0;
+    for (const id of plan.ids) {
+      try {
+        const tab = await chrome.tabs.discard(id);
+        if (tab) unloaded++; else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    const lastRun = { at: Date.now(), unloaded, failed, waiting: plan.eligible - plan.ids.length, manual: Boolean(force) };
+    await chrome.storage.session.set({ [LAST_RUN_KEY]: lastRun }).catch(() => {});
+    scheduleBadge();
+    return { ok: true, ...lastRun };
+  })().finally(() => { discardRunning = null; });
+  return discardRunning;
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== IDLE_ALARM) return;
+  scheduleBadge();
+  runAutoDiscard().catch((e) => console.warn("TabVault auto-discard failed", e));
+});
+ensureIdleAlarm().catch(() => {});
+
 // ---- messages from the page ------------------------------------------------
 function safeRespond(sendResponse, payload) { try { sendResponse(payload); } catch { /* page closed */ } }
 
@@ -165,6 +219,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       enqueue(async () => { await TV.pinSnapshot(chrome.storage.local, msg.id, msg.pinned); return { ok: true }; }).then(reply, fail);
       return true;
     case "openPage": openPage().then(() => reply({ ok: true }), fail); return true;
+    case "discardIdleNow": runAutoDiscard({ force: true }).then(reply, fail); return true;
     default: return;
   }
 });
