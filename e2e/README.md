@@ -11,7 +11,7 @@ Notes
 - The extension is copied to `e2e/.tmp/ext` before each run. TabVault needs no host permissions, so unlike some extensions the manifest copy needs no changes.
 - The app page is opened directly at `chrome-extension://<id>/app/index.html` as a second tab in the harness's own (first) browser window, opened *before* any fixture window (fixture windows default to `focused: true`, which would otherwise steal a later `context.newPage()`'s tab placement); `chrome.windows.getAll` inside that page sees every window in the Playwright context, including that first window.
 - Fixture windows, tab groups, and read-back assertions go through a `worker()` helper (`(await worker()).evaluate(...)`) rather than a single captured service-worker handle: `worker()` re-acquires `context.serviceWorkers()[0]` (waiting for the `"serviceworker"` event if none is listed yet) every time it's called, so a respawned or newly-relaunched worker is picked up automatically instead of throwing against a stale handle. It also re-attaches the console/`pageerror` listeners (tracked in a `WeakSet` so each worker instance is only wired up once) so console errors are still captured after a relaunch.
-- Scenario K (the change-driven, alarm-based snapshot) waits a real 40 seconds for the 30-second-minimum alarm to fire. It runs last in the script (after L) so a failure in an earlier scenario surfaces quickly; the report still lists results in scenario order A–H, I-a, I-b, J–R.
+- Scenario K (the change-driven, alarm-based snapshot) waits a real 40 seconds for the 30-second-minimum alarm to fire. It runs last in the script (after L) so a failure in an earlier scenario surfaces quickly; the report still lists results in scenario order A–H, I-a, I-b, J–Z.
 - Screenshots (`main-page.png`, `snapshots-dialog.png`) and the JSON/markdown report land in `e2e/.tmp/`, which is git-ignored.
 - The harness runs headed (`headless: false`) — expect real browser windows to pop up while it runs.
 
@@ -22,7 +22,7 @@ Every scenario in `ORDER` is seeded as `NOT RUN` before anything runs, so a cras
 A scenario's final status is one of:
 - **PASS** — its assertions ran against real, live browser state and all of them held.
 - **FAIL** — an assertion failed, an unexpected error was thrown, or (specifically for I-b, see below) a console error appeared during a part that would otherwise have been marked LIMITED.
-- **LIMITED** — used only by scenario I-b: the environment crash described below happened before its assertions could run, so instead of a live result it reports the *same* `chrome.tabs.discard()` call verified in isolation, as supporting evidence. This is not a silent pass — the report table shows `LIMITED` distinctly from `PASS`, and the run summary counts it separately ("N passed, N failed, N environment-limited").
+- **LIMITED** — used only by scenarios I-b and Z: the environment crash described below happened before its assertions could run, so instead of a live result it reports the *same* `chrome.tabs.discard()` call verified in isolation, as supporting evidence. This is not a silent pass — the report table shows `LIMITED` distinctly from `PASS`, and the run summary counts it separately ("N passed, N failed, N environment-limited").
 - **NOT RUN** — the harness never reached this scenario (an earlier fatal error, a timeout that killed the process, etc.).
 
 The process exit code is non-zero if and only if at least one scenario is `FAIL` or `NOT RUN`. A `LIMITED` result alone does not fail the run — it is an honest report of an environment limitation, not a defect being swept under the rug.
@@ -68,3 +68,14 @@ They run after J and before L, on one fixture window of their own (created right
 - **P** The group's colour dot opens exactly the eight colours; clicking green recolours the group in Chrome and the header's bar on the page, and the picker closes.
 - **Q** `?` opens "Keyboard shortcuts" with one row per `SHORTCUTS` entry; Escape closes it; the hint strip reads the spec's text; every glyph-only button has `title` and `aria-label`. Then the panel is opened from a row, a title change in a fixture tab re-renders the grid underneath it, and Escape puts focus back on the cursor row rather than `<body>`.
 - **R** Pencil, "E2E Research", Enter: the name shows, `chrome.storage.local` holds it (under `windowNames`), Escape cancels a second rename, the exported JSON carries `windowName`, and the import list shows the name.
+
+## Keeper scenarios (1.2): U-Z
+
+They run after T and before L. J, K and W read snapshots through the version 2 keys (`snapIndex`, `snap:<id>`).
+
+- **U** Badge: `chrome.action.getBadgeText` equals the non-TabVault tab count at the start, after opening a tab and after closing it (the worker's 2 s gate plus its trailing update).
+- **V** Recently closed: a closed fixture tab appears in `recentlyClosed` and in the section (collapsed by default); Reopen puts it back in the window TabVault is in and drops the entry. A closed 2-tab window is listed as one batch; Reopen all brings both back in one window.
+- **W** Palette: `Alt+K` opens it with focus in its input; "duplicates" selects the dupes action and shows its key `d`; "Three" lists a tab; "snapshot now" + Enter stores a manual snapshot and closes it; Esc closes it.
+- **X** Save and close: `Shift+S` on a row of a fixture window asks "Save 2 tabs and close them? ..." with focus on Cancel; Cancel keeps the tabs; the card's ⤓ asks again and confirming stores a kept, named `save-close` snapshot with both URLs and closes the window.
+- **Y** Side panel layout: `chrome.sidePanel.getOptions` gives `app/index.html?panel=1`; that page, opened as a 380 px tab in a fixture window (Playwright cannot drive the panel itself), has `data-layout="panel"`, one grid column, its own window first and current and the others collapsed, the search pinned through a scroll, no "Open in side panel" entry, and the bulk bar at the bottom.
+- **Z** Auto-discard: the Settings section saves `autoDiscard` (on, 15 minutes, a host) and the harness turns it off again at once (so the 5-minute alarm cannot discard during L and K); `planAutoDiscard` at three hours later plans the idle fixture tab and not the active or pinned one. Then `runAutoDiscard({ force: true })` runs the real discards: PASS when the browser survives (the run record, the `zz` flag and the "last run" line are checked), LIMITED when `chrome.tabs.discard` crashes Playwright's Chromium, as in I-b; the browser is relaunched for L and K.
