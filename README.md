@@ -19,7 +19,7 @@ TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that pu
 - Export the current session, or any snapshot, to a JSON file; import and restore selected windows from a file
 - Restored tabs load lazily by default: only the first tab of each window loads immediately, the rest open discarded and load when you click them (configurable in Settings)
 - Light and dark themes that follow Chrome, an Appearance override (System/Light/Dark), compact density, and an option to show URLs under titles; IBM Plex fonts bundled
-- Unload idle tabs (1.2, off by default): every 5 minutes, tabs not used for 15 minutes to 4 hours are unloaded, at most 25 a run; never the active tab, a tab playing sound, a tab Chrome protects, pinned tabs (unless you allow it), a group whose name starts with 📌, or the hosts you list (`*.example.com` covers subdomains); nothing is ever closed, and Settings shows the last run
+- Unload idle tabs (1.2, off by default): every 5 minutes, tabs not used for 15 minutes to 4 hours are unloaded, at most 25 a run; never the active tab, a tab playing sound, a tab an extension marked as not discardable, pinned tabs (unless you allow it), a group whose name starts with 📌, or the hosts you list (`*.example.com` covers subdomains); nothing is ever closed, and Settings shows the last run
 - The toolbar icon counts your tabs (or the unloaded ones, or nothing)
 - Recently closed tabs, kept locally (the last 200): reopen one in the current window, or a whole closed window at once; Clear and an off switch
 - Command palette (`Alt+K`): every action by name and every tab, ranked as you type

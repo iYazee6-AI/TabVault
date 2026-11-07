@@ -307,7 +307,7 @@
       el("label", { class: "row" }, adOn, " Unload tabs not used for ", adMinutes),
       el("label", { class: "row" }, adPinned, " Never unload pinned tabs"),
       el("label", { class: "col" }, "Never unload tabs on these sites (one per line; *.example.com covers its subdomains)", adAllow),
-      el("p", { class: "muted" }, `Never unloaded: the tab you are on in each window, tabs playing sound, tabs Chrome protects (for example a form you are filling), and tabs in a group whose name starts with ${TV.PROTECT_EMOJI}. Unloaded tabs stay where they are and reload when you open them; nothing is closed.`),
+      el("p", { class: "muted" }, `Never unloaded: the tab you are on in each window, tabs playing sound, tabs an extension marked as not discardable, and tabs in a group whose name starts with ${TV.PROTECT_EMOJI}. Unloaded tabs stay where they are and reload when you open them; nothing is closed.`),
       el("div", { class: "row" }, lastRun, runNow),
       err,
       el("div", { class: "row" }, el("button", { class: "primary", onclick: async () => {

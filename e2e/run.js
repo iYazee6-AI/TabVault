@@ -1405,6 +1405,9 @@ async function main() {
       await openMenuItem("#btn-settings");
       await appPage.waitForSelector("#ad-enabled");
       const lineBefore = await appPage.$eval("#ad-last-run", (n) => n.textContent);
+      // Naqid finding 2: only autoDiscardable can be checked, so no promise about forms is made.
+      const note = await appPage.$eval("#dialog", (n) => n.textContent);
+      assert(note.includes("tabs an extension marked as not discardable") && !/form you are/i.test(note), "the never-unloaded note still promises unsaved forms or lacks the not-discardable line");
       await appPage.check("#ad-enabled");
       await appPage.selectOption("#ad-minutes", "15");
       await appPage.fill("#ad-allow", "*.example.org");
