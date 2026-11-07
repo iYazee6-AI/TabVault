@@ -1,4 +1,4 @@
-importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
@@ -201,6 +201,106 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 ensureIdleAlarm().catch(() => {});
 
+// ---- recently closed -----------------------------------------------------------
+// tabs.onRemoved carries no URL, so the worker keeps what it knows about each open tab in a
+// memory cache (seeded at start, kept by tab events). A tab closed while the worker slept is
+// looked up in the latest snapshot of this browser session instead. A tab closed on its own is
+// appended at once; the tabs of a closing window are appended together on windows.onRemoved.
+const tabCache = new Map();
+const groupTitles = new Map();
+const closingWindows = new Map();
+const SESSION_START_KEY = "sessionStartedAt";
+
+function cacheTab(t) {
+  if (!t || typeof t.id !== "number") return;
+  tabCache.set(t.id, { url: t.url || t.pendingUrl || "", title: t.title || "", favIconUrl: t.favIconUrl || "", windowId: t.windowId, groupId: t.groupId });
+}
+chrome.tabs.query({}).then((tabs) => { for (const t of tabs) if (!tabCache.has(t.id)) cacheTab(t); }).catch(() => {});
+if (chrome.tabGroups) {
+  chrome.tabGroups.query({}).then((gs) => { for (const g of gs) groupTitles.set(g.id, g.title || ""); }).catch(() => {});
+  chrome.tabGroups.onCreated.addListener((g) => groupTitles.set(g.id, g.title || ""));
+  chrome.tabGroups.onUpdated.addListener((g) => groupTitles.set(g.id, g.title || ""));
+}
+// Marks when this browser session began, so the snapshot fallback never matches a tab id
+// from an earlier session (ids reset with the browser; storage.session is cleared with it).
+chrome.storage.session.get(SESSION_START_KEY).then((r) => {
+  if (r[SESSION_START_KEY] === undefined) return chrome.storage.session.set({ [SESSION_START_KEY]: Date.now() });
+}).catch(() => {});
+chrome.tabs.onCreated.addListener(cacheTab);
+chrome.tabs.onUpdated.addListener((_id, _info, tab) => cacheTab(tab));
+chrome.tabs.onAttached.addListener((id, info) => { const c = tabCache.get(id); if (c) c.windowId = info.newWindowId; });
+chrome.tabs.onReplaced.addListener((added, removed) => {
+  tabCache.delete(removed);
+  chrome.tabs.get(added).then(cacheTab).catch(() => {});
+});
+
+let recentQueue = Promise.resolve();
+function recentWrite(fn) {
+  const run = recentQueue.then(fn);
+  recentQueue = run.catch(() => {});
+  return run;
+}
+
+async function appendRecent(entries) {
+  const list = entries.filter((e) => e && TV.shouldRecord(e.url, OWN_PREFIX));
+  if (!list.length) return;
+  const settings = await getSettings();
+  if (!settings.recordClosed) return;
+  await recentWrite(async () => {
+    const { [TV.RECENT_KEY]: current = [] } = await chrome.storage.local.get(TV.RECENT_KEY);
+    await chrome.storage.local.set({ [TV.RECENT_KEY]: TV.appendClosed(current, list) });
+  });
+}
+
+// What was known about a tab that just closed: the cache, else the latest snapshot taken in
+// this browser session.
+async function describeClosed(tabId, cached) {
+  if (cached && cached.url) return { ...cached, groupTitle: groupTitles.get(cached.groupId) || "" };
+  const [snap, started] = await Promise.all([
+    TV.latestSnapshot(chrome.storage.local).catch(() => null),
+    chrome.storage.session.get(SESSION_START_KEY).then((r) => r[SESSION_START_KEY], () => undefined),
+  ]);
+  if (!snap || started === undefined || snap.takenAt < started) return null;
+  for (const w of snap.session.windows) {
+    const t = w.tabs.find((x) => x.id === tabId);
+    if (!t) continue;
+    const g = t.groupId === null ? null : (w.groups || []).find((x) => x.id === t.groupId);
+    return { url: t.url, title: t.title, favIconUrl: t.favIconUrl, windowId: w.id, groupTitle: g ? g.title : "" };
+  }
+  return null;
+}
+
+function flushClosingWindow(windowId) {
+  const bucket = closingWindows.get(windowId);
+  if (!bucket) return;
+  closingWindows.delete(windowId);
+  clearTimeout(bucket.timer);
+  const closedAt = Date.now();
+  Promise.all(bucket.items).then((infos) => {
+    const batch = `w${windowId}-${closedAt}`;
+    return appendRecent(infos.filter(Boolean).map((info) => TV.closedEntry(info, { groupTitle: info.groupTitle, closedAt, batch })));
+  }).catch((e) => console.warn("TabVault recently-closed failed", e));
+}
+
+chrome.tabs.onRemoved.addListener((tabId, info) => {
+  const cached = tabCache.get(tabId);
+  tabCache.delete(tabId);
+  const described = describeClosed(tabId, cached).catch(() => null);
+  if (info && info.isWindowClosing) {
+    let bucket = closingWindows.get(info.windowId);
+    if (!bucket) {
+      // windows.onRemoved normally flushes this; the timer covers a missed event.
+      bucket = { items: [], timer: setTimeout(() => flushClosingWindow(info.windowId), 2000) };
+      closingWindows.set(info.windowId, bucket);
+    }
+    bucket.items.push(described);
+    return;
+  }
+  described.then((d) => (d ? appendRecent([TV.closedEntry(d, { groupTitle: d.groupTitle, closedAt: Date.now() })]) : null))
+    .catch((e) => console.warn("TabVault recently-closed failed", e));
+});
+chrome.windows.onRemoved.addListener((windowId) => flushClosingWindow(windowId));
+
 // ---- messages from the page ------------------------------------------------
 function safeRespond(sendResponse, payload) { try { sendResponse(payload); } catch { /* page closed */ } }
 
@@ -220,6 +320,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     case "openPage": openPage().then(() => reply({ ok: true }), fail); return true;
     case "discardIdleNow": runAutoDiscard({ force: true }).then(reply, fail); return true;
+    case "recentRemove":
+      recentWrite(async () => {
+        const { [TV.RECENT_KEY]: current = [] } = await chrome.storage.local.get(TV.RECENT_KEY);
+        await chrome.storage.local.set({ [TV.RECENT_KEY]: TV.removeEntries(current, Array.isArray(msg.ids) ? msg.ids : []) });
+        return { ok: true };
+      }).then(reply, fail);
+      return true;
+    case "recentClear":
+      recentWrite(async () => { await chrome.storage.local.set({ [TV.RECENT_KEY]: [] }); return { ok: true }; }).then(reply, fail);
+      return true;
     default: return;
   }
 });

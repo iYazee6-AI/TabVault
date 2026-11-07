@@ -23,6 +23,10 @@
     dupes: new Set(),
     // tab id -> the favIconUrl that failed to load; that tab shows its letter badge until its URL changes.
     failedFavicons: new Map(),
+    recent: [],
+    recentOpen: false,
+    // "panel" when loaded as the side panel (?panel=1), else "page".
+    layout: new URLSearchParams(location.search).get("panel") === "1" ? "panel" : "page",
   };
 
   // ---- data ------------------------------------------------------------------
@@ -356,6 +360,65 @@
     $("hints").replaceChildren(...parts);
   }
 
+  // ---- recently closed ---------------------------------------------------------
+  // The worker records closed tabs (lib/recent.js); the page lists them under the windows,
+  // collapsed by default. Removing and clearing go through the worker so writes never race.
+  async function loadRecent() {
+    const { [TV.RECENT_KEY]: list = [] } = await chrome.storage.local.get(TV.RECENT_KEY).catch(() => ({}));
+    state.recent = Array.isArray(list) ? list : [];
+    renderRecent();
+  }
+  function clockTime(ts) {
+    return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  async function reopenEntries(entries, newWindow) {
+    const urls = entries.map((e) => e.url);
+    try {
+      if (newWindow) await chrome.windows.create({ url: urls, focused: false });
+      else {
+        for (const url of urls) {
+          const props = { url, active: state.layout === "panel" };
+          if (state.currentWindowId !== null) props.windowId = state.currentWindowId;
+          await chrome.tabs.create(props);
+        }
+      }
+      await chrome.runtime.sendMessage({ type: "recentRemove", ids: entries.map((e) => e.id) });
+      toast(newWindow ? `Reopened ${urls.length} tab${urls.length === 1 ? "" : "s"} in a new window` : "Reopened");
+    } catch (err) {
+      toast(`Could not reopen: ${err.message || err}`);
+    }
+  }
+  function recentRow(e) {
+    const domain = TV.domainOf(e.url);
+    return el("div", { class: "rrow", title: e.url, dataset: { recent: e.id } },
+      favicon({ id: `recent-${e.id}`, favIconUrl: e.favIconUrl }, domain),
+      el("span", { class: "rtitle" }, e.title || e.url),
+      e.groupTitle ? el("span", { class: "when", title: "Group" }, e.groupTitle) : null,
+      el("span", { class: "domain mono" }, domain),
+      el("span", { class: "when mono", title: new Date(e.closedAt).toLocaleString() }, clockTime(e.closedAt)),
+      el("button", { type: "button", class: "reopen", title: "Reopen in this window", onclick: () => reopenEntries([e], false) }, "Reopen"));
+  }
+  function renderRecent() {
+    const list = state.recent;
+    const open = state.recentOpen && list.length > 0;
+    $("recent").hidden = list.length === 0;
+    $("recent-count").textContent = String(list.length);
+    $("recent-toggle").setAttribute("aria-expanded", String(open));
+    $("recent-toggle").querySelector(".caret").textContent = open ? "▾" : "▸";
+    $("recent-list").hidden = !open;
+    if (!open) { $("recent-list").replaceChildren(); return; }
+    $("recent-list").replaceChildren(...TV.sections(list).flatMap((s) => {
+      if (!s.batch) return s.entries.map(recentRow);
+      const n = s.entries.length;
+      return [el("div", { class: "rbatch", dataset: { batch: s.batch } },
+        el("div", { class: "bhead" },
+          el("span", { class: "btitle" }, `Window closed · ${n} tab${n === 1 ? "" : "s"}`),
+          el("span", { class: "when mono" }, clockTime(s.entries[0].closedAt)),
+          el("button", { type: "button", class: "reopen-all", title: "Reopen these tabs in a new window", onclick: () => reopenEntries(s.entries, true) }, "Reopen all")),
+        ...s.entries.map(recentRow))];
+    }));
+  }
+
   function selectedTabs() {
     return state.session.windows.flatMap((w) => w.tabs).filter((t) => state.selected.has(t.id));
   }
@@ -671,7 +734,13 @@
     $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("more-menu"); });
     $("more-menu").addEventListener("click", () => closeMenus());
     document.addEventListener("click", (e) => { if (!e.target.closest(".menu-wrap")) closeMenus(); });
-    chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[TV.WINDOW_NAMES_KEY]) scheduleRefresh(); });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local") return;
+      if (changes[TV.WINDOW_NAMES_KEY]) scheduleRefresh();
+      if (changes[TV.RECENT_KEY]) loadRecent().catch(console.error);
+    });
+    $("recent-toggle").addEventListener("click", () => { state.recentOpen = !state.recentOpen; renderRecent(); });
+    $("recent-clear").addEventListener("click", () => chrome.runtime.sendMessage({ type: "recentClear" }).then(() => toast("Recently closed cleared"), (e) => toast("Could not clear: " + (e.message || e))));
     $("dialog-backdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(); });
 
     for (const container of [$("grid"), $("selbar")]) {
@@ -692,5 +761,5 @@
     getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel,
   };
 
-  loadSettings().then(refresh).then(wire).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
+  loadSettings().then(refresh).then(wire).then(loadRecent).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
 })();

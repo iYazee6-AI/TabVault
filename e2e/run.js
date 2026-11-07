@@ -1194,6 +1194,60 @@ async function main() {
       record("U", "FAIL", e.message);
     }
 
+    // ---------------------------------------------------------------
+    // V. Recently closed: a closed tab is listed and reopens in the
+    // current window; a closed window's tabs reopen together
+    // ---------------------------------------------------------------
+    try {
+      const recentList = async () => (await worker()).evaluate(() => chrome.storage.local.get("recentlyClosed").then((r) => r.recentlyClosed || []));
+      const windowId = await anyNormalWindowId();
+      const rcUrl = `${threeUrl}?rc=1`;
+      const t = await (await worker()).evaluate(({ wid, url }) => chrome.tabs.create({ windowId: wid, url, active: false }), { wid: windowId, url: rcUrl });
+      await waitFor(async () => (await (await worker()).evaluate((id) => chrome.tabs.get(id), t.id)).url === rcUrl, { timeout: 10000 });
+      await (await worker()).evaluate((id) => chrome.tabs.remove(id), t.id);
+      const entry = await waitFor(async () => (await recentList()).find((e) => e.url === rcUrl), { timeout: 8000 });
+
+      await appPage.waitForSelector("#recent:not([hidden])");
+      const heading = await appPage.$eval("#recent-toggle", (n) => n.textContent);
+      assert((await appPage.$eval("#recent-list", (n) => n.hidden)) === true, "the section is not collapsed by default");
+      await appPage.click("#recent-toggle");
+      await appPage.waitForSelector(`#recent-list [data-recent="${entry.id}"]`);
+      const ownWindow = await appPage.evaluate(() => chrome.tabs.getCurrent().then((x) => x.windowId));
+      await appPage.click(`#recent-list [data-recent="${entry.id}"] button.reopen`);
+      const reopened = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((url) => chrome.tabs.query({ url }), rcUrl);
+        return ts[0] || null;
+      }, { timeout: 10000 });
+      assert(reopened.windowId === ownWindow, `reopened in window ${reopened.windowId}, the current window is ${ownWindow}`);
+      await waitFor(async () => !(await recentList()).some((e) => e.id === entry.id));
+      await (await worker()).evaluate((id) => chrome.tabs.remove(id), reopened.id);
+
+      const batchUrls = [`${oneUrl}?rcw=1`, `${twoUrl}?rcw=1`];
+      const winV = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), batchUrls);
+      await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winV.id);
+        return ts.length === 2 && ts.every((x) => String(x.url || "").includes("?rcw=1"));
+      }, { timeout: 15000 });
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), winV.id);
+      const batch = await waitFor(async () => {
+        const list = await recentList();
+        const mine = list.filter((e) => batchUrls.includes(e.url) && e.batch);
+        return mine.length === 2 && mine[0].batch === mine[1].batch ? mine[0].batch : null;
+      }, { timeout: 8000 });
+      await appPage.waitForSelector(`#recent-list [data-batch="${batch}"] button.reopen-all`);
+      await appPage.click(`#recent-list [data-batch="${batch}"] button.reopen-all`);
+      const back = await waitFor(async () => {
+        const all = await (await worker()).evaluate(() => chrome.tabs.query({}));
+        const mine = all.filter((x) => batchUrls.includes(x.url));
+        return mine.length === 2 && mine[0].windowId === mine[1].windowId ? mine : null;
+      }, { timeout: 10000 });
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), back[0].windowId);
+      record("V", "PASS", `closed ${rcUrl}: listed (heading "${heading.trim()}", collapsed by default), Reopen put it back in the current window ${ownWindow} and removed the entry; a closed 2-tab window was listed as batch ${batch} and Reopen all brought both back in one window`);
+    } catch (e) {
+      record("V", "FAIL", e.message);
+    }
+    await resetUi();
+
     // == 1.2 next ==    // ---------------------------------------------------------------
     // Z. Auto-discard: the settings round-trip, the plan on real tabs,
     // then the run itself. chrome.tabs.discard crashes Playwright's

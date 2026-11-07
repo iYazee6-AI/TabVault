@@ -136,6 +136,24 @@
     .tab .close { visibility: hidden; }
     .tab:hover .close, .tab:focus-within .close, .tab.cursor .close { visibility: visible; }
     .tab.dragover { box-shadow: inset 0 2px 0 var(--p); }
+    /* == recent == */
+    #recent { margin-top: 16px; background: var(--g2); border: 1px solid var(--l); border-radius: 10px; }
+    #recent .rhead { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+    #recent .rtoggle { flex: 1; text-align: left; color: var(--t); font-weight: 500; padding: 2px 6px; }
+    #recent .rtoggle .caret { display: inline-block; width: 12px; color: var(--t2); }
+    #recent-count { font-size: 11px; color: var(--t2); font-variant-numeric: tabular-nums; margin-left: 4px; }
+    #recent button.small { padding: 2px 8px; font-size: 12px; }
+    #recent-list { border-top: 1px solid var(--l); padding: 4px 0; max-height: 50vh; overflow: auto; }
+    .rbatch { margin: 4px 4px 2px; }
+    .rbatch .bhead { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 10px; background: var(--g3); border-radius: 5px; font-weight: 500; }
+    .rbatch .bhead .btitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rrow { display: flex; align-items: center; gap: 8px; height: var(--row); padding: 0 6px 0 10px; margin: 0 4px; border-radius: 5px; }
+    .rbatch .rrow { margin-left: 16px; }
+    .rrow:hover { background: var(--g3); }
+    .rrow .rtitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rrow .domain, .rrow .when, .bhead .when { flex: none; font-size: 11px; color: var(--t2); white-space: nowrap; }
+    .rrow .domain { max-width: 30%; overflow: hidden; text-overflow: ellipsis; }
+    .rrow button, .bhead button { padding: 1px 8px; font-size: 12px; }
     /* == hints == */
     #hints { flex: none; padding: 6px 16px; background: var(--g2); border-top: 1px solid var(--l); color: var(--t2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #hints kbd { font-size: 10.5px; }
@@ -198,6 +216,13 @@
   </header>
   <main id="main">
     <div id="grid"></div>
+    <section id="recent" aria-label="Recently closed" hidden>
+      <div class="rhead">
+        <button id="recent-toggle" type="button" class="icon rtoggle" aria-expanded="false" aria-controls="recent-list" title="Show recently closed tabs" aria-label="Show recently closed tabs"><span class="caret">▸</span> Recently closed <span id="recent-count" class="mono"></span></button>
+        <button id="recent-clear" type="button" class="small" title="Forget every recently closed tab" aria-label="Forget every recently closed tab">Clear</button>
+      </div>
+      <div id="recent-list" hidden></div>
+    </section>
     <div id="selbar" role="toolbar" aria-label="Selected tabs" hidden>
       <span id="selcount" class="mono"></span>
       <div class="menu-wrap up">
@@ -221,6 +246,7 @@
   <script src="../lib/snapshots.js"></script>
   <script src="../lib/snapstore.js"></script>
   <script src="../lib/discard-rule.js"></script>
+  <script src="../lib/recent.js"></script>
   <script src="../lib/exporters.js"></script>
   <script src="../lib/restore-plan.js"></script>
   <script src="../lib/ui.js"></script>
