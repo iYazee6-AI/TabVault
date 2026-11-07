@@ -41,3 +41,15 @@ test("tabs match on every word in title or URL; misses are dropped; the limit ho
   assert.deepEqual(filterPalette("zzzz", actions, tabs), []);
   assert.equal(filterPalette("e", actions, tabs, { limit: 2 }).length, 2);
 });
+
+// Naqid finding 4: Option+K types a character in macOS text fields; only the search box keeps Alt+K.
+test("Alt+K opens the palette on the page and in the search box, not in other fields", () => {
+  const { opensPalette } = require("../lib/palette.js");
+  const altK = { altKey: true, ctrlKey: false, metaKey: false, code: "KeyK" };
+  assert.equal(opensPalette(altK, { editable: false }), true);
+  assert.equal(opensPalette(altK, { editable: true, id: "search" }), true);
+  assert.equal(opensPalette(altK, { editable: true, id: "ad-allow" }), false);
+  assert.equal(opensPalette(altK, { editable: true, id: "" }), false);
+  assert.equal(opensPalette({ ...altK, ctrlKey: true }, { editable: false }), false);
+  assert.equal(opensPalette({ ...altK, code: "KeyJ" }, { editable: false }), false);
+});

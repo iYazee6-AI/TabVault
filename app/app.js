@@ -706,9 +706,10 @@
       return; // Enter and Space activate the focused item natively
     }
     if (!$("dialog-backdrop").hidden) { if (e.key === "Escape") closeDialog(); return; }
-    // Alt+K opens the command palette from anywhere on the page, a field included. Matched on
-    // the physical key so it works on any keyboard layout.
-    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyK") { e.preventDefault(); openPalette(); return; }
+    // Alt+K opens the command palette (lib/palette.js opensPalette: not while typing in a field
+    // other than the search box, where Option+K types a character on macOS).
+    const field = { editable: Boolean(e.target && e.target.matches && e.target.matches("input, textarea, select, [contenteditable], [contenteditable] *")), id: e.target && e.target.id };
+    if (TV.opensPalette(e, field)) { e.preventDefault(); openPalette(); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const s = TV.findShortcut(e.key);
     if (!s || !s.action) return;
