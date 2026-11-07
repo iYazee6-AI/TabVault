@@ -93,3 +93,19 @@ test("a quota retry removes the dropped snapshot's key before it writes again", 
   assert.equal(area.data["snap:old"], undefined);
   assert.ok(area.data["snap:new"]);
 });
+
+// Naqid's second look: the merged index is written before the dropped keys are removed; when
+// that removal fails, the retry must still find and remove the orphaned key.
+test("a removal that fails during migration leaves no orphan key after the retry", async () => {
+  const area = fakeArea({ storageVersion: 1, snapshots: [snap("a", 1)] });
+  await store.addSnapshot(area, snap("c", 2), 20);
+  await store.addSnapshot(area, snap("d", 3), 20);
+  const remove = area.remove;
+  let failed = false;
+  area.remove = async (keys) => { if (!failed) { failed = true; throw new Error("remove failed"); } return remove(keys); };
+  await assert.rejects(store.migrate(area, 1));
+  assert.equal(await store.migrate(area, 1), "migrated");
+  assert.deepEqual((await store.listSnapshots(area)).map((s) => s.id), ["d"]);
+  assert.deepEqual(Object.keys(area.data).filter((k) => k.startsWith("snap:")), ["snap:d"]);
+  assert.equal(area.data.snapshots, undefined);
+});
