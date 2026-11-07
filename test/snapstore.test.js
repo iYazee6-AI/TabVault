@@ -80,3 +80,16 @@ test("the migration merge applies the keep cap and removes the keys it drops", a
   assert.deepEqual((await store.listSnapshots(area)).map((s) => s.id), ["c", "b"]);
   assert.deepEqual(Object.keys(area.data).filter((k) => k.startsWith("snap:")).sort(), ["snap:b", "snap:c"]);
 });
+
+// Naqid finding 3: with a real quota, the retry only fits once the rotated-out key is gone.
+test("a quota retry removes the dropped snapshot's key before it writes again", async () => {
+  const seed = fakeArea({ storageVersion: 2, snapIndex: [] });
+  await store.addSnapshot(seed, snap("old", 1), 10);
+  await store.addSnapshot(seed, snap("kept", 2, true), 10);
+  const size = JSON.stringify(seed.data).length;
+  const area = fakeArea(seed.data, { maxBytes: size + 200 });
+  await store.addSnapshot(area, snap("new", 3), 10);
+  assert.deepEqual((await store.listSnapshots(area)).map((s) => s.id), ["new", "kept"]);
+  assert.equal(area.data["snap:old"], undefined);
+  assert.ok(area.data["snap:new"]);
+});
