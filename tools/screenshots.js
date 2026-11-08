@@ -23,6 +23,7 @@
 //   TABVAULT_TMP_DIR     folder for the unpacked copy and the browser profile
 //   TABVAULT_HEADLESS=1  run the new headless mode (channel "chromium",
 //                        which loads extensions) instead of a visible window
+// eslint-disable-next-line security/detect-non-literal-require -- dev tool only: the path comes from the developer's own env var, never from page data
 const { chromium } = require(process.env.TABVAULT_PLAYWRIGHT || "playwright");
 const path = require("path");
 const fs = require("fs");

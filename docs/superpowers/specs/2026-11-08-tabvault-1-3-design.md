@@ -32,16 +32,21 @@ Permissions: none new. The manifest stays `tabs`, `tabGroups`, `storage`, `unlim
 - `shelve` — copy the tab onto a named shelf, then close it;
 - `never` — never unload or shelve these sites (replaces the 1.2 allowlist, which migrates into `never` rules).
 
-Rules are checked top to bottom; the first rule whose pattern matches the tab's host decides; a tab no rule matches falls back to the 1.2 global setting (Unload idle tabs on or off, its threshold). The 1.2 exemptions still apply to every rule and cannot be turned off: the active tab of each window, audible tabs, `autoDiscardable === false`, TabVault's own pages, a tab without `lastAccessed`, a group whose name starts with the pin emoji, and pinned tabs unless the rule says "include pinned".
+Rules are checked top to bottom; the first rule whose pattern matches the tab's host decides; a tab no rule matches falls back to the 1.2 global setting (Unload idle tabs on or off, its threshold). The 1.2 exemptions still apply to every rule and cannot be turned off: the active tab of each window, audible tabs, `autoDiscardable === false`, TabVault's own pages, a tab without `lastAccessed`, and a group whose name starts with the pin emoji. Four more lines, one each:
 
-**Shelves.** A shelf is a named, append-only list of saved tabs that is never rotated out: OneTab's list, kept inside TabVault. Each item is `{url, title, favIconUrl, savedAt, ruleId}`. The Shelves section of the page lists them with Open (in the current window, the item stays), Open and remove, Remove, Open all, Export (JSON or Markdown, feature 4). A shelf can also be filled by hand: "Move to shelf…" in the selection bar and the palette. A shelf with no rule pointing at it is kept until the user deletes it; deleting a non-empty shelf asks first with the count.
+- A shelving rule never touches the active tab of any window.
+- Incognito tabs are never unloaded or shelved by a rule.
+- The global "Never unload pinned tabs" wins over every rule; there is no per-rule pinned option.
+- A pattern must leave a registrable domain: `*.com` and `*.co.uk` are refused, because a short list of two-level public suffixes (`co.uk`, `com.au`, `co.jp`, `com.br`, `com.sa`, `co.nz`, `co.za`, `com.mx`, `co.in`, `com.tr` and the like, kept in `lib/discard-rule.js`) is treated as a suffix, not a domain.
+
+**Shelves.** A shelf is a named, append-only list of saved tabs that is never rotated out: OneTab's list, kept inside TabVault. Each item is `{url, title, favIconUrl, savedAt, ruleId, group}`, where `group` is `{id, title, color}` of the tab's group when it was shelved (or absent); restoring an item recreates that group (by title and colour in the target window, joining one of the same title and colour if it is there). The Shelves section of the page lists them with Open (in the current window, the item stays), Open and remove, Remove, Open all, Export (JSON or Markdown, feature 4). A shelf can also be filled by hand: "Move to shelf…" in the selection bar and the palette. A shelf with no rule pointing at it is kept until the user deletes it; deleting a non-empty shelf asks first with the count.
 
 **Guards on closing (the OneTab complaint, again).**
 
-1. A `shelve` rule is created disabled. To turn it on the user runs its dry run first: the page shows the tabs it would shelve right now ("4 tabs would be shelved: …"), and the switch is enabled only after that preview has been shown once for the current pattern and threshold (editing either resets it).
+1. A shelving rule may save then close a tab only when the user turns that switch on, per rule, after running its dry run. The rule is created with the switch off; the dry run shows the tabs it would shelve right now ("4 tabs would be shelved: …"); the switch unlocks only after that preview has been shown for the current pattern and threshold (editing either locks it again). A dry run that matches more than 50 open tabs does not unlock the switch until the user confirms that count in a second step ("This rule matches 63 open tabs. Turn it on anyway?").
 2. The tab is written to the shelf, and the write is read back, before `chrome.tabs.remove` is called; a failed write leaves the tab open and counts as "failed" in the run record.
-3. The 25-per-run cap of 1.2 covers unload and shelve together.
-4. A shelved tab is also recorded in Recently closed (it was closed), with a "shelved to Reading later" note, so both lists agree.
+3. The 25-per-run cap of 1.2 covers unload and shelve together: unloads run first, then shelves, each oldest idle first; the rest wait for the next run.
+4. Shelving records nothing in Recently closed itself. The worker's `chrome.tabs.onRemoved` handler (`background.js:304`) already writes the entry when the tab closes; shelving tags that entry with the shelf id (shown as "shelved to Reading later"). When "Remember recently closed tabs" is off, nothing is recorded there at all.
 5. The last-run line under the rules shows "last run 12:40: 7 unloaded, 3 shelved"; the toolbar badge does not change meaning.
 6. Never the last tab of the last window: when shelving would leave no normal window, the tab is unloaded instead (the same rule as save and close).
 
@@ -72,7 +77,6 @@ The rule editor (inline, no dialog on top of a dialog):
   Sites      [ news.example.com          ]   one host; *.host covers subdomains
   After      [ 1 hour v ]
   Then       ( ) Unload   (•) Shelve to [ Reading later v | + New shelf ]   ( ) Never
-  [ ] Include pinned tabs
   [Dry run]   →  4 tabs would be shelved now:
                  The Weekly Roundup · What changed in browsers · …
   [Save]  [Cancel]          (the On switch unlocks after a dry run)
@@ -92,20 +96,23 @@ The Shelves section of the main page (collapsed by default, like Recently closed
 ```
 settings.idleRules = [
   { id: "r1", pattern: "news.example.com", idleMinutes: 60,
-    action: "shelve", shelfId: "s1", includePinned: false,
+    action: "shelve", shelfId: "s1",
     enabled: true, previewedFor: "news.example.com|60" }
 ]
-shelfIndex = [ { id: "s1", name: "Reading later", count: 14, updatedAt } ]
-shelf:s1   = [ { url, title, favIconUrl, savedAt, ruleId } ]   // newest first
+shelfIndex = [ { id: "s1", name: "Reading later", chunks: 2, updatedAt } ]
+shelf:s1:0 = [ { url, title, favIconUrl, savedAt, ruleId, group } ]   // 200 items per key
+shelf:s1:1 = [ ... ]                                                  // the newest chunk last
 ```
 
-Settings version: `settings.autoDiscard.allow` (1.2) migrates once into `never` rules at worker start and the key is kept one release for downgrade; `settings.idleRules` defaults to `[]`, so a 1.2 user sees no change in behaviour until they add a rule. The pure part of the decision (which tab gets which action) stays in `lib/discard-rule.js`, extended to `planIdle(tabs, groups, settings, now)` returning `{unload: [ids], shelve: [{id, shelfId}], skipped}`.
+Each shelf is chunked at 200 items per key (`shelf:<id>:<n>`); the item count shown in the header is derived from the chunks (200 times the full chunks plus the length of the last), never stored. Removing an item rewrites only its chunk; a chunk left short in the middle is compacted on the shelf's next append.
+
+Settings version: `settings.autoDiscard.allowlist` (1.2; `lib/settings.js:11` and `:37`, read by `lib/discard-rule.js`) migrates once into `never` rules at worker start and the key is kept one release for downgrade; `settings.idleRules` defaults to `[]`, so a 1.2 user sees no change in behaviour until they add a rule. The pure part of the decision (which tab gets which action) stays in `lib/discard-rule.js`, extended to `planIdle(tabs, groups, settings, now)` returning `{unload: [ids], shelve: [{id, shelfId}], skipped}`.
 
 **Permissions touched:** `tabs` (already: `remove`, `discard`, `query`), `storage`, `alarms` (the existing 5-minute `tabvault-idle` alarm). None new.
 
-**Tests.** Unit: first-match order; `never` beats a later `shelve`; the fallback to the global setting; the exemptions apply to every action; `includePinned`; the cap of 25 across both actions; the last-tab case turns shelve into unload; the allowlist migration (1.2 list becomes `never` rules, idempotent, a 1.3 store left alone); `shelves.add` dedups the same URL on the same shelf within a minute; a failed shelf write produces no close in the plan's executor (fake storage that rejects). e2e: a rule created disabled, the switch locked until the dry run, the dry run listing the fixture tabs; "Run idle rules now" shelving a fixture tab whose `lastAccessed` is old (the harness sets the idle time to the minimum and backdates through a test hook, as Z does for discard), the tab gone, the shelf and Recently closed both listing it; Open from the shelf. The unload half stays LIMITED where Playwright's Chromium crashes on `chrome.tabs.discard`.
+**Tests.** Unit: first-match order; `never` beats a later `shelve`; the fallback to the global setting; the exemptions apply to every action; a shelving rule skips the active tab of every window; incognito tabs are never planned; the global pinned setting wins over every rule; the cap of 25 across both actions with unloads before shelves and oldest idle first; a pattern that leaves only a public suffix (`*.com`, `*.co.uk`, `*.com.sa`) is refused; more than 50 matches needs the second confirmation; the shelf item keeps the group and a restore recreates it; chunking at 200 (the 201st item opens chunk 1, the count is derived); the last-tab case turns shelve into unload; the allowlist migration (1.2 list becomes `never` rules, idempotent, a 1.3 store left alone); `shelves.add` dedups the same URL on the same shelf within a minute; a failed shelf write produces no close in the plan's executor (fake storage that rejects). e2e: a rule created disabled, the switch locked until the dry run, the dry run listing the fixture tabs; "Run idle rules now" shelving a fixture tab whose `lastAccessed` is old (the harness sets the idle time to the minimum and backdates through a test hook, as Z does for discard), the tab gone, the shelf listing it, the Recently closed entry tagged with the shelf id (and no entry when "Remember recently closed tabs" is off); Open from the shelf. The unload half stays LIMITED where Playwright's Chromium crashes on `chrome.tabs.discard`.
 
-**Risks.** (a) The listing promise changes: "nothing is ever closed" becomes "nothing is closed unless you write a rule that says so, and every closed tab is on a shelf first" — the description, PRIVACY.md and the in-page note must all change together. (b) A wrong pattern (`*.com`) shelves half the browser: the dry run is mandatory, the cap is 25 a run, and a pattern with fewer than two labels after the wildcard is refused. (c) `lastAccessed` resets when Chrome restarts on some versions, so a rule may wait longer than set after a restart; that errs on the safe side and is said in the note. (d) Storage growth: a shelf grows without bound; `unlimitedStorage` covers it, and the shelf header shows the count so the user sees it.
+**Risks.** (a) The listing promise changes: "nothing is ever closed" becomes "Nothing is closed unless a rule you wrote says so" — the description, PRIVACY.md and the in-page note must all change together. (b) A wrong pattern shelves half the browser: a pattern must leave a registrable domain (the suffix list above), the switch stays off until the dry run, more than 50 matches needs a second confirmation, and the cap is 25 a run. (e) Text typed into a tab (a half-written form or comment) can be lost when the tab is shelved: closing a tab does not keep its page state, and TabVault cannot read page content to warn. The dry run is the guard: it lists every tab the rule would close before the switch can be turned on, and the active tab of each window is never shelved. (c) `lastAccessed` resets when Chrome restarts on some versions, so a rule may wait longer than set after a restart; that errs on the safe side and is said in the note. (d) Storage growth: a shelf grows without bound; `unlimitedStorage` covers it, the chunks of 200 keep each write small, and the shelf header shows the derived count so the user sees it.
 
 ### 2. Compare a snapshot with now
 
@@ -155,7 +162,7 @@ Settings version: `settings.autoDiscard.allow` (1.2) migrates once into `never` 
   ↑ ↓ move · Enter open · Shift+Enter new window · Esc close
 ```
 
-**Storage shape:** none persisted. The page builds an in-memory index on the first palette open of a page load: every `snap:<id>` (read through `lib/snapstore.js`), every `shelf:<id>`, `recentlyClosed`; one entry per (normalised URL), keeping the newest occurrence and a count. It is rebuilt on `storage.onChanged` for those keys (debounced 1 s). Scoring reuses `lib/palette.js` `textScore`; saved results rank below open tabs of equal score and are capped at 30 rows.
+**Storage shape:** none persisted. The page builds an in-memory index on the first palette open of a page load: every `snap:<id>` (read through `lib/snapstore.js`), every `shelf:<id>:<n>` chunk, `recentlyClosed`; one entry per (normalised URL), keeping the newest occurrence and a count. It is rebuilt on `storage.onChanged` for those keys (debounced 1 s). Scoring reuses `lib/palette.js` `textScore`; saved results rank below open tabs of equal score and are capped at 30 rows.
 
 **Permissions touched:** `storage` (read), `tabs` (`create`, `update` to focus). None new.
 
@@ -189,7 +196,7 @@ Settings version: `settings.autoDiscard.allow` (1.2) migrates once into `never` 
   [x] Research (10)  [x] Window 2 (4)          [Restore selected]
 ```
 
-Copy to clipboard uses `navigator.clipboard.writeText` from the click (the extension page's own origin; no `clipboardWrite` permission is needed for a user-gesture write in an extension page; verify in a real install, and fall back to a selected textarea with "press Ctrl+C" if it is refused).
+Copy to clipboard uses `navigator.clipboard.writeText` from the click, with no `clipboardWrite` permission; that is check 1 of the release plan's real-install checks. If the check fails, the button falls back to a selected textarea with "press Ctrl+C", and no permission is added.
 
 **Storage shape:** none. `lib/exporters.js` gains `toMarkdown(session, {title})` and `parseMarkdown(text)`, returning the same session object `parseImport` returns, so restore does not change.
 
@@ -210,19 +217,24 @@ Unit: from 70 to about 105 (`lib/discard-rule.js` planIdle, `lib/shelves.js`, `l
 ## Store
 
 - No new permission, so the upload asks no new justification. The `tabs` and `alarms` rows in section 5 of `docs/store/listing.md` gain "and closes tabs a rule you wrote shelves, after saving them" (`tabs`) and "runs your idle rules" (`alarms`). The single purpose sentence gains "files idle tabs onto local shelves by the user's rules".
-- What the reviewer will ask: why an extension closes tabs without a click. The answer in the listing and the justification: only rules the user wrote and previewed close tabs; every closed tab is saved to a local shelf first and listed in Recently closed; the default is off. The Web history disclosure stays (shelves are tab URLs and titles, stored locally); no new data type.
+- The store promise for 1.3 reads exactly: "Nothing is closed unless a rule you wrote says so". It replaces "nothing is ever closed" in the description, PRIVACY.md and the in-page note.
+- What the reviewer will ask: why an extension closes tabs without a click. The answer in the listing and the justification: only a rule the user wrote closes tabs, and only after the user ran its dry run and turned its switch on; every closed tab is saved to a local shelf first; the default is off. The Web history disclosure stays (shelves are tab URLs and titles, stored locally); no new data type.
 - PRIVACY.md: a Shelves bullet under What TabVault stores (name, the saved tabs, kept until you remove them), the idle rules under settings, and the Unload idle tabs bullet widened to rules (it reads the same tab details and keeps only the run record; shelving stores the tab's title, address and favicon address on the shelf you chose).
-- Screenshots: 03 becomes the rules block with a dry run open; 05 stays snapshots; a Compare view and the palette's Saved section replace 04 (duplicates, now three versions old) only if the owner agrees (assumption 5).
+- Screenshots (decided): 03 becomes the rules block with a dry run open; 04 (duplicates) is replaced by the palette's Saved section when 1.3 ships; 05 stays snapshots.
 
 ## Release plan
 
 - Version 1.3.0 "Shelf"; branch `feature/1.3-shelf`; built on Opus by the plan's tasks in this order: (1) `lib/exporters.js` Markdown and the scheme filter (smallest, no UI risk), (2) `lib/diff.js` and the Compare view, (3) `lib/saved-index.js` and the palette's Saved section, (4) `lib/shelves.js`, `planIdle`, the migration, the Settings rules block and the Shelves section. Each task with its unit tests first; e2e after each; Naqid reviews the branch before any merge, with feature 1 as the focus.
+- Real-install checks before the upload (no automation covers them):
+  1. Verify in a real install that `writeText` works from the options page without `clipboardWrite`.
+  2. A shelving rule at 15 minutes on a test site: the dry run lists the tabs, the switch unlocks, the tabs land on the shelf with their group and are closed, the active tab stays.
+  3. Restore a shelved item whose group is gone: the group is recreated with its title and colour.
 - The listing's NEW IN 1.3 block (CHANGES text):
 
 ```
 NEW IN 1.3
 • Shelves: named lists of saved tabs that are never rotated away. Move tabs to a shelf by hand, or write a rule.
-• Idle rules: per site, after the time you choose, unload the tab, shelve it (saved first, then closed), or never touch it. A new shelving rule stays off until you have seen its dry run, and at most 25 tabs are handled a run.
+• Idle rules: per site, after the time you choose, unload the tab, shelve it (saved first, then closed), or never touch it. Nothing is closed unless a rule you wrote says so: a shelving rule stays off until you have run its dry run and turned it on, and at most 25 tabs are handled a run.
 • Search everything you saved: the Alt+K palette now finds tabs in your snapshots, shelves and recently closed list, highlights the match, and opens one or all of them.
 • Compare a snapshot with now: see what is missing, what is new and what moved since then, and reopen just the missing tabs.
 • Markdown: export a window, a snapshot or a shelf as a list of links for your notes, and paste a list of links back in to open it as a window.
@@ -234,8 +246,8 @@ NEW IN 1.3
 ## Assumptions (Wakeel or the owner may overturn any)
 
 1. Four features: rules with shelves, compare, saved search, Markdown. Scheduled snapshots, rebinding and focus mode wait; the duplicate one-click is already shipped.
-2. A shelving rule is allowed to close tabs, behind the dry run, the 25 cap and the write-before-close; the listing promise changes to say so. If the owner keeps "nothing is ever closed" absolute, feature 1 ships with `unload` and `never` only and shelves are filled by hand.
+2. Ruled by Wakeel (2026-11-08): a shelving rule may save then close a tab only when the user turns that switch on per rule after running its dry run; the store promise reads "Nothing is closed unless a rule you wrote says so".
 3. The 1.2 allowlist becomes `never` rules (one migration, the old key kept one release).
 4. Saved search lists one row per URL (newest occurrence) rather than every snapshot's copy.
-5. Screenshot 04 (duplicates) is replaced by the palette's Saved section; 03 becomes the rules block.
+5. Ruled by Wakeel (2026-11-08): screenshot 04 (duplicates) is replaced by the palette's Saved section when 1.3 ships; 03 becomes the rules block.
 6. The version is 1.3.0, released after the 1.2.0 store review has passed (one package in review at a time).
