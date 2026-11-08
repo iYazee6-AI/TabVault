@@ -72,6 +72,14 @@ once the repository is public.
       Run workflow**, and was downloaded from the GitHub Release
       `v<manifest version>.<run number>` that the workflow created (for
       example `v1.0.0.7`). That zip is the upload. Never hand-make one.
+- [ ] If you upload the local package instead (section 2 allows it), check
+      it is the one built with the `v1.2.0` tag: `dist/tabvault-1.2.0.zip`,
+      415,960 bytes, SHA-256
+      `a9ea9bb801c39ccf75ce91f58ff2aec9069e88f5374686c4108e7b1cc6a5e541`
+      (`certutil -hashfile dist/tabvault-1.2.0.zip SHA256` or `sha256sum`).
+      Its 29 files match the `v1.2.0` tag (checked 2026-11-08, line endings
+      aside). A Release build zip has its own hash, since the run number is
+      stamped into its manifest.
 
 ## 2. Build the package
 
@@ -176,6 +184,10 @@ snapshot history is seeded through the extension's own `lib/snapstore.js`,
 the recently closed entries are real closes the worker recorded, and the
 "last run" line under Unload idle tabs reads a run record the script writes
 (a real run's `chrome.tabs.discard` crashes Playwright's Chromium).
+Regenerated for 1.2.0 on 2026-11-08 in Chromium's new headless mode
+(`TABVAULT_HEADLESS=1`; the other overrides, `TABVAULT_PLAYWRIGHT`,
+`TABVAULT_SHOTS_DIR` and `TABVAULT_TMP_DIR`, are described at the top of
+`tools/screenshots.js`); the promo tile came out byte for byte the same.
 
 **Additional fields**
 
@@ -235,6 +247,12 @@ the future?" Tick:
 | Web history | Yes | The addresses and titles of the tabs the user has open, of the tabs in each stored snapshot, and of the last 200 tabs the user closed (the recently closed list, which can be turned off and cleared). Written only to local extension storage; never transmitted. |
 | User activity | No | No clicks, keystrokes or analytics are recorded. |
 | Website content | No | No host permissions and no content scripts: the content of pages is never readable. |
+
+Unload idle tabs (1.2) adds nothing to this table: each run reads the tab
+details the `tabs` permission already gives (last used time, active,
+audible, pinned, group name, host), stores none of them, and keeps only the
+time of its last run and three counts in `chrome.storage.session`.
+`PRIVACY.md` says the same under "What TabVault does not store".
 
 Certifications (tick all three):
 
@@ -375,3 +393,29 @@ The three owner's source images ("ChatGPT Image Sep 23 ...", untracked) now sit 
 `docs/store/marketing-sources/`, not beside the store screenshots, so they are not
 uploaded by mistake. Upload only the five `0*-*.png` files in
 `docs/store/screenshots/` (the `marketing-0*` images are separate marketing art).
+
+## 13. The 1.2.0 kit refresh (2026-11-08)
+
+Checked against `manifest.json` as tagged `v1.2.0` (permissions `tabs`,
+`tabGroups`, `storage`, `unlimitedStorage`, `alarms`, `sidePanel`; no
+optional or host permissions), with every `chrome.*` call in `background.js`,
+`app/` and `lib/`: section 5 has one row per permission and none for an API
+that needs no permission (`windows`, `action`, `commands`, `runtime`).
+The description (section 4, 3,762 characters, plus the 925-character NEW IN
+1.2 block from section 12; the store allows 16,000) names the six Keeper
+features: unload idle tabs, the icon count, the side panel, recently closed,
+the command palette, save and close. The summary is 128 characters (132 max).
+
+What changed in this refresh: the five screenshots were captured again from
+the 1.2.0 code (same names and order as section 4), the local package's
+SHA-256 is in section 1, `PRIVACY.md` (effective 2026-11-08) says in so many
+words that Unload idle tabs touches no data, and section 5 says why it adds
+no data disclosure. Nothing in the package changed; the version stays 1.2.0.
+
+The upload is yours (section 12 has the order: package, the `sidePanel`
+justification, the five screenshots, the description with NEW IN 1.2 on top).
+Before it, the three hands-on checks no automation covers, in real Chrome
+with the package loaded unpacked: the side panel from ⋯ and from the palette,
+the `open-side-panel` command once bound at `chrome://extensions/shortcuts`,
+and Unload idle tabs at 15 minutes (`zz` on the idle tabs, the "last run"
+line, the active, playing and pinned tabs left loaded).

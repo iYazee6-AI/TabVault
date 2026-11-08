@@ -19,6 +19,8 @@ npm test        # node --test over lib/ with a fake chrome API
 npm run e2e     # Playwright harness, real extension in Chromium
 npm run pack    # dist/tabvault-<version>.zip
 npm run screenshots  # re-captures docs/store/ screenshots + promo tile (port 8771)
+                     # TABVAULT_HEADLESS=1, TABVAULT_PLAYWRIGHT, TABVAULT_SHOTS_DIR:
+                     # see the top of tools/screenshots.js
 ```
 
 ## Quality gates

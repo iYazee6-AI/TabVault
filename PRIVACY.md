@@ -1,6 +1,6 @@
 # TabVault Privacy Policy
 
-Effective date: 2026-11-07
+Effective date: 2026-11-08
 
 TabVault is a browser extension that shows every window and tab you have open
 in one page, and keeps local snapshots of your session so you can get it back.
@@ -43,6 +43,15 @@ whatever the pages you have open happen to be.
   bookmarks, or your browsing history. Only tabs that are open right now, the
   snapshots you have kept, and the recently closed list above are recorded.
 - It has no account, no login, and no identifier for you.
+- **Unload idle tabs** (off until you turn it on) touches no data of its own.
+  At each run it looks only at the tab details Chrome already gives a tab
+  manager (when each tab was last used, whether it is active, playing sound
+  or pinned, its group's name and its site's host name), keeps none of them,
+  and records only when it last ran and how many tabs it unloaded, could not
+  unload or left for the next run, in `chrome.storage.session`, which the
+  browser clears when it closes. It never reads a page, never stores which
+  tabs it unloaded, and sends nothing anywhere. An unloaded tab keeps its
+  address and title in its window, and nothing is ever closed.
 
 ## Where the data is kept
 
