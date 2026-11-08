@@ -39,3 +39,9 @@ test("sections group one window close; remove drops entries by id", () => {
   assert.equal(s[1].batch, "");
   assert.deepEqual(removeEntries([a, b, c], [a.id, c.id]).map((e) => e.url), ["https://b.com/"]);
 });
+
+test("a shelved tab is recorded once, tagged with its shelf (1.3)", () => {
+  const e = closedEntry({ url: "https://a.com/", title: "A" }, { shelf: { id: "s1", name: "Reading later", extra: 1 } });
+  assert.deepEqual(e.shelf, { id: "s1", name: "Reading later" });
+  assert.equal("shelf" in closedEntry({ url: "https://b.com/" }), false);
+});

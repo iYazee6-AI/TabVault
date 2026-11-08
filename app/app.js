@@ -25,6 +25,10 @@
     failedFavicons: new Map(),
     recent: [],
     recentOpen: false,
+    shelves: [],
+    shelvesOpen: false,
+    openShelves: new Set(),
+    confirmDeleteShelf: null,
     // "panel" when loaded as the side panel (?panel=1), else "page".
     layout: new URLSearchParams(location.search).get("panel") === "1" ? "panel" : "page",
     panelSeen: new Set(),
@@ -368,7 +372,7 @@
       el("p", {}, "No other windows are open. TabVault lists every tab except its own."),
       el("div", { class: "links" },
         el("button", { type: "button", onclick: () => openDialog("snapshots") }, "Snapshots"),
-        el("button", { type: "button", onclick: () => $("import-file").click() }, "Import")));
+        el("button", { type: "button", onclick: () => openDialog("import") }, "Import")));
   }
 
   // Rendered once from the shortcut table; its text reads exactly TV.hintText().
@@ -417,6 +421,7 @@
       favicon({ id: `recent-${e.id}`, favIconUrl: e.favIconUrl }, domain),
       el("span", { class: "rtitle" }, e.title || e.url),
       e.groupTitle ? el("span", { class: "when", title: "Group" }, e.groupTitle) : null,
+      e.shelf ? el("span", { class: "when shelved", title: "Saved to this shelf, then closed" }, `shelved to ${e.shelf.name}`) : null,
       el("span", { class: "domain mono" }, domain),
       el("span", { class: "when mono", title: new Date(e.closedAt).toLocaleString() }, clockTime(e.closedAt)),
       el("button", { type: "button", class: "reopen", title: "Reopen in this window", onclick: () => reopenEntries([e], false) }, "Reopen"));
@@ -440,6 +445,107 @@
           el("button", { type: "button", class: "reopen-all", title: "Reopen these tabs in a new window", onclick: () => reopenEntries(s.entries, true) }, "Reopen all")),
         ...s.entries.map(recentRow))];
     }));
+  }
+
+  // ---- shelves (1.3) -----------------------------------------------------------
+  // Named lists of saved tabs (lib/shelves.js), listed under Recently closed, collapsed by
+  // default. The page reads them; every write goes through the worker (shelfRemoveItems,
+  // shelfDelete, shelveTabs). Opening an item keeps it on the shelf unless "Open and remove".
+  async function loadShelves() {
+    const area = chrome.storage.local;
+    const metas = await TV.listShelves(area).catch(() => []);
+    const out = [];
+    for (const m of metas) out.push({ ...m, items: await TV.readShelf(area, m.id).catch(() => []) });
+    state.shelves = out;
+    renderShelves();
+  }
+  let shelvesTimer = null;
+  function scheduleShelves() { clearTimeout(shelvesTimer); shelvesTimer = setTimeout(() => loadShelves().catch(console.error), 150); }
+
+  // Into this window (the item's group joined or recreated by title and colour), or every item
+  // in one new window through the restore path (lazy when lazy restore is on).
+  async function openShelfItems(shelf, items, { newWindow = false } = {}) {
+    if (newWindow || state.currentWindowId === null) {
+      const r = await window.TabVaultApp.restoreSession(TV.shelfToSession(shelf, items), [1], () => {});
+      if (r.errors.length) toast(`Opened with errors: ${r.errors[0]}`);
+      return;
+    }
+    const windowId = state.currentWindowId;
+    const groups = chrome.tabGroups ? await chrome.tabGroups.query({ windowId }) : [];
+    const made = new Map();
+    for (const target of TV.groupTargets(items, groups)) {
+      const tab = await chrome.tabs.create({ windowId, url: target.item.url, active: false });
+      if (!chrome.tabGroups) continue;
+      if (target.groupId !== null) { await chrome.tabs.group({ tabIds: [tab.id], groupId: target.groupId }); continue; }
+      if (!target.newKey) continue;
+      if (made.has(target.newKey)) { await chrome.tabs.group({ tabIds: [tab.id], groupId: made.get(target.newKey) }); continue; }
+      const gid = await chrome.tabs.group({ tabIds: [tab.id], createProperties: { windowId } });
+      await chrome.tabGroups.update(gid, { title: target.item.group.title, color: target.item.group.color || "grey" });
+      made.set(target.newKey, gid);
+    }
+  }
+  async function removeShelfItems(shelf, ids) {
+    const r = await chrome.runtime.sendMessage({ type: "shelfRemoveItems", shelfId: shelf.id, itemIds: ids }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) toast(`Could not remove: ${r && r.error}`);
+  }
+  function shelfRow(shelf, item) {
+    const domain = TV.domainOf(item.url);
+    const open = (remove) => openShelfItems(shelf, [item]).then(() => (remove ? removeShelfItems(shelf, [item.id]) : null)).then(() => toast(remove ? "Opened and removed from the shelf" : "Opened"), (e) => toast(`Could not open: ${e.message || e}`));
+    return el("div", { class: "rrow srow", title: item.url, dataset: { item: item.id } },
+      favicon({ id: `shelf-${item.id}`, favIconUrl: item.favIconUrl }, domain),
+      el("span", { class: "rtitle" }, item.title || item.url),
+      item.group ? el("span", { class: "when", title: "Group" }, item.group.title || "(unnamed group)") : null,
+      el("span", { class: "domain mono" }, domain),
+      el("span", { class: "when mono", title: new Date(item.savedAt).toLocaleString() }, clockTime(item.savedAt)),
+      el("button", { type: "button", class: "s-open", title: "Open in this window; it stays on the shelf", onclick: () => open(false) }, "Open"),
+      el("button", { type: "button", class: "s-open-remove", title: "Open in this window and take it off the shelf", onclick: () => open(true) }, "Open and remove"),
+      iconButton("×", "Remove from the shelf", () => removeShelfItems(shelf, [item.id]), "s-remove"));
+  }
+  function renderShelves() {
+    const list = state.shelves;
+    const open = state.shelvesOpen && list.length > 0;
+    $("shelves").hidden = list.length === 0;
+    $("shelves-count").textContent = String(list.length);
+    $("shelves-toggle").setAttribute("aria-expanded", String(open));
+    $("shelves-toggle").querySelector(".caret").textContent = open ? "▾" : "▸";
+    $("shelves-list").hidden = !open;
+    if (!open) { $("shelves-list").replaceChildren(); return; }
+    const rules = state.settings.idleRules || [];
+    $("shelves-list").replaceChildren(...list.map((sh) => {
+      const n = sh.items.length;
+      const expanded = state.openShelves.has(sh.id);
+      const from = rules.filter((r) => r.shelfId === sh.id).map((r) => `"${r.pattern}"`);
+      const confirming = state.confirmDeleteShelf === sh.id;
+      const del = el("button", { type: "button", class: confirming ? "s-delete danger" : "s-delete", title: "Delete this shelf", onclick: async () => {
+        if (n && !confirming) { state.confirmDeleteShelf = sh.id; renderShelves(); return; }
+        state.confirmDeleteShelf = null;
+        const r = await chrome.runtime.sendMessage({ type: "shelfDelete", shelfId: sh.id }).catch((e) => ({ ok: false, error: e.message }));
+        if (!r || !r.ok) { toast(`Could not delete: ${r && r.error}`); renderShelves(); } else toast("Shelf deleted");
+      } }, confirming ? `Delete ${n} tab${n === 1 ? "" : "s"}?` : "Delete");
+      return el("div", { class: "rbatch shelf", dataset: { shelf: sh.id } },
+        el("div", { class: "bhead" },
+          iconButton(expanded ? "▾" : "▸", expanded ? "Hide the tabs on this shelf" : "Show the tabs on this shelf", () => { expanded ? state.openShelves.delete(sh.id) : state.openShelves.add(sh.id); renderShelves(); }, "s-toggle"),
+          el("span", { class: "btitle" }, `${sh.name} · ${n} tab${n === 1 ? "" : "s"}${from.length ? ` · from rule ${from.join(", ")}` : ""}`),
+          el("button", { type: "button", class: "s-open-all", disabled: n ? null : "", title: "Open every tab of this shelf in a new window", onclick: () => openShelfItems(sh, sh.items, { newWindow: true }).then(() => toast(`Opened ${n} tab${n === 1 ? "" : "s"}`), (e) => toast(`Could not open: ${e.message || e}`)) }, "Open all"),
+          el("button", { type: "button", class: "s-export", onclick: () => openDialog("export", { what: "shelf", shelfId: sh.id }) }, "Export"),
+          del),
+        ...(expanded ? sh.items.slice().reverse().map((it) => shelfRow(sh, it)) : []));
+    }));
+  }
+
+  // "Move to shelf…": the selection bar's menu lists the shelves; New shelf asks for a name.
+  function fillShelfMenu(menu) {
+    menu.replaceChildren(
+      ...state.shelves.map((sh) => el("button", { type: "button", role: "menuitem", dataset: { shelf: sh.id } }, sh.name)),
+      el("button", { type: "button", role: "menuitem", dataset: { shelf: "new" } }, "New shelf…"));
+  }
+  async function moveToShelf(tabIds, shelfId) {
+    const ids = tabIds.filter((id) => windowForTab(id));
+    if (!ids.length) { toast("Select the tabs to shelve first"); return; }
+    const r = await chrome.runtime.sendMessage({ type: "shelveTabs", tabIds: ids, shelfId }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) { toast(`Could not shelve: ${r && r.error}`); return; }
+    for (const id of ids) state.selected.delete(id);
+    toast(r.failed ? `Shelved ${r.shelved}; ${r.failed} could not be saved and stay open` : `Shelved ${r.shelved} tab${r.shelved === 1 ? "" : "s"} and closed ${r.shelved === 1 ? "it" : "them"}`);
   }
 
   function selectedTabs() {
@@ -744,11 +850,15 @@
     { id: "discardIdle", label: "Discard idle tabs now", run: () => discardIdleNow() },
     { id: "export", label: "Export", run: () => openDialog("export") },
     { id: "snapshots", label: "Snapshots", run: () => openDialog("snapshots") },
+    { id: "compare", label: "Compare latest snapshot with now", run: () => openDialog("compare") },
+    { id: "import", label: "Import (file or pasted links)", run: () => openDialog("import") },
     { id: "settings", label: "Settings", run: () => openDialog("settings") },
     { id: "sidePanel", label: "Open side panel", run: () => openSidePanel(), when: () => canOpenPanel() },
     { id: "saveCloseAll", label: "Save and close all windows", run: () => confirmSaveClose(state.session.windows.map((w) => w.id)) },
+    { id: "moveToShelf", label: "Move selected tabs to a shelf", run: () => (state.selected.size ? openDialog("moveToShelf", { tabIds: selection() }) : toast("Select the tabs to shelve first")) },
+    { id: "shelves", label: "Show shelves", run: () => { state.shelvesOpen = true; renderShelves(); if (state.shelves.length) $("shelves").scrollIntoView({ block: "nearest" }); else toast("No shelves yet: add one with Move to shelf or an idle rule in Settings"); } },
   ];
-  const palette = { open: false, rows: [], index: 0, returnFocus: null };
+  const palette = { open: false, rows: [], index: 0, returnFocus: null, confirmAll: false };
 
   // The side panel (Chrome 116+, the sidePanel permission). chrome.sidePanel.open must run inside
   // the click or key press, so it is called without awaiting anything first.
@@ -776,10 +886,45 @@
   function paletteCommands() {
     return PALETTE_COMMANDS.filter((c) => !c.when || c.when());
   }
+
+  // ---- saved search (1.3) -------------------------------------------------------------
+  // The index of everything saved (snapshots, shelves, recently closed) lives in memory only:
+  // built on the first palette open of a page load, rebuilt (debounced 1 s) when those keys change.
+  const saved = { index: null, dirty: true, building: null, timer: null };
+  async function buildSaved() {
+    const area = chrome.storage.local;
+    const metas = await TV.listSnapshots(area).catch(() => []);
+    const keys = metas.map((m) => TV.snapshotKey(m.id));
+    const got = keys.length ? await area.get(keys).catch(() => ({})) : {};
+    const snapshots = metas.map((m) => got[TV.snapshotKey(m.id)]).filter(Boolean);
+    const shelves = [];
+    for (const sh of await TV.listShelves(area).catch(() => [])) shelves.push({ ...sh, items: await TV.readShelf(area, sh.id).catch(() => []) });
+    saved.index = TV.buildSavedIndex({ snapshots, shelves, recent: state.recent }, { ignoreHash: state.settings.ignoreHash !== false });
+    saved.dirty = false;
+  }
+  function ensureSaved() {
+    if (saved.index && !saved.dirty) return Promise.resolve();
+    if (!saved.building) saved.building = buildSaved().catch(console.error).finally(() => { saved.building = null; });
+    return saved.building;
+  }
+  function savedChanged() {
+    saved.dirty = true;
+    if (!saved.index) return; // never built in this page load: the first palette open builds it
+    clearTimeout(saved.timer);
+    saved.timer = setTimeout(() => ensureSaved().then(() => { if (palette.open) drawPalette(true); }), 1000);
+  }
+
   function paletteRows(query) {
-    const actions = TV.paletteActions(TV.SHORTCUTS, paletteCommands());
-    const tabs = state.session.windows.flatMap((w) => w.tabs.map((tab) => ({ tab, windowId: w.id, windowLabel: windowLabel(w) })));
-    return TV.filterPalette(query, actions, tabs, { domainOf: TV.domainOf });
+    const { scope, text } = TV.parsePaletteQuery(query);
+    const actions = scope === "all" || scope === "actions" ? TV.paletteActions(TV.SHORTCUTS, paletteCommands()) : [];
+    const tabs = scope === "all" || scope === "tabs" ? state.session.windows.flatMap((w) => w.tabs.map((tab) => ({ tab, windowId: w.id, windowLabel: windowLabel(w) }))) : [];
+    const rows = scope === "saved" ? [] : TV.filterPalette(text, actions, tabs, { domainOf: TV.domainOf });
+    if ((scope === "all" || scope === "saved") && saved.index) {
+      const found = TV.searchSaved(saved.index, text);
+      rows.push(...found);
+      if (found.length >= 2) rows.push({ kind: "openAll", entries: found.map((r) => r.entry) });
+    }
+    return rows;
   }
   function openPalette() {
     if (palette.open) { $("palette-input").select(); return; }
@@ -790,56 +935,136 @@
     $("palette-input").value = "";
     drawPalette();
     $("palette-input").focus();
+    ensureSaved().then(() => { if (palette.open && $("palette-input").value.trim()) drawPalette(true); });
   }
   function closePalette(refocus = true) {
     if (!palette.open) return;
     palette.open = false;
+    palette.confirmAll = false;
     $("palette-backdrop").hidden = true;
     $("palette-list").replaceChildren();
     const back = palette.returnFocus;
     palette.returnFocus = null;
     if (refocus && back && back.isConnected && typeof back.focus === "function") back.focus();
   }
-  function drawPalette() {
+  // keep: keep the highlighted row where it is (the saved index arrived after typing).
+  function drawPalette(keep = false) {
+    const before = keep ? palette.index : 0;
     palette.rows = paletteRows($("palette-input").value);
-    palette.index = 0;
+    palette.index = Math.min(before, Math.max(0, palette.rows.length - 1));
+    palette.confirmAll = false;
     renderPaletteList();
+  }
+  // Title text with the query words in <mark>, built from text nodes (lib/palette.js ranges).
+  function markedText(text, cls) {
+    // A one-letter word matches nearly every row; it is not highlighted.
+    const words = TV.terms(TV.parsePaletteQuery($("palette-input").value).text).filter((w) => w.length > 1);
+    const span = el("span", { class: cls });
+    let at = 0;
+    for (const [s, e] of TV.highlightRanges(text, words)) {
+      if (s > at) span.append(text.slice(at, s));
+      span.append(el("mark", {}, text.slice(s, e)));
+      at = e;
+    }
+    if (at < text.length) span.append(text.slice(at));
+    return span;
   }
   function renderPaletteList() {
     const list = $("palette-list");
     if (!palette.rows.length) {
-      list.replaceChildren(el("div", { class: "pempty" }, "No action or tab matches."));
+      const q = $("palette-input").value.trim();
+      list.replaceChildren(el("div", { class: "pempty" }, q && !saved.index ? "Searching saved tabs…" : "No action, tab or saved tab matches."));
       $("palette-input").removeAttribute("aria-activedescendant");
       return;
     }
-    list.replaceChildren(...palette.rows.map((r, i) => {
+    // With saved matches, the ranked actions and open tabs get a heading above them, then Saved.
+    const hasSaved = palette.rows.some((r) => r.kind === "saved");
+    const live = palette.rows.filter((r) => r.kind === "action" || r.kind === "tab");
+    const liveLabel = live.some((r) => r.kind === "action") ? (live.some((r) => r.kind === "tab") ? "Actions and open tabs" : "Actions") : "Open tabs";
+    const nodes = [];
+    let shownTabs = false;
+    let shownSaved = false;
+    palette.rows.forEach((r, i) => {
+      if ((r.kind === "tab" || r.kind === "action") && hasSaved && !shownTabs) { shownTabs = true; nodes.push(el("div", { class: "psection", role: "presentation" }, liveLabel)); }
+      if (r.kind === "saved" && !shownSaved) { shownSaved = true; nodes.push(el("div", { class: "psection", role: "presentation" }, "Saved")); }
       const on = i === palette.index;
-      const id = `palette-row-${i}`;
-      const attrs = { id, class: `prow${on ? " on" : ""}`, role: "option", "aria-selected": String(on), dataset: { kind: r.kind, index: String(i) } };
+      const attrs = { id: `palette-row-${i}`, class: `prow${on ? " on" : ""}`, role: "option", "aria-selected": String(on), dataset: { kind: r.kind, index: String(i) } };
       if (r.kind === "action") {
         attrs.dataset.action = r.action.id;
-        return el("div", attrs,
+        nodes.push(el("div", attrs,
           el("span", { class: "pkind", "aria-hidden": "true" }, "›"),
-          el("span", { class: "plabel" }, r.action.label),
-          el("span", { class: "pkeys" }, ...r.action.keys.map((k) => el("kbd", {}, k))));
+          markedText(r.action.label, "plabel"),
+          el("span", { class: "pkeys" }, ...r.action.keys.map((k) => el("kbd", {}, k)))));
+        return;
       }
-      const domain = TV.domainOf(r.tab.url);
-      attrs.dataset.tab = String(r.tab.id);
-      return el("div", attrs,
-        favicon(r.tab, domain),
-        el("span", { class: "plabel" }, r.tab.title || r.tab.url),
-        el("span", { class: "pwin" }, r.windowLabel.slice(0, 30)),
-        el("span", { class: "domain mono" }, domain));
-    }));
+      if (r.kind === "tab") {
+        const domain = TV.domainOf(r.tab.url);
+        attrs.dataset.tab = String(r.tab.id);
+        nodes.push(el("div", attrs,
+          favicon(r.tab, domain),
+          markedText(r.tab.title || r.tab.url, "plabel"),
+          el("span", { class: "pwin" }, r.windowLabel.slice(0, 30)),
+          el("span", { class: "domain mono" }, domain)));
+        return;
+      }
+      if (r.kind === "saved") {
+        const e = r.entry;
+        const domain = TV.domainOf(e.url);
+        attrs.dataset.url = e.url;
+        attrs.title = e.url;
+        nodes.push(el("div", attrs,
+          favicon({ id: `saved-${i}`, favIconUrl: e.favIconUrl }, domain),
+          markedText(e.title || e.url, "plabel"),
+          el("span", { class: "pwin" }, e.where.label),
+          e.count > 1 ? el("span", { class: "polder mono" }, `+${e.count - 1} older`) : null));
+        return;
+      }
+      const n = r.entries.length;
+      nodes.push(el("div", attrs,
+        el("span", { class: "pkind", "aria-hidden": "true" }, "↳"),
+        el("span", { class: "plabel" }, palette.confirmAll ? `Open ${n} tabs? Press Enter again to open them` : `Open all ${n} saved matches in a new window`)));
+    });
+    list.replaceChildren(...nodes);
     $("palette-input").setAttribute("aria-activedescendant", `palette-row-${palette.index}`);
     const current = list.querySelector(".prow.on");
     if (current) current.scrollIntoView({ block: "nearest" });
   }
-  function runPaletteRow(i) {
+
+  // A saved tab: focus it when the same URL is open, else open it here (or in a new window).
+  async function openSaved(entry, newWindow) {
+    const ignoreHash = state.settings.ignoreHash !== false;
+    const key = TV.normalizeUrl(entry.url, { ignoreHash });
+    if (!newWindow) {
+      for (const w of state.session.windows) {
+        const t = w.tabs.find((x) => TV.normalizeUrl(x.url, { ignoreHash }) === key);
+        if (t) { await focusTab(t.id, w.id); return; }
+      }
+      const props = { url: entry.url, active: true };
+      if (state.currentWindowId !== null) props.windowId = state.currentWindowId;
+      await chrome.tabs.create(props);
+      return;
+    }
+    await chrome.windows.create({ url: entry.url, focused: true });
+  }
+  // Every saved match in one new window, unloaded when lazy restore is on (the restore path).
+  async function openAllSaved(entries) {
+    const session = { schema: 1, windows: [{ id: 1, type: "normal", state: "normal", incognito: false, bounds: { left: 0, top: 0, width: 0, height: 0 }, groups: [], tabs: entries.map((e, i) => ({ id: i + 1, index: i, url: e.url, title: e.title, pinned: false, muted: false, groupId: null })) }] };
+    const r = await window.TabVaultApp.restoreSession(session, [1], () => {});
+    toast(`Opened ${r.tabs} saved tab${r.tabs === 1 ? "" : "s"} in a new window${r.errors.length ? `; ${r.errors.length} error${r.errors.length === 1 ? "" : "s"}` : ""}`);
+  }
+
+  function runPaletteRow(i, { newWindow = false } = {}) {
     const r = palette.rows[i];
     if (!r) return;
+    if (r.kind === "openAll" && TV.openAllNeedsConfirm(r.entries.length) && !palette.confirmAll) {
+      palette.confirmAll = true;
+      renderPaletteList();
+      return;
+    }
     closePalette(false);
     if (r.kind === "tab") { focusTab(r.tab.id, r.windowId).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
+    if (r.kind === "saved") { openSaved(r.entry, newWindow).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
+    if (r.kind === "openAll") { openAllSaved(r.entries).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
     const command = PALETTE_COMMANDS.find((c) => c.id === r.action.id);
     const stand = { target: document.body, preventDefault() {} };
     if (command) Promise.resolve(command.run(stand)).catch((e) => toast(`${r.action.label} failed: ${e.message || e}`));
@@ -858,7 +1083,7 @@
         renderPaletteList();
         return;
       }
-      if (e.key === "Enter") { e.preventDefault(); runPaletteRow(palette.index); }
+      if (e.key === "Enter") { e.preventDefault(); runPaletteRow(palette.index, { newWindow: e.shiftKey }); }
     });
     $("palette-list").addEventListener("click", (e) => {
       const row = e.target.closest(".prow");
@@ -895,11 +1120,20 @@
     $("sel-group").addEventListener("click", () => groupOrUngroupSelection());
     $("sel-pin").addEventListener("click", () => togglePinSelection());
     $("sel-discard").addEventListener("click", () => forEachSelected((id) => chrome.tabs.discard(id)));
+    $("shelf-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("shelf-menu", fillShelfMenu); });
+    $("shelf-menu").addEventListener("click", (e) => {
+      const item = e.target.closest("button[data-shelf]");
+      if (!item) return;
+      closeMenus();
+      if (item.dataset.shelf === "new") openDialog("moveToShelf", { tabIds: selection() });
+      else moveToShelf(selection(), item.dataset.shelf).catch((err) => toast(`Could not shelve: ${err.message || err}`));
+    });
+    $("shelves-toggle").addEventListener("click", () => { state.shelvesOpen = !state.shelvesOpen; renderShelves(); });
     $("sel-close").addEventListener("click", () => chrome.tabs.remove(selection()).catch((e) => toast(`Could not close: ${e.message || e}`)));
     $("sel-clear").addEventListener("click", clearSelection);
     $("btn-dupes").addEventListener("click", () => openDialog("duplicates"));
     $("btn-export").addEventListener("click", () => openDialog("export"));
-    $("btn-import").addEventListener("click", () => $("import-file").click());
+    $("btn-import").addEventListener("click", () => openDialog("import"));
     $("import-file").addEventListener("change", async (e) => {
       const f = e.target.files[0];
       e.target.value = "";
@@ -918,6 +1152,11 @@
       if (area !== "local") return;
       if (changes[TV.WINDOW_NAMES_KEY]) scheduleRefresh();
       if (changes[TV.RECENT_KEY]) loadRecent().catch(console.error);
+      if (Object.keys(changes).some((k) => k === TV.SHELF_INDEX_KEY || k.startsWith("shelf:"))) scheduleShelves();
+      // Settings written elsewhere (the worker's 1.3 migration, another TabVault page) are taken
+      // over, so a later save here never writes back a stale copy.
+      if (changes.settings) { state.settings = TV.withDefaults(changes.settings.newValue); applySettings(); renderShelves(); }
+      if (Object.keys(changes).some((k) => k === TV.RECENT_KEY || k === TV.SNAP_INDEX_KEY || k.startsWith("snap:") || k === TV.SHELF_INDEX_KEY || k.startsWith("shelf:"))) savedChanged();
     });
     $("recent-toggle").addEventListener("click", () => { state.recentOpen = !state.recentOpen; renderRecent(); });
     $("recent-clear").addEventListener("click", () => chrome.runtime.sendMessage({ type: "recentClear" }).then(() => toast("Recently closed cleared"), (e) => toast("Could not clear: " + (e.message || e))));
@@ -939,7 +1178,9 @@
 
   window.TabVaultApp = {
     getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel, openPalette,
+    selectTabs: (ids) => { for (const id of ids) state.selected.add(id); render(); },
+    moveToShelf, getShelves: () => state.shelves,
   };
 
-  loadSettings().then(refresh).then(wire).then(loadRecent).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
+  loadSettings().then(refresh).then(wire).then(loadRecent).then(loadShelves).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
 })();
