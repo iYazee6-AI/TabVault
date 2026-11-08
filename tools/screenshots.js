@@ -16,7 +16,14 @@
 // the two must never collide) and Chromium is told to resolve *.example.com to
 // that server, so the tab URLs read like ordinary sites instead of localhost.
 
-const { chromium } = require("playwright");
+// Overrides (all optional), so a house run can use one shared Playwright and
+// write the PNGs to a review folder before they are copied into the kit:
+//   TABVAULT_PLAYWRIGHT  path of the playwright package to require
+//   TABVAULT_SHOTS_DIR   folder for the five screenshots and the promo tile
+//   TABVAULT_TMP_DIR     folder for the unpacked copy and the browser profile
+//   TABVAULT_HEADLESS=1  run the new headless mode (channel "chromium",
+//                        which loads extensions) instead of a visible window
+const { chromium } = require(process.env.TABVAULT_PLAYWRIGHT || "playwright");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -24,12 +31,13 @@ const { pathToFileURL } = require("url");
 const zlib = require("zlib");
 
 const REPO = path.join(__dirname, "..");
-const TMP = path.join(REPO, "tools", ".tmp");
+const TMP = process.env.TABVAULT_TMP_DIR || path.join(REPO, "tools", ".tmp");
 const EXT_DIR = path.join(TMP, "ext");
 const USER_DATA_DIR = path.join(TMP, "userdata");
-const SHOTS = path.join(REPO, "docs", "store", "screenshots");
+const SHOTS = process.env.TABVAULT_SHOTS_DIR || path.join(REPO, "docs", "store", "screenshots");
 const PROMO_HTML = path.join(REPO, "docs", "store", "promo-tile.html");
-const PROMO_PNG = path.join(REPO, "docs", "store", "promo-tile-440x280.png");
+const PROMO_PNG = process.env.TABVAULT_SHOTS_DIR ? path.join(process.env.TABVAULT_SHOTS_DIR, "promo-tile-440x280.png") : path.join(REPO, "docs", "store", "promo-tile-440x280.png");
+const HEADLESS = process.env.TABVAULT_HEADLESS === "1";
 
 const PORT = 8771;
 const WIDTH = 1280;
@@ -243,7 +251,8 @@ async function main() {
 
   try {
     context = await chromium.launchPersistentContext(USER_DATA_DIR, {
-      headless: false,
+      headless: HEADLESS,
+      ...(HEADLESS ? { channel: "chromium" } : {}),
       viewport: { width: WIDTH, height: HEIGHT },
       colorScheme: "light",
       args: [
@@ -251,6 +260,8 @@ async function main() {
         "--load-extension=" + EXT_DIR,
         "--host-resolver-rules=MAP *.example.com 127.0.0.1:" + PORT,
         "--window-size=1400,980",
+        // headless has a small virtual screen; windows.create bounds must fit it
+        ...(HEADLESS ? ["--screen-info={0,0 1920x1200}"] : []),
       ],
     });
 
