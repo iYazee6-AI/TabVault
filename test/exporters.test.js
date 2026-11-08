@@ -167,10 +167,23 @@ test("an empty or junk paste gives a clear error and nothing to open", () => {
 
 test("fix 6: a link whose destination is followed by text is dropped, not cut; the scan stays linear", () => {
   const s = parseMarkdown(["- [x](https://a.com/a b)", "- [y](https://b.com/)", '- [z](https://c.com/ "a title")'].join(NL));
-  assert.deepEqual(s.windows[0].tabs.map((t) => t.url), ["https://b.com/"]);
+  assert.deepEqual(s.windows[0].tabs.map((t) => t.url), ["https://b.com/", "https://c.com/"], "the quoted title is kept, the bare space dropped");
+  assert.equal(s.windows[0].tabs[1].title, "z");
   assert.throws(() => parseMarkdown("- [x](https://a.com/a b)"), /no links/i);
   const hostile = "[".repeat(40000) + "](" + "(".repeat(40000) + " " + "x](y".repeat(20000);
   const started = Date.now();
   assert.throws(() => parseMarkdown(hostile), /no links/i);
   assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
+});
+
+test("a link with a quoted title is kept (as notes apps write it); anything else after the destination drops it", () => {
+  const Q = String.fromCharCode(34);
+  const s = parseMarkdown([
+    "- [Single](https://k.com/a  'x')",
+    `- [Titled](https://t.com/p ${Q}The page${Q}) (pinned)`,
+    `- [Nospace](https://n.com/${Q}x${Q})`,
+    `- [Unclosed](https://u.com/ ${Q}open title)`,
+    `- [Trailing](https://r.com/ ${Q}t${Q} more)`,
+  ].join(NL));
+  assert.deepEqual(s.windows[0].tabs.map((t) => [t.url, t.pinned]), [["https://t.com/p", true], [`https://n.com/${Q}x${Q}`, false]]);
 });
