@@ -137,12 +137,15 @@
     .tab:hover .close, .tab:focus-within .close, .tab.cursor .close { visibility: visible; }
     .tab.dragover { box-shadow: inset 0 2px 0 var(--p); }
     /* == recent == */
-    #recent { margin-top: 16px; background: var(--g2); border: 1px solid var(--l); border-radius: 10px; }
-    #recent .rhead { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
-    #recent .rtoggle { flex: 1; text-align: left; color: var(--t); font-weight: 500; padding: 2px 6px; }
-    #recent .rtoggle .caret { display: inline-block; width: 12px; color: var(--t2); }
-    #recent-count { font-size: 11px; color: var(--t2); font-variant-numeric: tabular-nums; margin-left: 4px; }
+    #recent, #shelves { margin-top: 16px; background: var(--g2); border: 1px solid var(--l); border-radius: 10px; }
+    #recent .rhead, #shelves .rhead { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+    #recent .rtoggle, #shelves .rtoggle { flex: 1; text-align: left; color: var(--t); font-weight: 500; padding: 2px 6px; }
+    #recent .rtoggle .caret, #shelves .rtoggle .caret { display: inline-block; width: 12px; color: var(--t2); }
+    #recent-count, #shelves-count { font-size: 11px; color: var(--t2); font-variant-numeric: tabular-nums; margin-left: 4px; }
     #recent button.small { padding: 2px 8px; font-size: 12px; }
+    #shelves-list { border-top: 1px solid var(--l); padding: 4px 0; max-height: 60vh; overflow: auto; }
+    .shelf .bhead button.icon { padding: 0 4px; }
+    .rrow .shelved { color: var(--pText); }
     #recent-list { border-top: 1px solid var(--l); padding: 4px 0; max-height: 50vh; overflow: auto; }
     .rbatch { margin: 4px 4px 2px; }
     .rbatch .bhead { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 10px; background: var(--g3); border-radius: 5px; font-weight: 500; }
@@ -186,6 +189,10 @@
     .prow .pwin, .prow .domain { flex: none; max-width: 28%; font-size: 11px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .prow .pkeys kbd + kbd { margin-left: 4px; }
     .pempty { padding: 12px; color: var(--t2); }
+    .psection { padding: 8px 8px 2px; font: 500 10.5px var(--mono); font-synthesis: none; letter-spacing: .06em; text-transform: uppercase; color: var(--t2); }
+    .prow mark { background: var(--pSoft); color: var(--pText); border-radius: 2px; }
+    .prow.on mark { background: transparent; text-decoration: underline; }
+    .prow .polder { flex: none; font-size: 10.5px; color: var(--t2); }
     .phint { padding: 6px 12px; border-top: 1px solid var(--l); color: var(--t2); font-size: 11px; }
     .menu kbd { margin-left: 8px; color: var(--t2); }
     /* == dialogs == */
@@ -215,6 +222,15 @@
     #dialog h2 .version { font: 500 12px var(--mono); color: var(--t2); margin-left: 4px; }
     #dialog ul.links { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
     #dialog a { color: var(--pText); }
+    #dialog .rules { display: flex; flex-direction: column; gap: 6px; }
+    #dialog .rule, #dialog .rule-editor { border: 1px solid var(--l); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
+    #dialog .rule-editor { border-color: var(--p); }
+    #dialog .rule-main .rule-pattern { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #dialog .rule-main .rule-after { color: var(--t2); }
+    #dialog .rule-tools { gap: 4px; }
+    #dialog .rule-dry-out p, #dialog #rule-dry-result p { margin: 0; }
+    #dialog .dry-list { font-size: 11.5px; }
+    #dialog .rules-head strong { flex: 1; font-weight: 500; }
     #dialog .crow { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 2px 4px; border-bottom: 1px solid var(--l); }
     #dialog .crow .ctitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #dialog .crow .domain, #dialog .crow .cwhere { flex: none; max-width: 30%; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -257,6 +273,12 @@
       </div>
       <div id="recent-list" hidden></div>
     </section>
+    <section id="shelves" aria-label="Shelves" hidden>
+      <div class="rhead">
+        <button id="shelves-toggle" type="button" class="icon rtoggle" aria-expanded="false" aria-controls="shelves-list" title="Show shelves" aria-label="Show shelves"><span class="caret">▸</span> Shelves <span id="shelves-count" class="mono"></span></button>
+      </div>
+      <div id="shelves-list" hidden></div>
+    </section>
     <div id="selbar" role="toolbar" aria-label="Selected tabs" hidden>
       <span id="selcount" class="mono"></span>
       <div class="menu-wrap up">
@@ -266,6 +288,10 @@
       <button id="sel-group" type="button">Group</button>
       <button id="sel-pin" type="button">Pin</button>
       <button id="sel-discard" type="button">Discard</button>
+      <div class="menu-wrap up">
+        <button id="shelf-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="shelf-menu" title="Save the selected tabs to a shelf, then close them">Move to shelf ▾</button>
+        <div id="shelf-menu" class="menu" role="menu" hidden></div>
+      </div>
       <button id="sel-close" type="button">Close</button>
       <button id="sel-clear" type="button" class="esc" title="Clear selection (Esc)" aria-label="Clear selection (Esc)"><kbd>Esc</kbd> to clear</button>
     </div>
@@ -274,9 +300,9 @@
   <div id="dialog-backdrop" hidden><div id="dialog" role="dialog" aria-modal="true"></div></div>
   <div id="palette-backdrop" hidden>
     <div id="palette" role="dialog" aria-modal="true" aria-label="Command palette">
-      <input type="text" id="palette-input" placeholder="Type an action or a tab" aria-label="Command palette: type an action or a tab" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="palette-list" />
+      <input type="text" id="palette-input" placeholder="Type an action, a tab or a saved tab (s: saved only, t: tabs, a: actions)" aria-label="Command palette: type an action, an open tab or a saved tab" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="palette-list" />
       <div id="palette-list" role="listbox" aria-label="Actions and tabs"></div>
-      <div class="phint"><kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> run · <kbd>Esc</kbd> close</div>
+      <div class="phint"><kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> open · <kbd>Shift+Enter</kbd> new window · <kbd>Esc</kbd> close</div>
     </div>
   </div>
   <div id="toast"></div>
@@ -290,10 +316,12 @@
   <script src="../lib/recent.js"></script>
   <script src="../lib/exporters.js"></script>
   <script src="../lib/diff.js"></script>
+  <script src="../lib/shelves.js"></script>
   <script src="../lib/restore-plan.js"></script>
   <script src="../lib/ui.js"></script>
   <script src="../lib/shortcuts.js"></script>
   <script src="../lib/palette.js"></script>
+  <script src="../lib/saved-index.js"></script>
   <script src="../lib/save-close.js"></script>
   <script src="app.js"></script>
   <script src="dialogs.js"></script>

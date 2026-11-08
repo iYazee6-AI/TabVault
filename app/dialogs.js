@@ -433,6 +433,42 @@
     await draw();
   };
 
+  // ---- move to shelf (1.3) ------------------------------------------------------------
+  // The selected tabs are saved to the shelf (read back) and only then closed, in the worker.
+  App.dialogs.moveToShelf = (box, { tabIds = [] } = {}) => {
+    const shelves = App.getShelves();
+    const n = tabIds.length;
+    const pick = el("select", { id: "move-shelf-pick", "aria-label": "Shelf" },
+      ...shelves.map((s) => el("option", { value: s.id }, s.name)),
+      el("option", { value: "new", selected: shelves.length ? null : "" }, "+ New shelf"));
+    const name = el("input", { type: "text", id: "move-shelf-name", placeholder: "Reading later", maxlength: "60", "aria-label": "New shelf name" });
+    const nameRow = el("label", { class: "row" }, "Name ", name);
+    const err = el("p", { class: "muted" });
+    const sync = () => { nameRow.hidden = pick.value !== "new"; };
+    pick.addEventListener("change", sync);
+    const go = el("button", { type: "button", class: "primary", id: "move-shelf-go", disabled: n ? null : "" }, `Shelve ${n} tab${n === 1 ? "" : "s"}`);
+    go.addEventListener("click", async () => {
+      let shelfId = pick.value;
+      if (shelfId === "new") {
+        if (!name.value.trim()) { err.textContent = "Name the new shelf."; name.focus(); return; }
+        const r = await chrome.runtime.sendMessage({ type: "shelfCreate", name: name.value }).catch((e) => ({ ok: false, error: e.message }));
+        if (!r || !r.ok) { err.textContent = `Could not create the shelf: ${r && r.error}`; return; }
+        shelfId = r.shelf.id;
+      }
+      go.disabled = true;
+      closeDialog();
+      await App.moveToShelf(tabIds, shelfId);
+    });
+    box.replaceChildren(
+      el("h2", {}, "Move to shelf"),
+      el("p", {}, `Save ${n} selected tab${n === 1 ? "" : "s"} to a shelf, then close ${n === 1 ? "it" : "them"}. A shelf is kept until you delete it; open its tabs again from Shelves below your windows.`),
+      el("label", { class: "row" }, "Shelf ", pick),
+      nameRow, err,
+      el("div", { class: "row" }, go, el("button", { type: "button", onclick: closeDialog }, "Cancel")));
+    sync();
+    if (pick.value === "new") name.focus();
+  };
+
   // ---- compare a snapshot with now (1.3) ---------------------------------------------
   // lib/diff.js does the matching; this view only reopens (into one new window, or into the
   // windows the snapshot's windows were matched to) and selects. Nothing closes from it.
@@ -532,7 +568,12 @@
   };
 
   // ---- settings ---------------------------------------------------------------------
-  App.dialogs.settings = (box) => {
+  // The idle-tabs block (1.3): the global unload setting for tabs no rule matches, then the rules
+  // (first match wins). Rule edits are saved at once (the dry-run lock lives in the stored rule);
+  // the dialog's Save button saves the other settings.
+  const idleLabel = (m) => (m < 60 ? `${m} minutes` : m === 60 ? "1 hour" : m === 1440 ? "1 day" : `${m / 60} hours`);
+
+  App.dialogs.settings = async (box) => {
     const s = App.getSettings();
     const debounce = el("input", { type: "number", min: "30", max: "600", value: String(s.debounceSeconds) });
     const keep = el("input", { type: "number", min: "5", max: "200", value: String(s.keepSnapshots) });
@@ -542,26 +583,26 @@
     const density = el("select", {}, ...["comfortable", "compact"].map((d) => el("option", { value: d, selected: d === s.density ? "" : null }, d)));
     const lazy = el("input", { type: "checkbox", checked: s.lazyRestore !== false ? "" : null });
     const badge = el("select", { "aria-label": "Icon badge" }, ...[["total", "Tab count"], ["unloaded", "Unloaded tabs"], ["off", "Off"]].map(([value, label]) => el("option", { value, selected: value === s.badge ? "" : null }, label)));
-    // Unload idle tabs (auto-discard): off by default; the worker reads these at every alarm.
     const ad = s.autoDiscard;
-    const idleLabel = (m) => (m < 60 ? `${m} minutes` : m === 60 ? "1 hour" : `${m / 60} hours`);
     const adOn = el("input", { type: "checkbox", id: "ad-enabled", checked: ad.enabled ? "" : null });
     const adMinutes = el("select", { id: "ad-minutes", "aria-label": "Idle threshold" }, ...TV.IDLE_MINUTES.map((m) => el("option", { value: String(m), selected: m === ad.minutes ? "" : null }, idleLabel(m))));
     const adPinned = el("input", { type: "checkbox", id: "ad-pinned", checked: ad.keepPinned ? "" : null });
-    const adAllow = el("textarea", { id: "ad-allow", rows: "3", "aria-label": "Never unload tabs on these sites", placeholder: "*.example.com" });
-    adAllow.value = ad.allowlist.join(String.fromCharCode(10));
     const lastRun = el("span", { id: "ad-last-run", class: "muted" }, "");
     const showLastRun = () => chrome.storage.session.get("autoDiscard.lastRun").then((r) => { lastRun.textContent = TV.lastRunText(r["autoDiscard.lastRun"]); }, () => { lastRun.textContent = ""; });
     showLastRun();
-    const runNow = el("button", { type: "button", class: "small", onclick: async () => {
+    const runNow = el("button", { type: "button", class: "small", id: "idle-run-now", onclick: async () => {
       runNow.disabled = true;
-      const r = await chrome.runtime.sendMessage({ type: "discardIdleNow" }).catch((e) => ({ ok: false, error: e.message }));
+      const r = await chrome.runtime.sendMessage({ type: "runIdleNow" }).catch((e) => ({ ok: false, error: e.message }));
       runNow.disabled = false;
-      if (!r || !r.ok) toast(`Could not unload: ${r && r.error}`);
+      if (!r || !r.ok) toast(`Could not run the idle rules: ${r && r.error}`);
       showLastRun();
-    } }, "Unload idle tabs now");
+    } }, "Run idle rules now");
     const recordClosed = el("input", { type: "checkbox", id: "record-closed", checked: s.recordClosed ? "" : null });
+    const rulesBox = el("div", { id: "rules", class: "rules" });
+    const addRule = el("button", { type: "button", class: "small", id: "rule-add" }, "+ Add rule");
     const err = el("p", { class: "muted" });
+    const rules = createRulesEditor(rulesBox, addRule);
+    await rules.load();
     box.replaceChildren(el("h2", {}, "Settings"),
       el("label", { class: "row" }, "Snapshot after tabs stop changing for ", debounce, " seconds (30–600)"),
       el("label", { class: "row" }, "Keep the last ", keep, " snapshots (5–200); kept snapshots never expire"),
@@ -572,22 +613,217 @@
       el("label", { class: "row" }, lazy, " Load restored tabs only when opened (lazy)"),
       el("label", { class: "row" }, "Icon badge ", badge),
       el("label", { class: "row" }, recordClosed, " Remember recently closed tabs (kept on this computer, last 200)"),
-      el("h3", {}, "Unload idle tabs"),
-      el("label", { class: "row" }, adOn, " Unload tabs not used for ", adMinutes),
+      el("h3", {}, "Idle tabs"),
+      el("label", { class: "row" }, adOn, " Unload tabs not used for ", adMinutes, el("span", { class: "muted" }, " (tabs no rule below matches)")),
       el("label", { class: "row" }, adPinned, " Never unload pinned tabs"),
-      el("label", { class: "col" }, "Never unload tabs on these sites (one per line; *.example.com covers its subdomains)", adAllow),
-      el("p", { class: "muted" }, `Never unloaded: the tab you are on in each window, tabs playing sound, tabs an extension marked as not discardable, and tabs in a group whose name starts with ${TV.PROTECT_EMOJI}. Unloaded tabs stay where they are and reload when you open them; nothing is closed.`),
+      el("div", { class: "row rules-head" }, el("strong", {}, "Rules (first match wins)"), addRule),
+      rulesBox,
       el("div", { class: "row" }, lastRun, runNow),
+      el("p", { class: "muted", id: "idle-note" }, `Never touched, whatever the rules say: the tab you are on in each window, tabs playing sound, tabs an extension marked as not discardable, and tabs in a group whose name starts with ${TV.PROTECT_EMOJI}. Unloaded tabs stay where they are and reload when you open them. Nothing is closed unless a rule you wrote says so: a shelving rule stays off until you have run its dry run and turned it on, saves each tab to its shelf before closing it, and handles at most 25 tabs a run. Text typed into a page is lost when its tab is shelved. After Chrome restarts, a rule may wait longer than its time.`),
       err,
       el("div", { class: "row" }, el("button", { class: "primary", onclick: async () => {
         const d = Number(debounce.value), k = Number(keep.value);
         if (!Number.isInteger(d) || d < 30 || d > 600) { err.textContent = "Debounce must be a whole number between 30 and 600."; return; }
         if (!Number.isInteger(k) || k < 5 || k > 200) { err.textContent = "Keep must be a whole number between 5 and 200."; return; }
+        const current = App.getSettings();
         await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked, badge: badge.value, recordClosed: recordClosed.checked,
-          autoDiscard: { enabled: adOn.checked, minutes: Number(adMinutes.value), keepPinned: adPinned.checked, allowlist: TV.parseAllowlist(adAllow.value) } });
+          autoDiscard: { ...current.autoDiscard, enabled: adOn.checked, minutes: Number(adMinutes.value), keepPinned: adPinned.checked } });
         toast("Settings saved"); closeDialog();
       } }, "Save"), el("button", { onclick: closeDialog }, "Cancel")));
   };
+
+  // The rules list and its inline editor. Every change is saved at once through App.saveSettings.
+  function createRulesEditor(container, addButton) {
+    let shelves = [];
+    let editing = null; // { draft, isNew }
+    const dry = new Map(); // rule id -> { text, list, needsConfirm }
+    const rulesNow = () => App.getSettings().idleRules.slice();
+    const saveRules = async (list) => { await App.saveSettings({ idleRules: list }); };
+    const shelfName = (id) => { const sh = shelves.find((x) => x.id === id); return sh ? sh.name : "(deleted shelf)"; };
+    const actionText = (r) => (r.action === "never" ? "Never" : r.action === "unload" ? "Unload" : `Shelve to "${shelfName(r.shelfId)}"`);
+
+    async function load() {
+      shelves = await TV.listShelves(chrome.storage.local).catch(() => []);
+      draw();
+    }
+
+    // Runs the dry run in the worker (it sees every tab); returns { tabs, matchCount, action }.
+    async function runDry(rule) {
+      const r = await chrome.runtime.sendMessage({ type: "idleDryRun", rule }).catch((e) => ({ ok: false, error: e.message }));
+      if (!r || !r.ok) throw new Error((r && r.error) || "the dry run failed");
+      return r;
+    }
+    function dryText(r, rule) {
+      const n = r.tabs.length;
+      if (rule.action === "never") return `${r.matchCount} open tab${r.matchCount === 1 ? "" : "s"} match; they will never be unloaded or shelved.`;
+      const verb = rule.action === "shelve" ? "shelved" : "unloaded";
+      if (!n) return `No tab would be ${verb} now (${r.matchCount} open tab${r.matchCount === 1 ? "" : "s"} match the site; they are in use, exempt or not idle long enough).`;
+      return `${n} tab${n === 1 ? "" : "s"} would be ${verb} now:`;
+    }
+    function dryList(r) {
+      const titles = r.tabs.slice(0, 12).map((t) => t.title || t.url);
+      return el("div", { class: "muted dry-list" }, titles.join(" · ") + (r.tabs.length > 12 ? ` · and ${r.tabs.length - 12} more` : ""));
+    }
+
+    function ruleRow(r, i, list) {
+      const unlocked = TV.ruleUnlocked(r);
+      const sw = el("input", { type: "checkbox", role: "switch", class: "rule-on", "aria-label": `Rule ${r.pattern} on`, checked: r.enabled && unlocked ? "" : null, disabled: unlocked ? null : "", title: unlocked ? "Turn this rule on or off" : "Run its dry run first: the switch unlocks after it",
+        onchange: async (e) => { const next = rulesNow(); const at = next.findIndex((x) => x.id === r.id); if (at < 0) return; next[at] = { ...next[at], enabled: e.target.checked }; await saveRules(next); draw(); } });
+      const move = async (delta) => { const next = rulesNow(); const j = i + delta; if (j < 0 || j >= next.length) return; [next[i], next[j]] = [next[j], next[i]]; await saveRules(next); draw(); };
+      const d = dry.get(r.id);
+      return el("div", { class: "rule", dataset: { rule: r.id } },
+        el("div", { class: "row rule-main" },
+          el("span", { class: "mono rule-pattern" }, r.pattern),
+          el("span", { class: "rule-after" }, r.action === "never" ? "" : `after ${idleLabel(r.idleMinutes)}`),
+          el("span", { class: "rule-action" }, actionText(r)),
+          el("label", { class: "rule-switch" }, sw, " on")),
+        el("div", { class: "row rule-tools" },
+          el("button", { type: "button", class: "small rule-dry", onclick: () => dryFromRow(r) }, "Dry run"),
+          el("button", { type: "button", class: "small rule-edit", onclick: () => { editing = { draft: { ...r }, isNew: false, dryKey: r.previewedFor }; draw(); } }, "Edit"),
+          el("button", { type: "button", class: "small", "aria-label": "Move rule up", title: "Move up", disabled: i === 0 ? "" : null, onclick: () => move(-1) }, "↑"),
+          el("button", { type: "button", class: "small", "aria-label": "Move rule down", title: "Move down", disabled: i === list.length - 1 ? "" : null, onclick: () => move(1) }, "↓"),
+          el("button", { type: "button", class: "small danger rule-delete", onclick: async () => { await saveRules(rulesNow().filter((x) => x.id !== r.id)); dry.delete(r.id); draw(); } }, "Delete")),
+        d ? el("div", { class: "rule-dry-out" }, el("p", { class: "muted" }, d.text), d.list || null,
+          d.needsConfirm ? el("div", { class: "row" }, el("span", {}, `This rule matches ${d.matchCount} open tabs. Turn it on anyway?`),
+            el("button", { type: "button", class: "small rule-confirm-large", onclick: () => unlockRow(r, true) }, "Allow it")) : null) : null);
+    }
+
+    async function dryFromRow(r) {
+      try {
+        const out = await runDry(r);
+        const gate = TV.dryRunUnlock(out.matchCount, false);
+        dry.set(r.id, { text: dryText(out, r), list: out.tabs.length ? dryList(out) : null, needsConfirm: r.action === "shelve" && gate.needsConfirm, matchCount: out.matchCount });
+        if (r.action === "shelve" && gate.unlocked) await unlockRow(r, false);
+        else draw();
+      } catch (e) { toast(`Dry run failed: ${e.message || e}`); }
+    }
+    async function unlockRow(r, confirmed) {
+      const next = rulesNow();
+      const at = next.findIndex((x) => x.id === r.id);
+      if (at < 0) return;
+      next[at] = { ...next[at], previewedFor: TV.ruleKey(next[at]) };
+      if (confirmed) { const d = dry.get(r.id); if (d) d.needsConfirm = false; }
+      await saveRules(next);
+      draw();
+    }
+
+    function editor() {
+      const { draft, isNew } = editing;
+      const pattern = el("input", { type: "text", id: "rule-pattern", value: draft.pattern || "", placeholder: "news.example.com", "aria-label": "Sites", spellcheck: "false" });
+      const minutes = el("select", { id: "rule-minutes", "aria-label": "After" }, ...TV.RULE_IDLE_MINUTES.map((m) => el("option", { value: String(m), selected: m === draft.idleMinutes ? "" : null }, idleLabel(m))));
+      const shelfSel = el("select", { id: "rule-shelf", "aria-label": "Shelf" },
+        ...shelves.map((sh) => el("option", { value: sh.id, selected: sh.id === draft.shelfId ? "" : null }, sh.name)),
+        el("option", { value: "new", selected: !shelves.length || draft.shelfId === "new" ? "" : null }, "+ New shelf"));
+      const newShelf = el("input", { type: "text", id: "rule-new-shelf", placeholder: "Reading later", "aria-label": "New shelf name", maxlength: "60" });
+      const actionRadio = (value, label) => el("label", { class: "opt" }, el("input", { type: "radio", name: "rule-action", value, checked: draft.action === value ? "" : null, onchange: () => { draft.action = value; relock(); sync(); } }), ` ${label}`);
+      const on = el("input", { type: "checkbox", id: "rule-on", role: "switch" });
+      const onLabel = el("label", { class: "opt" }, on, " On");
+      const hint = el("span", { class: "muted", id: "rule-on-hint" });
+      const dryBtn = el("button", { type: "button", id: "rule-dry-run" }, "Dry run");
+      const dryOut = el("div", { id: "rule-dry-result", class: "muted" });
+      const confirmLarge = el("div", { class: "row", id: "rule-confirm-box", hidden: "" });
+      const error = el("p", { class: "muted", id: "rule-error" });
+      let dryKey = editing.dryKey || "";
+      on.checked = isNew ? draft.action !== "shelve" : Boolean(draft.enabled);
+      const key = () => TV.ruleKey({ pattern: TV.normalizePattern(pattern.value), idleMinutes: Number(minutes.value) });
+      const unlocked = () => draft.action !== "shelve" || (dryKey && dryKey === key());
+      function relock() {
+        if (!unlocked()) on.checked = false;
+      }
+      function sync() {
+        const shelving = draft.action === "shelve";
+        shelfSel.disabled = !shelving;
+        newShelf.hidden = !(shelving && shelfSel.value === "new");
+        on.disabled = !unlocked();
+        hint.textContent = shelving && !unlocked() ? "(the On switch unlocks after a dry run)" : "";
+      }
+      pattern.addEventListener("input", () => { relock(); sync(); });
+      minutes.addEventListener("change", () => { relock(); sync(); });
+      shelfSel.addEventListener("change", sync);
+      dryBtn.addEventListener("click", async () => {
+        const p = TV.normalizePattern(pattern.value);
+        const why = TV.patternError(pattern.value);
+        if (why) { error.textContent = why; return; }
+        error.textContent = "";
+        const rule = { id: draft.id, pattern: p, idleMinutes: Number(minutes.value), action: draft.action, shelfId: draft.action === "shelve" ? shelfSel.value : null, enabled: true, previewedFor: "" };
+        dryBtn.disabled = true;
+        try {
+          const out = await runDry(rule);
+          dryOut.replaceChildren(el("p", {}, dryText(out, rule)), out.tabs.length ? dryList(out) : "");
+          const gate = TV.dryRunUnlock(out.matchCount, false);
+          if (draft.action === "shelve" && gate.needsConfirm) {
+            dryKey = "";
+            confirmLarge.replaceChildren(el("span", {}, `This rule matches ${out.matchCount} open tabs. Turn it on anyway?`),
+              el("button", { type: "button", class: "small", id: "rule-confirm-large", onclick: () => { dryKey = key(); confirmLarge.hidden = true; sync(); } }, "Allow it"));
+            confirmLarge.hidden = false;
+          } else {
+            dryKey = key();
+            confirmLarge.hidden = true;
+          }
+        } catch (e) {
+          dryOut.textContent = `Dry run failed: ${e.message || e}`;
+        } finally {
+          dryBtn.disabled = false;
+          sync();
+        }
+      });
+      const save = el("button", { type: "button", class: "primary", id: "rule-save", onclick: async () => {
+        const why = TV.patternError(pattern.value);
+        if (why) { error.textContent = why; return; }
+        let shelfId = null;
+        if (draft.action === "shelve") {
+          shelfId = shelfSel.value;
+          if (shelfId === "new") {
+            const name = newShelf.value.trim();
+            if (!name) { error.textContent = "Name the new shelf."; newShelf.focus(); return; }
+            const r = await chrome.runtime.sendMessage({ type: "shelfCreate", name }).catch((e) => ({ ok: false, error: e.message }));
+            if (!r || !r.ok) { error.textContent = `Could not create the shelf: ${r && r.error}`; return; }
+            shelfId = r.shelf.id;
+            shelves = await TV.listShelves(chrome.storage.local).catch(() => shelves);
+          }
+        }
+        const p = TV.normalizePattern(pattern.value);
+        const rule = { id: draft.id, pattern: p, idleMinutes: Number(minutes.value), action: draft.action, shelfId, previewedFor: draft.action === "shelve" && unlocked() ? key() : "", enabled: false };
+        rule.enabled = on.checked && (draft.action !== "shelve" || rule.previewedFor === TV.ruleKey(rule));
+        const next = rulesNow();
+        const at = next.findIndex((x) => x.id === rule.id);
+        if (at >= 0) next[at] = rule; else next.push(rule);
+        await saveRules(next);
+        dry.delete(rule.id);
+        editing = null;
+        draw();
+        toast(isNew ? "Rule added" : "Rule saved");
+      } }, "Save");
+      const cancel = el("button", { type: "button", id: "rule-cancel", onclick: () => { editing = null; draw(); } }, "Cancel");
+      const node = el("div", { class: "rule-editor", id: "rule-editor" },
+        el("label", { class: "row" }, "Sites ", pattern, el("span", { class: "muted" }, "one host; *.host covers subdomains")),
+        el("label", { class: "row" }, "After ", minutes),
+        el("div", { class: "row", role: "radiogroup", "aria-label": "Then" }, el("span", {}, "Then"), actionRadio("unload", "Unload"), actionRadio("shelve", "Shelve to"), shelfSel, newShelf, actionRadio("never", "Never")),
+        el("div", { class: "row" }, dryBtn, el("span", { class: "muted" }, "lists what this rule would do to your open tabs now")),
+        dryOut, confirmLarge,
+        el("div", { class: "row" }, onLabel, hint),
+        error,
+        el("div", { class: "row" }, save, cancel));
+      sync();
+      setTimeout(() => { if (pattern.isConnected) pattern.focus(); }, 0);
+      return node;
+    }
+
+    function draw() {
+      const list = App.getSettings().idleRules;
+      const nodes = list.map((r, i) => (editing && !editing.isNew && editing.draft.id === r.id ? editor() : ruleRow(r, i, list)));
+      if (editing && editing.isNew) nodes.push(editor());
+      if (!nodes.length) nodes.push(el("p", { class: "muted" }, "No rules yet. Add one to unload, shelve or never touch the tabs of one site."));
+      container.replaceChildren(...nodes);
+      addButton.disabled = Boolean(editing);
+    }
+
+    addButton.addEventListener("click", () => {
+      editing = { draft: { id: TV.ruleId(), pattern: "", idleMinutes: 60, action: "shelve", shelfId: shelves[0] ? shelves[0].id : "new", enabled: false, previewedFor: "" }, isNew: true, dryKey: "" };
+      draw();
+    });
+    return { load };
+  }
 
   // ---- help ---------------------------------------------------------------------------
   App.dialogs.help = (box) => {

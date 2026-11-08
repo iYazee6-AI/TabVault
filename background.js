@@ -1,4 +1,4 @@
-importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js", "lib/shelves.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
@@ -166,38 +166,102 @@ chrome.tabs.onUpdated.addListener((_id, info) => { if (info.discarded !== undefi
 chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.settings) scheduleBadge(); });
 scheduleBadge();
 
-// ---- auto-discard idle tabs --------------------------------------------------
-// One alarm every 5 minutes (MV3 workers cannot hold timers). Off by default; the rule is
-// lib/discard-rule.js. Each run is recorded in storage.session so the Settings dialog can say
-// when it last ran and what it unloaded. Nothing is ever closed. The same alarm refreshes the badge.
+// ---- idle tabs: rules, unload and shelves (1.3) ------------------------------------
+// One alarm every 5 minutes (MV3 workers cannot hold timers). lib/discard-rule.js planIdle
+// decides: the first enabled rule whose site pattern matches a tab (unload, shelve or never),
+// else the global Unload idle tabs setting (off by default). Unloads run first, then shelves;
+// at most 25 a run. A tab is closed only by a shelving rule the user dry-ran and switched on, and
+// only after its shelf write was read back (lib/shelves.js executeShelve). Each run is recorded
+// in storage.session for the Settings line. The same alarm refreshes the badge.
 const IDLE_ALARM = "tabvault-idle";
 const LAST_RUN_KEY = "autoDiscard.lastRun";
+
+// The e2e harness moves the idle clock forward through this (as scenario Z passes `now`);
+// nothing in the extension sets it.
+self.idleClockOffset = 0;
+function idleNow() { return Date.now() + (Number(self.idleClockOffset) || 0); }
+
+// Settings version for 1.3: the 1.2 allowlist becomes never rules, once (lib/settings.js).
+const rulesReady = chrome.storage.local.get("settings").then(({ settings }) => {
+  const m = TV.migrateIdleRules(settings || {});
+  if (m.changed) return chrome.storage.local.set({ settings: m.settings });
+}).catch((e) => console.warn("TabVault idle-rules migration failed", e));
+
+// Every shelf write goes through this queue (the page only reads shelves).
+let shelfQueue = Promise.resolve();
+function shelfWrite(fn) {
+  const run = shelfQueue.then(fn);
+  shelfQueue = run.catch(() => {});
+  return run;
+}
+// tab id -> { id, name } of the shelf it was just saved to: onRemoved tags its Recently closed entry.
+const shelvedTabs = new Map();
 
 async function ensureIdleAlarm() {
   const existing = await chrome.alarms.get(IDLE_ALARM).catch(() => null);
   if (!existing) await chrome.alarms.create(IDLE_ALARM, { delayInMinutes: 5, periodInMinutes: 5 });
 }
 
-// The plan without acting on it (the e2e harness asserts on it; force runs ignore "enabled").
-async function planAutoDiscard({ now = Date.now() } = {}) {
-  const settings = await getSettings();
-  const [tabs, groups] = await Promise.all([
-    chrome.tabs.query({ discarded: false, active: false, audible: false }),
+async function idleInputs() {
+  await rulesReady;
+  const [settings, tabs, groups, windows, shelves] = await Promise.all([
+    getSettings(),
+    chrome.tabs.query({}),
     chrome.tabGroups ? chrome.tabGroups.query({}) : [],
+    chrome.windows.getAll({}),
+    TV.listShelves(chrome.storage.local).catch(() => []),
   ]);
-  return { settings, plan: TV.planDiscard(tabs, { settings: settings.autoDiscard, now, groups, ownPrefix: OWN_PREFIX }) };
+  return { settings, tabs, groups, windows, shelfIds: new Set(shelves.map((s) => s.id)) };
+}
+
+// The plan without acting on it (the e2e harness asserts on it). force (default here, as in 1.2)
+// applies the global unload setting even while it is off; rules apply whenever they are on.
+async function planAutoDiscard({ now = idleNow(), force = true } = {}) {
+  const input = await idleInputs();
+  const plan = TV.planIdle(input.tabs, input.groups, input.settings, now, { ownPrefix: OWN_PREFIX, windows: input.windows, shelfIds: input.shelfIds, force });
+  return { ...input, plan: { ...plan, ids: plan.unload } };
+}
+
+// Closes tabs after their shelf write; never the last tab of the last normal window (a New Tab
+// is opened in that window first, as save and close does).
+async function closeShelved(ids) {
+  const windows = await chrome.windows.getAll({ populate: true, windowTypes: ["normal"] });
+  const closing = new Set(ids);
+  const left = windows.reduce((n, w) => n + (w.tabs || []).filter((t) => !closing.has(t.id)).length, 0);
+  if (!left) {
+    const w = windows.find((x) => (x.tabs || []).some((t) => closing.has(t.id)));
+    if (w) await chrome.tabs.create({ windowId: w.id, active: true });
+  }
+  await chrome.tabs.remove(ids);
+}
+
+async function shelveNow(picks, input) {
+  if (!picks.length) return { shelved: 0, failed: 0 };
+  const tabsById = new Map(input.tabs.map((t) => [t.id, t]));
+  const groupsById = new Map(input.groups.map((g) => [g.id, g]));
+  const marked = [];
+  return shelfWrite(() => TV.executeShelve(chrome.storage.local, picks, {
+    tabsById, groupsById, now: Date.now(),
+    onSaved: (ids, shelf) => { for (const id of ids) { shelvedTabs.set(id, { id: shelf.id, name: shelf.name }); marked.push(id); } },
+    removeTabs: (ids) => closeShelved(ids),
+  })).finally(() => {
+    // Entries whose onRemoved never came (the close failed) must not tag a later close.
+    setTimeout(() => { for (const id of marked) shelvedTabs.delete(id); }, 10000);
+  });
 }
 
 let discardRunning = null;
-// force: run even when the setting is off ("Discard idle tabs now" from the page).
-function runAutoDiscard({ now = Date.now(), force = false } = {}) {
+// force: the manual run ("Run idle rules now"), which applies the global setting even while it is
+// off. The alarm's run applies the global setting only when it is on; rules whenever they are on.
+function runAutoDiscard({ now = idleNow(), force = false } = {}) {
   if (discardRunning) return discardRunning;
   discardRunning = (async () => {
-    const { settings, plan } = await planAutoDiscard({ now });
-    if (!settings.autoDiscard.enabled && !force) return { ok: true, skipped: true };
+    const input = await idleInputs();
+    const plan = TV.planIdle(input.tabs, input.groups, input.settings, now, { ownPrefix: OWN_PREFIX, windows: input.windows, shelfIds: input.shelfIds, force });
+    if (!plan.eligible && !force) return { ok: true, skipped: true };
     let unloaded = 0;
     let failed = 0;
-    for (const id of plan.ids) {
+    for (const id of plan.unload) {
       try {
         const tab = await chrome.tabs.discard(id);
         if (tab) unloaded++; else failed++;
@@ -205,18 +269,41 @@ function runAutoDiscard({ now = Date.now(), force = false } = {}) {
         failed++;
       }
     }
-    const lastRun = { at: Date.now(), unloaded, failed, waiting: plan.eligible - plan.ids.length, manual: Boolean(force) };
+    const sh = await shelveNow(plan.shelve, input).catch(() => ({ shelved: 0, failed: plan.shelve.length }));
+    failed += sh.failed;
+    const lastRun = { at: Date.now(), unloaded, shelved: sh.shelved, failed, waiting: plan.waiting, manual: Boolean(force) };
     await chrome.storage.session.set({ [LAST_RUN_KEY]: lastRun }).catch(() => {});
     scheduleBadge();
     return { ok: true, ...lastRun };
   })().finally(() => { discardRunning = null; });
   return discardRunning;
 }
+// Worker globals the e2e harness calls (planAutoDiscard, runAutoDiscard, runIdleRules).
+self.planAutoDiscard = planAutoDiscard;
+self.runIdleRules = runAutoDiscard;
+
+// "Move to shelf…" from the page: the selected tabs, saved then closed (no rule involved).
+async function shelveTabs({ tabIds, shelfId }) {
+  const ids = (Array.isArray(tabIds) ? tabIds : []).map(Number).filter(Number.isInteger);
+  if (!ids.length) return { ok: false, error: "no tab chosen" };
+  const input = await idleInputs();
+  if (!input.shelfIds.has(shelfId)) return { ok: false, error: "That shelf is gone." };
+  const own = new Set(input.tabs.filter((t) => String(t.url || t.pendingUrl || "").startsWith(OWN_PREFIX)).map((t) => t.id));
+  const picks = ids.filter((id) => !own.has(id)).map((id) => ({ id, shelfId, ruleId: null }));
+  const r = await shelveNow(picks, input);
+  return { ok: true, ...r };
+}
+
+async function idleDryRun(rule) {
+  const input = await idleInputs();
+  const r = TV.dryRunRule(rule, input.tabs, input.groups, input.settings, idleNow(), { ownPrefix: OWN_PREFIX, windows: input.windows, shelfIds: input.shelfIds });
+  return { ok: true, matchCount: r.matchCount, action: r.action, tabs: r.tabs.map((t) => ({ id: t.id, title: t.title || "", url: t.url || "" })) };
+}
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== IDLE_ALARM) return;
   scheduleBadge();
-  runAutoDiscard().catch((e) => console.warn("TabVault auto-discard failed", e));
+  runAutoDiscard().catch((e) => console.warn("TabVault idle rules failed", e));
 });
 ensureIdleAlarm().catch(() => {});
 
@@ -297,14 +384,17 @@ function flushClosingWindow(windowId) {
   const closedAt = Date.now();
   Promise.all(bucket.items).then((infos) => {
     const batch = `w${windowId}-${closedAt}`;
-    return appendRecent(infos.filter(Boolean).map((info) => TV.closedEntry(info, { groupTitle: info.groupTitle, closedAt, batch })));
+    return appendRecent(infos.filter(Boolean).map((info) => TV.closedEntry(info, { groupTitle: info.groupTitle, closedAt, batch, shelf: info.shelf })));
   }).catch((e) => console.warn("TabVault recently-closed failed", e));
 }
 
 chrome.tabs.onRemoved.addListener((tabId, info) => {
   const cached = tabCache.get(tabId);
   tabCache.delete(tabId);
-  const described = describeClosed(tabId, cached).catch(() => null);
+  // A tab an idle rule or "Move to shelf" just saved: its entry says which shelf (1.3).
+  const shelf = shelvedTabs.get(tabId) || null;
+  shelvedTabs.delete(tabId);
+  const described = describeClosed(tabId, cached).catch(() => null).then((d) => (d && shelf ? { ...d, shelf } : d));
   if (info && info.isWindowClosing) {
     let bucket = closingWindows.get(info.windowId);
     if (!bucket) {
@@ -315,7 +405,7 @@ chrome.tabs.onRemoved.addListener((tabId, info) => {
     bucket.items.push(described);
     return;
   }
-  described.then((d) => (d ? appendRecent([TV.closedEntry(d, { groupTitle: d.groupTitle, closedAt: Date.now() })]) : null))
+  described.then((d) => (d ? appendRecent([TV.closedEntry(d, { groupTitle: d.groupTitle, closedAt: Date.now(), shelf: d.shelf })]) : null))
     .catch((e) => console.warn("TabVault recently-closed failed", e));
 });
 chrome.windows.onRemoved.addListener((windowId) => flushClosingWindow(windowId));
@@ -358,7 +448,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       enqueue(async () => { await TV.pinSnapshot(chrome.storage.local, msg.id, msg.pinned); return { ok: true }; }).then(reply, fail);
       return true;
     case "openPage": openPage().then(() => reply({ ok: true }), fail); return true;
-    case "discardIdleNow": runAutoDiscard({ force: true }).then(reply, fail); return true;
+    case "discardIdleNow":
+    case "runIdleNow": runAutoDiscard({ force: true }).then(reply, fail); return true;
+    case "idleDryRun": idleDryRun(msg.rule || {}).then(reply, fail); return true;
+    case "shelveTabs": shelveTabs(msg).then(reply, fail); return true;
+    case "shelfCreate":
+      shelfWrite(async () => ({ ok: true, shelf: await TV.createShelf(chrome.storage.local, msg.name) })).then(reply, fail);
+      return true;
+    case "shelfRemoveItems":
+      shelfWrite(async () => ({ ok: true, ...(await TV.removeItems(chrome.storage.local, msg.shelfId, Array.isArray(msg.itemIds) ? msg.itemIds : [])) })).then(reply, fail);
+      return true;
+    case "shelfDelete":
+      shelfWrite(async () => {
+        const settings = await getSettings();
+        const using = settings.idleRules.filter((r) => r.shelfId === msg.shelfId).length;
+        if (using) return { ok: false, error: `${using} rule${using === 1 ? " files" : "s file"} tabs onto this shelf; change or delete ${using === 1 ? "it" : "them"} first.` };
+        await TV.deleteShelf(chrome.storage.local, msg.shelfId);
+        return { ok: true };
+      }).then(reply, fail);
+      return true;
     case "saveAndClose": saveAndClose(msg).then(reply, fail); return true;
     case "recentRemove":
       recentWrite(async () => {

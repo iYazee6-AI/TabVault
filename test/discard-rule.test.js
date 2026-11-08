@@ -61,7 +61,8 @@ test("at most 25 per run, oldest first; eligible counts the rest", () => {
 });
 
 test("lastRunText reads like the spec's line", () => {
-  assert.equal(lastRunText({ at: 1, unloaded: 7 }, () => "12:40"), "last run 12:40, 7 unloaded");
-  assert.equal(lastRunText({ at: 1, unloaded: 25, failed: 1, waiting: 3 }, () => "09:05"), "last run 09:05, 25 unloaded, 1 could not be unloaded, 3 wait for the next run");
+  assert.equal(lastRunText({ at: 1, unloaded: 7, shelved: 3 }, () => "12:40"), "last run 12:40: 7 unloaded, 3 shelved");
+  assert.equal(lastRunText({ at: 1, unloaded: 7 }, () => "12:40"), "last run 12:40: 7 unloaded, 0 shelved");
+  assert.equal(lastRunText({ at: 1, unloaded: 22, shelved: 3, failed: 1, waiting: 3 }, () => "09:05"), "last run 09:05: 22 unloaded, 3 shelved, 1 could not be handled, 3 wait for the next run");
   assert.equal(lastRunText(null), "Not run yet in this browser session.");
 });
