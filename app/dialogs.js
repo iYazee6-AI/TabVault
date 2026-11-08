@@ -4,8 +4,8 @@
   const { el, toast, closeDialog, windowLabel } = App;
   const VERSION = chrome.runtime.getManifest().version;
 
-  function download(filename, text) {
-    const blob = new Blob([text], { type: "application/json" });
+  function download(filename, text, type = "application/json") {
+    const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
     const a = el("a", { href: url, download: filename });
     document.body.append(a); a.click(); a.remove();
@@ -89,14 +89,125 @@
   };
 
   // ---- export -----------------------------------------------------------------------
-  App.dialogs.export = (box) => {
+  // What: this session, the selected tabs, a snapshot or a shelf. Format: JSON (schema 1, every
+  // detail, restorable) or Markdown (a list of links for notes). The text is prepared before the
+  // buttons are enabled, so Copy calls navigator.clipboard.writeText inside the click itself (no
+  // clipboardWrite permission); if the browser refuses, the text is shown selected for Ctrl+C.
+  function selectedSession() {
+    const ids = new Set(App.selection());
+    const s = App.getSession();
+    const windows = [];
+    for (const w of s.windows) {
+      const tabs = w.tabs.filter((t) => ids.has(t.id));
+      if (!tabs.length) continue;
+      const used = new Set(tabs.map((t) => t.groupId).filter((g) => g !== null));
+      windows.push({ ...w, tabs, groups: (w.groups || []).filter((g) => used.has(g.id)) });
+    }
+    return { ...s, windows };
+  }
+
+  App.dialogs.export = async (box, opts = {}) => {
     const session = App.getSession();
-    const f = TV.toJsonFile(session, { now: Date.now(), version: VERSION });
-    box.replaceChildren(
-      el("h2", {}, "Export session"),
-      el("p", {}, `${session.windows.length} windows, ${TV.countTabs(session)} tabs, with groups, pinned state and positions.`),
-      el("p", { class: "muted" }, `File: ${f.filename}`),
-      el("div", { class: "row" }, el("button", { class: "primary", onclick: () => { download(f.filename, f.text); toast("Exported"); closeDialog(); } }, "Download JSON"), el("button", { onclick: closeDialog }, "Cancel")));
+    const selectedCount = App.selection().length;
+    const snapshots = await TV.listSnapshots(chrome.storage.local).catch(() => []);
+    const shelves = await TV.listShelves(chrome.storage.local).catch(() => []);
+    let what = opts.what || "session";
+    let format = opts.format || "json";
+    let snapshotId = opts.snapshotId || (snapshots[0] && snapshots[0].id) || "";
+    let shelfId = opts.shelfId || (shelves[0] && shelves[0].id) || "";
+    let ready = null;
+    let token = 0;
+
+    const radio = (name, value, current, label, disabled, onpick) => el("label", { class: "opt" },
+      el("input", { type: "radio", name, value, id: `${name}-${value}`, checked: value === current ? "" : null, disabled: disabled ? "" : null, onchange: () => onpick(value) }), ` ${label}`);
+    const snapSelect = el("select", { id: "export-snapshot", "aria-label": "Snapshot to export", onchange: (e) => { snapshotId = e.target.value; what = "snapshot"; draw(); } },
+      ...snapshots.map((s) => el("option", { value: s.id, selected: s.id === snapshotId ? "" : null }, `${s.name || fmt(s.takenAt)} · ${s.tabs} tabs`)));
+    const shelfSelect = el("select", { id: "export-shelf", "aria-label": "Shelf to export", onchange: (e) => { shelfId = e.target.value; what = "shelf"; draw(); } },
+      ...shelves.map((s) => el("option", { value: s.id, selected: s.id === shelfId ? "" : null }, s.name)));
+    const info = el("p", { class: "muted", id: "export-info" });
+    const dl = el("button", { type: "button", class: "primary", id: "export-download" });
+    const copy = el("button", { type: "button", id: "export-copy" }, "Copy to clipboard");
+    const fallback = el("div", { class: "col", hidden: "" });
+
+    // The chosen source as { session, title, now }.
+    async function source() {
+      if (what === "selected") return { session: selectedSession(), title: "Selected tabs", now: Date.now() };
+      if (what === "snapshot") {
+        const snap = snapshotId ? await TV.getSnapshot(chrome.storage.local, snapshotId) : null;
+        if (!snap) throw new Error("That snapshot is gone");
+        return { session: snap.session, title: snap.name || `Snapshot ${fmt(snap.takenAt)}`, now: snap.takenAt };
+      }
+      if (what === "shelf") {
+        const shelf = shelves.find((s) => s.id === shelfId);
+        if (!shelf) throw new Error("That shelf is gone");
+        const items = await TV.readShelf(chrome.storage.local, shelf.id);
+        return { session: TV.shelfToSession(shelf, items), title: shelf.name, now: Date.now() };
+      }
+      return { session, title: "TabVault session", now: Date.now() };
+    }
+
+    async function prepare() {
+      const mine = ++token;
+      ready = null;
+      dl.disabled = true; copy.disabled = true;
+      try {
+        const src = await source();
+        if (mine !== token) return;
+        const tabs = TV.countTabs(src.session);
+        if (!tabs) { info.textContent = "Nothing to export."; return; }
+        ready = format === "markdown"
+          ? { filename: TV.markdownFilename(src.now), text: TV.toMarkdown(src.session, { title: src.title }), type: "text/markdown" }
+          : { ...TV.toJsonFile(src.session, { now: src.now, version: VERSION }), type: "application/json" };
+        info.textContent = `${src.session.windows.length} window${src.session.windows.length === 1 ? "" : "s"}, ${tabs} tab${tabs === 1 ? "" : "s"} · file ${ready.filename}`;
+        dl.disabled = false; copy.disabled = false;
+      } catch (e) {
+        if (mine === token) info.textContent = e.message || String(e);
+      }
+    }
+
+    function draw() {
+      fallback.hidden = true;
+      dl.textContent = format === "markdown" ? "Download Markdown" : "Download JSON";
+      const pick = (v) => { what = v; draw(); };
+      box.replaceChildren(
+        el("h2", {}, "Export"),
+        el("div", { class: "row", role: "radiogroup", "aria-label": "What to export" }, el("span", { class: "muted" }, "What"),
+          radio("export-what", "session", what, "This session", false, pick),
+          radio("export-what", "selected", what, `Selected tabs (${selectedCount})`, !selectedCount, pick),
+          radio("export-what", "snapshot", what, "Snapshot", !snapshots.length, pick), snapshots.length ? snapSelect : null,
+          radio("export-what", "shelf", what, "Shelf", !shelves.length, pick), shelves.length ? shelfSelect : null),
+        el("div", { class: "row", role: "radiogroup", "aria-label": "Format" }, el("span", { class: "muted" }, "Format"),
+          radio("export-format", "json", format, "JSON (restorable, every detail)", false, (v) => { format = v; draw(); }),
+          radio("export-format", "markdown", format, "Markdown (for notes)", false, (v) => { format = v; draw(); })),
+        info,
+        el("div", { class: "row" }, dl, copy, el("button", { type: "button", onclick: closeDialog }, "Cancel")),
+        fallback);
+      prepare();
+    }
+
+    dl.addEventListener("click", () => {
+      if (!ready) return;
+      download(ready.filename, ready.text, ready.type);
+      toast("Exported");
+      closeDialog();
+    });
+    copy.addEventListener("click", () => {
+      if (!ready) return;
+      const text = ready.text;
+      const showFallback = () => {
+        const area = el("textarea", { id: "export-copy-text", rows: "8", readonly: "", "aria-label": "Export text" });
+        area.value = text;
+        fallback.replaceChildren(el("p", { class: "muted" }, "Copying was blocked by the browser: the text is selected below, press Ctrl+C (Cmd+C on a Mac)."), area);
+        fallback.hidden = false;
+        area.focus(); area.select();
+      };
+      try {
+        navigator.clipboard.writeText(text).then(() => toast("Copied to the clipboard"), showFallback);
+      } catch {
+        showFallback();
+      }
+    });
+    draw();
   };
 
   // ---- import / restore -------------------------------------------------------------
@@ -194,37 +305,96 @@
     return result;
   }
 
+  // Import: a chosen file (JSON, Markdown or text) goes straight to the window chooser; the menu's
+  // Import opens a paste box whose preview (the same chooser) updates as you type. Links that are
+  // not web pages are dropped and counted (lib/exporters.js); nothing opens before Restore.
+  function summaryText(session) {
+    const tabs = TV.countTabs(session);
+    const groups = session.windows.reduce((n, w) => n + (w.groups || []).length, 0);
+    const parts = [`Found ${session.windows.length} window${session.windows.length === 1 ? "" : "s"}, ${tabs} tab${tabs === 1 ? "" : "s"}, ${groups} group${groups === 1 ? "" : "s"}`];
+    if (session.skippedLinks) parts.push(`${session.skippedLinks} link${session.skippedLinks === 1 ? "" : "s"} skipped: not web pages`);
+    return parts.join(" · ");
+  }
+
   App.dialogs.import = (box, text) => {
-    let session;
-    try { session = TV.parseImport(text); }
-    catch (e) { box.replaceChildren(el("h2", {}, "Import failed"), el("p", {}, e.message), el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close"))); return; }
-    showRestore(box, session, "Import");
+    if (typeof text === "string") {
+      let session;
+      try { session = TV.parseImportText(text); }
+      catch (e) { box.replaceChildren(el("h2", {}, "Import failed"), el("p", {}, e.message), el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close"))); return; }
+      showRestore(box, session, "Import");
+      return;
+    }
+    const area = el("textarea", { id: "import-paste", rows: "7", "aria-label": "Paste Markdown links, web addresses or a TabVault JSON export", placeholder: "## Research" + String.fromCharCode(10) + "- [Manifest V3 migration guide](https://docs.example.com/mv3)" });
+    const preview = el("div", { id: "import-preview", class: "col" });
+    let timer = null;
+    const update = () => {
+      const t = area.value;
+      if (!t.trim()) { preview.replaceChildren(el("p", { class: "muted" }, "Paste a list of links: one window per ## heading, one group per ### heading, or no headings for one window.")); return; }
+      let session;
+      try { session = TV.parseImportText(t); }
+      catch (e) { preview.replaceChildren(el("p", { class: "muted", id: "import-summary" }, e.message)); return; }
+      preview.replaceChildren(...chooserNodes(box, session, "Import"));
+    };
+    area.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(update, 250); });
+    box.replaceChildren(
+      el("h2", {}, "Import"),
+      el("div", { class: "row" }, el("button", { type: "button", id: "import-choose", onclick: () => document.getElementById("import-file").click() }, "Choose file…"), el("span", { class: "muted" }, "a .json export, a .md or .txt list of links, or paste:")),
+      area, preview);
+    update();
+    area.focus();
   };
 
   function showRestore(box, session, title) {
+    box.replaceChildren(el("h2", {}, `${title}: choose windows to restore`), ...chooserNodes(box, session, title));
+  }
+
+  // The window chooser: the summary, one tick per window, Restore and Cancel. Above 100 tabs the
+  // button asks again; file: links are dropped (and said) when TabVault may not open local files.
+  const ASK_ABOVE = 100;
+  function chooserNodes(box, session, title) {
     const chosen = new Set(session.windows.map((w) => w.id));
     const rows = session.windows.map((w) => el("label", { class: "row" },
-      el("input", { type: "checkbox", checked: "", onchange: (e) => { e.target.checked ? chosen.add(w.id) : chosen.delete(w.id); } }),
+      el("input", { type: "checkbox", checked: "", onchange: (e) => { e.target.checked ? chosen.add(w.id) : chosen.delete(w.id); confirmed = false; go.textContent = "Restore selected windows"; } }),
       el("span", {}, `${w.incognito ? "🕶 " : ""}${w.windowName || (w.tabs[0] && (w.tabs[0].title || w.tabs[0].url)) || "(empty)"}`),
       el("span", { class: "muted" }, `${w.tabs.length} tabs, ${(w.groups || []).length} groups`)));
+    const summary = el("p", { class: "muted", id: "import-summary" }, summaryText(session));
     const status = el("p", { class: "muted" }, session.capturedAt ? `Captured ${fmt(session.capturedAt)}` : "");
     const go = el("button", { class: "primary" }, "Restore selected windows");
+    let confirmed = false;
     go.addEventListener("click", async () => {
+      const count = session.windows.filter((w) => chosen.has(w.id)).reduce((n, w) => n + w.tabs.length, 0);
+      if (count > ASK_ABOVE && !confirmed) {
+        confirmed = true;
+        go.textContent = `Open ${count} tabs? Restore anyway`;
+        status.textContent = `This opens ${count} tabs${App.getSettings().lazyRestore !== false ? "; they load only when you open them" : ""}.`;
+        return;
+      }
       go.disabled = true;
       let r;
+      let fileSkipped = 0;
       try {
-        r = await restoreSession(session, [...chosen], (p) => { status.textContent = p; });
+        let toRestore = session;
+        const hasFile = session.windows.some((w) => w.tabs.some((t) => String(t.url).startsWith("file:")));
+        if (hasFile && !(await chrome.extension.isAllowedFileSchemeAccess())) {
+          toRestore = { ...session, windows: session.windows.map((w) => {
+            const tabs = w.tabs.filter((t) => !String(t.url).startsWith("file:"));
+            fileSkipped += w.tabs.length - tabs.length;
+            return { ...w, tabs };
+          }) };
+        }
+        r = await restoreSession(toRestore, [...chosen], (p) => { status.textContent = p; });
       } catch (e) {
         status.textContent = `Restore failed: ${e.message || e}`;
         go.disabled = false;
         return;
       }
       const lines = [`Restored ${r.windows} windows and ${r.tabs} tabs${r.discard ? " (tabs load when you open them)" : ""}.`];
+      if (fileSkipped) lines.push(`${fileSkipped} file link${fileSkipped === 1 ? "" : "s"} skipped: allow access to file URLs for TabVault at chrome://extensions to open them.`);
       for (const s of r.skipped) lines.push(`Skipped window ${s.windowId}: ${s.reason}`);
       for (const e of r.errors) lines.push(`Error: ${e}`);
       box.replaceChildren(el("h2", {}, `${title} complete`), ...lines.map((l) => el("p", {}, l)), el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close")));
     });
-    box.replaceChildren(el("h2", {}, `${title}: choose windows to restore`), status, el("div", { class: "list" }, ...rows), el("div", { class: "row" }, go, el("button", { onclick: closeDialog }, "Cancel")));
+    return [summary, status, el("div", { class: "list" }, ...rows), el("div", { class: "row" }, go, el("button", { onclick: closeDialog }, "Cancel"))];
   }
 
   // ---- snapshots ------------------------------------------------------------------
@@ -246,7 +416,8 @@
           el("span", { class: "muted" }, `${s.reason}${s.pinned ? " · kept" : ""}`),
           el("span", { class: "muted" }, `${s.windows} window${s.windows === 1 ? "" : "s"} · ${s.tabs} tab${s.tabs === 1 ? "" : "s"}`),
           el("button", { onclick: async () => { const snap = await full(s); if (snap) showRestore(box, snap.session, "Snapshot"); } }, "Restore"),
-          el("button", { onclick: async () => { const snap = await full(s); if (!snap) return; const f = TV.toJsonFile(snap.session, { now: s.takenAt, version: VERSION }); download(f.filename, f.text); toast("Exported"); } }, "Export"),
+          el("button", { class: "compare", title: "Compare this snapshot with the tabs open now", onclick: () => App.openDialog("compare", { snapshotId: s.id }) }, "Compare"),
+          el("button", { title: "Export this snapshot as JSON or Markdown", onclick: () => App.openDialog("export", { what: "snapshot", snapshotId: s.id }) }, "Export"),
           el("button", { onclick: async () => { await chrome.runtime.sendMessage({ type: "pinSnapshot", id: s.id, pinned: !s.pinned }); draw(); } }, s.pinned ? "Unkeep" : "Keep"),
           el("button", { class: "danger", onclick: async () => { await chrome.runtime.sendMessage({ type: "deleteSnapshot", id: s.id }); draw(); } }, "Delete")));
       }
@@ -260,6 +431,104 @@
         list, el("div", { class: "row" }, el("button", { onclick: closeDialog }, "Close")));
     };
     await draw();
+  };
+
+  // ---- compare a snapshot with now (1.3) ---------------------------------------------
+  // lib/diff.js does the matching; this view only reopens (into one new window, or into the
+  // windows the snapshot's windows were matched to) and selects. Nothing closes from it.
+  function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
+  function oneWindowSession(tabs) {
+    return { schema: 1, windows: [{ id: 1, type: "normal", state: "normal", incognito: false, bounds: { left: 0, top: 0, width: 0, height: 0 }, groups: [], tabs: tabs.map((t, i) => ({ id: i + 1, index: i, url: t.url, title: t.title || "", pinned: false, muted: false, groupId: null })) }] };
+  }
+
+  App.dialogs.compare = async (box, { snapshotId } = {}) => {
+    const area = chrome.storage.local;
+    const snapshots = await TV.listSnapshots(area);
+    if (!snapshots.length) {
+      box.replaceChildren(el("h2", {}, "Compare with now"), el("p", { class: "muted" }, "No snapshots yet. They are taken automatically when your tabs change."), el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
+      return;
+    }
+    let id = snapshotId && snapshots.some((s) => s.id === snapshotId) ? snapshotId : snapshots[0].id;
+    let ignoreHash = App.getSettings().ignoreHash !== false;
+    let snap = null;
+    const ticked = new Set();
+
+    const load = async () => {
+      snap = await TV.getSnapshot(area, id);
+      await App.refresh();
+      ticked.clear();
+    };
+    const row = (kind, x, extra, check) => el("div", { class: "crow", dataset: { kind, url: x.tab.url } },
+      check || null,
+      el("span", { class: "ctitle", title: x.tab.url }, x.tab.title || x.tab.url),
+      el("span", { class: "domain mono" }, TV.domainOf(x.tab.url)),
+      el("span", { class: "muted cwhere" }, extra));
+
+    const draw = () => {
+      if (!snap) {
+        box.replaceChildren(el("h2", {}, "Compare with now"), el("p", {}, "That snapshot is gone."), el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
+        return;
+      }
+      const d = TV.diffSessions(snap.session, App.getSession(), { ignoreHash });
+      if (!ticked.size) d.missing.forEach((_m, i) => ticked.add(i));
+      const pick = el("select", { id: "compare-snapshot", "aria-label": "Snapshot to compare", onchange: async (e) => { id = e.target.value; await load(); draw(); } },
+        ...snapshots.map((s) => el("option", { value: s.id, selected: s.id === id ? "" : null }, s.name || fmt(s.takenAt))));
+      const chosen = () => d.missing.filter((_m, i) => ticked.has(i));
+      const reopenNew = el("button", { type: "button", class: "primary", id: "compare-reopen-new" });
+      const reopenInto = el("button", { type: "button", id: "compare-reopen-into" }, "Reopen into their windows");
+      const label = () => {
+        const n = chosen().length;
+        reopenNew.textContent = `Reopen ${n} in a new window`;
+        reopenNew.disabled = !n; reopenInto.disabled = !n;
+      };
+      const after = async (n, how) => { toast(`Reopened ${plural(n, "tab")}${how}`); await load(); draw(); };
+      reopenNew.addEventListener("click", async () => {
+        const list = chosen();
+        reopenNew.disabled = true;
+        try {
+          const r = await App.restoreSession(oneWindowSession(list.map((m) => m.tab)), [1], () => {});
+          if (r.errors.length) toast(`Reopened with errors: ${r.errors[0]}`);
+          await after(list.length, " in a new window");
+        } catch (e) { toast(`Could not reopen: ${e.message || e}`); label(); }
+      });
+      reopenInto.addEventListener("click", async () => {
+        const list = chosen();
+        reopenInto.disabled = true;
+        const live = new Set(App.getSession().windows.filter((w) => w.type === "normal").map((w) => w.id));
+        const homeless = [];
+        try {
+          for (const m of list) {
+            if (m.targetWindowId !== null && live.has(m.targetWindowId)) await chrome.tabs.create({ windowId: m.targetWindowId, url: m.tab.url, active: false });
+            else homeless.push(m.tab);
+          }
+          if (homeless.length) await App.restoreSession(oneWindowSession(homeless), [1], () => {});
+          await after(list.length, homeless.length ? `; ${homeless.length} in a new window` : "");
+        } catch (e) { toast(`Could not reopen: ${e.message || e}`); label(); }
+      });
+      const selectNew = el("button", { type: "button", id: "compare-select-new", disabled: d.added.length ? null : "", onclick: () => { App.selectTabs(d.added.map((a) => a.tab.id)); closeDialog(); toast(`${plural(d.added.length, "new tab")} selected`); } }, "Select all new");
+      const missingRows = d.missing.map((m, i) => row("missing", m, `was in ${m.windowLabel}${m.groupTitle ? " · " + m.groupTitle : ""}`,
+        el("input", { type: "checkbox", checked: ticked.has(i) ? "" : null, "aria-label": `Reopen ${m.tab.title || m.tab.url}`, onchange: (e) => { e.target.checked ? ticked.add(i) : ticked.delete(i); label(); } })));
+      const addedRows = d.added.map((a) => row("added", a, `${a.windowLabel}${a.groupTitle ? " · " + a.groupTitle : ""}`));
+      const movedRows = d.moved.map((m) => row("moved", m, `now in ${m.windowLabel}${m.groupTitle ? " · " + m.groupTitle : ""}, was in ${m.from.windowLabel}${m.from.groupTitle ? " · " + m.from.groupTitle : ""}`));
+      label();
+      box.replaceChildren(
+        el("h2", {}, "Compare with now"),
+        el("div", { class: "row" }, el("span", {}, "Snapshot "), pick, el("span", { class: "muted" }, `taken ${fmt(snap.takenAt)}`)),
+        el("div", { class: "row", id: "compare-counts" },
+          el("span", { class: "mono" }, `Missing now ${d.missing.length}`), el("span", { class: "mono" }, `New since ${d.added.length}`), el("span", { class: "mono" }, `Moved ${d.moved.length}`),
+          el("label", {}, el("input", { type: "checkbox", id: "compare-hash", checked: ignoreHash ? "" : null, onchange: (e) => { ignoreHash = e.target.checked; ticked.clear(); draw(); } }), " Ignore #hash")),
+        el("h3", {}, "Missing now"),
+        el("div", { class: "list", id: "compare-missing" }, ...(missingRows.length ? missingRows : [el("p", { class: "muted" }, "Nothing is missing: every tab of the snapshot is open.")])),
+        el("div", { class: "row" }, reopenNew, reopenInto),
+        el("h3", {}, "New since"),
+        el("div", { class: "list", id: "compare-added" }, ...(addedRows.length ? addedRows : [el("p", { class: "muted" }, "No new tabs since the snapshot.")])),
+        el("div", { class: "row" }, selectNew),
+        movedRows.length ? el("h3", {}, "Moved") : null,
+        movedRows.length ? el("div", { class: "list", id: "compare-moved" }, ...movedRows) : null,
+        el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
+    };
+    await load();
+    draw();
   };
 
   // ---- settings ---------------------------------------------------------------------

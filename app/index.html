@@ -193,7 +193,8 @@
     #dialog { background: var(--g2); color: var(--t); border: 1px solid var(--l); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); width: min(720px, 92vw); max-height: 88vh; overflow: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
     #dialog h2 { margin: 0; font: 600 15px var(--sans); }
     #dialog h3 { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--l); font: 600 13px var(--sans); }
-    #dialog label.col { display: flex; flex-direction: column; gap: 4px; }
+    #dialog label.col, #dialog div.col { display: flex; flex-direction: column; gap: 6px; }
+    #dialog label.opt { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
     #dialog textarea { width: 100%; resize: vertical; font: 500 12px/1.4 var(--mono); font-synthesis: none; }
     #dialog table { border-collapse: collapse; width: 100%; }
     #dialog td, #dialog th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--l); vertical-align: top; }
@@ -214,6 +215,10 @@
     #dialog h2 .version { font: 500 12px var(--mono); color: var(--t2); margin-left: 4px; }
     #dialog ul.links { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
     #dialog a { color: var(--pText); }
+    #dialog .crow { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 2px 4px; border-bottom: 1px solid var(--l); }
+    #dialog .crow .ctitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #dialog .crow .domain, #dialog .crow .cwhere { flex: none; max-width: 30%; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #dialog .crow .domain { color: var(--t2); }
     #toast { position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); z-index: 30; background: var(--t); color: var(--g); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
     #toast.on { opacity: 1; }
     /* == end == */
@@ -241,7 +246,7 @@
         <button id="btn-about" type="button" role="menuitem">About</button>
       </div>
     </div>
-    <input type="file" id="import-file" accept="application/json,.json" hidden />
+    <input type="file" id="import-file" accept="application/json,.json,.md,.markdown,.txt,text/markdown,text/plain" hidden />
   </header>
   <main id="main">
     <div id="grid"></div>
@@ -284,6 +289,7 @@
   <script src="../lib/discard-rule.js"></script>
   <script src="../lib/recent.js"></script>
   <script src="../lib/exporters.js"></script>
+  <script src="../lib/diff.js"></script>
   <script src="../lib/restore-plan.js"></script>
   <script src="../lib/ui.js"></script>
   <script src="../lib/shortcuts.js"></script>

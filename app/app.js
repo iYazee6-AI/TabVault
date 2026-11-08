@@ -368,7 +368,7 @@
       el("p", {}, "No other windows are open. TabVault lists every tab except its own."),
       el("div", { class: "links" },
         el("button", { type: "button", onclick: () => openDialog("snapshots") }, "Snapshots"),
-        el("button", { type: "button", onclick: () => $("import-file").click() }, "Import")));
+        el("button", { type: "button", onclick: () => openDialog("import") }, "Import")));
   }
 
   // Rendered once from the shortcut table; its text reads exactly TV.hintText().
@@ -744,6 +744,8 @@
     { id: "discardIdle", label: "Discard idle tabs now", run: () => discardIdleNow() },
     { id: "export", label: "Export", run: () => openDialog("export") },
     { id: "snapshots", label: "Snapshots", run: () => openDialog("snapshots") },
+    { id: "compare", label: "Compare latest snapshot with now", run: () => openDialog("compare") },
+    { id: "import", label: "Import (file or pasted links)", run: () => openDialog("import") },
     { id: "settings", label: "Settings", run: () => openDialog("settings") },
     { id: "sidePanel", label: "Open side panel", run: () => openSidePanel(), when: () => canOpenPanel() },
     { id: "saveCloseAll", label: "Save and close all windows", run: () => confirmSaveClose(state.session.windows.map((w) => w.id)) },
@@ -899,7 +901,7 @@
     $("sel-clear").addEventListener("click", clearSelection);
     $("btn-dupes").addEventListener("click", () => openDialog("duplicates"));
     $("btn-export").addEventListener("click", () => openDialog("export"));
-    $("btn-import").addEventListener("click", () => $("import-file").click());
+    $("btn-import").addEventListener("click", () => openDialog("import"));
     $("import-file").addEventListener("change", async (e) => {
       const f = e.target.files[0];
       e.target.value = "";
@@ -939,6 +941,7 @@
 
   window.TabVaultApp = {
     getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel, openPalette,
+    selectTabs: (ids) => { for (const id of ids) state.selected.add(id); render(); },
   };
 
   loadSettings().then(refresh).then(wire).then(loadRecent).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
