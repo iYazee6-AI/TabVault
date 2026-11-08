@@ -226,7 +226,7 @@ Unit: from 70 to about 105 (`lib/discard-rule.js` planIdle, `lib/shelves.js`, `l
 
 - Version 1.3.0 "Shelf"; branch `feature/1.3-shelf`; built on Opus by the plan's tasks in this order: (1) `lib/exporters.js` Markdown and the scheme filter (smallest, no UI risk), (2) `lib/diff.js` and the Compare view, (3) `lib/saved-index.js` and the palette's Saved section, (4) `lib/shelves.js`, `planIdle`, the migration, the Settings rules block and the Shelves section. Each task with its unit tests first; e2e after each; Naqid reviews the branch before any merge, with feature 1 as the focus.
 - Real-install checks before the upload (no automation covers them):
-  1. Verify in a real install that `writeText` works from the options page without `clipboardWrite`.
+  1. Verify in a real install that `writeText` works from the Export dialog on the main page (app/index.html) without `clipboardWrite`.
   2. A shelving rule at 15 minutes on a test site: the dry run lists the tabs, the switch unlocks, the tabs land on the shelf with their group and are closed, the active tab stays.
   3. Restore a shelved item whose group is gone: the group is recreated with its title and colour.
 - The listing's NEW IN 1.3 block (CHANGES text):
