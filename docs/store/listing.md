@@ -84,10 +84,10 @@ once the repository is public.
       it or cancel it first: one package in review at a time.
 - [ ] If you upload the local package instead (section 2 allows it), check
       it is the one built with the `v1.3.0` tag: `dist/tabvault-1.3.0.zip`,
-      521,650 bytes, SHA-256
-      `7fabba2b8772c18a9b916ec1bb573edc63c549f8133b34afbd5914b78c8a80fe`
+      525,817 bytes, SHA-256
+      `2c755a7d0e0bd782662d27067a75754366fd72ab537ad562cf0648aa62342b17`
       (`certutil -hashfile dist/tabvault-1.3.0.zip SHA256` or `sha256sum`).
-      Its 32 files match the `v1.3.0` tag (built 2026-11-08). The 1.2.0
+      Its 32 files match the `v1.3.0` tag (built 2026-11-08 from the merged main, Windows line endings). The zip stamps its build time, so a rebuild has a new hash: upload the zip this hash names, or check a rebuilt one file by file. The 1.2.0
       package (`dist/tabvault-1.2.0.zip`, SHA-256
       `a9ea9bb801c39ccf75ce91f58ff2aec9069e88f5374686c4108e7b1cc6a5e541`)
       is no longer the one to upload. A Release build zip has its own hash,
