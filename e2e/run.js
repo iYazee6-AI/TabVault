@@ -9,7 +9,7 @@ const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE"];
 const byId = new Map();
 const consoleErrors = { worker: [], app: [] };
 
@@ -1410,12 +1410,11 @@ async function main() {
       assert(note.includes("tabs an extension marked as not discardable") && !/form you are/i.test(note), "the never-unloaded note still promises unsaved forms or lacks the not-discardable line");
       await appPage.check("#ad-enabled");
       await appPage.selectOption("#ad-minutes", "15");
-      await appPage.fill("#ad-allow", "*.example.org");
       await appPage.click('#dialog button:has-text("Save")');
       const saved = await waitFor(async () => {
         const { settings } = await (await worker()).evaluate(() => chrome.storage.local.get("settings"));
         const ad = settings && settings.autoDiscard;
-        return ad && ad.enabled === true && ad.minutes === 15 && ad.allowlist.join() === "*.example.org" ? ad : null;
+        return ad && ad.enabled === true && ad.minutes === 15 ? ad : null;
       });
       // Off again before anything can fire: the 5-minute alarm must not discard during L and K.
       await (await worker()).evaluate(async () => {
@@ -1457,6 +1456,320 @@ async function main() {
       record("Z", "FAIL", e.message);
     }
     await resetUi().catch(() => {});
+
+    // ---------------------------------------------------------------
+    // 1.3 Shelf scenarios AA-AE. Restores in them run with lazy restore
+    // off (chrome.tabs.discard crashes Playwright's Chromium, see I-b);
+    // the idle rules run with the global unload setting off, so nothing
+    // is discarded. The AA fixture uses 127.0.0.1 (the same server) so a
+    // rule for that host touches no other fixture tab.
+    // ---------------------------------------------------------------
+    const ipBase = "http://127.0.0.1:8765/test-pages";
+    const settingsNow = async () => (await (await worker()).evaluate(() => chrome.storage.local.get("settings"))).settings || {};
+    async function patchSettings(patch) {
+      await (await worker()).evaluate(async (p) => {
+        const { settings = {} } = await chrome.storage.local.get("settings");
+        await chrome.storage.local.set({ settings: { ...settings, ...p } });
+      }, patch);
+      await appPage.evaluate(() => window.TabVaultApp.refresh()).catch(() => {});
+    }
+    async function openWindowWith(urls) {
+      const w = await (await worker()).evaluate((u) => chrome.windows.create({ url: u, focused: false }), urls);
+      const tabs = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), w.id);
+        return ts.length === urls.length && urls.every((u) => ts.some((t) => t.url === u && t.title && t.status === "complete")) ? ts.sort((a, b) => a.index - b.index) : null;
+      }, { timeout: 15000 });
+      return { win: w, tabs };
+    }
+    const tabGone = async (id) => (await worker()).evaluate((tid) => chrome.tabs.get(tid).then(() => false, () => true), id);
+    const shelfItems = async (shelfId) => (await worker()).evaluate((id) => self.TabVault.readShelf(chrome.storage.local, id), shelfId);
+    let aaShelfId = null;
+    let aaUrls = [];
+    try {
+      await appPage.evaluate(() => window.TabVaultApp.saveSettings({ lazyRestore: false }));
+    } catch (e) {
+      console.log("  could not turn lazy restore off: " + e.message);
+    }
+
+    // ---------------------------------------------------------------
+    // AA. Idle rules: a shelving rule is created off, its switch stays
+    // locked until the dry run, the dry run lists the fixture tabs, and
+    // Run idle rules now shelves the idle ones (never the active tab),
+    // tags their Recently closed entries, and records nothing there
+    // when "Remember recently closed tabs" is off
+    // ---------------------------------------------------------------
+    try {
+      aaUrls = [`${ipBase}/one.html?aa=1`, `${ipBase}/two.html?aa=1`, `${ipBase}/three.html?aa=1`];
+      const { win: winAA, tabs: tabsAA } = await openWindowWith(aaUrls);
+      const [activeAA, idle1, idle2] = tabsAA;
+      assert(activeAA.active, `the first fixture tab is not the active one: ${JSON.stringify(tabsAA.map((t) => [t.id, t.active]))}`);
+      const gid = await (await worker()).evaluate(({ tabId, windowId }) => chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId } }), { tabId: idle2.id, windowId: winAA.id });
+      await (await worker()).evaluate((g) => chrome.tabGroups.update(g, { title: "AA Grp", color: "red" }), gid);
+
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await openMenuItem("#btn-settings");
+      await appPage.waitForSelector("#rule-add");
+      await appPage.click("#rule-add");
+      await appPage.waitForSelector("#rule-editor");
+      await appPage.fill("#rule-pattern", "*.com");
+      await appPage.click("#rule-dry-run");
+      const refused = await waitForTextContains(appPage, "#rule-error", "whole domain ending");
+      await appPage.fill("#rule-pattern", "127.0.0.1");
+      await appPage.selectOption("#rule-minutes", "15");
+      await appPage.check('input[name="rule-action"][value="shelve"]');
+      await appPage.selectOption("#rule-shelf", "new");
+      await appPage.fill("#rule-new-shelf", "E2E Shelf");
+      const lockedBefore = await appPage.$eval("#rule-on", (n) => n.disabled);
+      assert(lockedBefore === true, "the On switch is not locked before the dry run");
+
+      await (await worker()).evaluate(() => { self.idleClockOffset = 3 * 3600000; });
+      await appPage.click("#rule-dry-run");
+      const dryText = await waitForTextContains(appPage, "#rule-dry-result", "would be shelved now");
+      assert(/2 tabs would be shelved now/.test(dryText) && dryText.includes("Two") && dryText.includes("Three") && !dryText.includes("One"), `dry run said "${dryText}"`);
+      const lockedAfter = await appPage.$eval("#rule-on", (n) => n.disabled);
+      assert(lockedAfter === false, "the On switch did not unlock after the dry run");
+      await appPage.selectOption("#rule-minutes", "30");
+      assert(await appPage.$eval("#rule-on", (n) => n.disabled), "changing the idle time did not lock the switch again");
+      await appPage.selectOption("#rule-minutes", "15");
+      assert(!(await appPage.$eval("#rule-on", (n) => n.disabled)), "going back to the dry-run values did not unlock it");
+      await appPage.check("#rule-on");
+      await appPage.click("#rule-save");
+      const savedRule = await waitFor(async () => {
+        const s = await settingsNow();
+        const r = (s.idleRules || []).find((x) => x.pattern === "127.0.0.1");
+        return r && r.enabled === true && r.previewedFor === "127.0.0.1|15" && r.shelfId ? r : null;
+      });
+      aaShelfId = savedRule.shelfId;
+      const recordedBefore = (await settingsNow()).recordClosed !== false;
+
+      await appPage.click("#idle-run-now");
+      await waitFor(async () => (await tabGone(idle1.id)) && (await tabGone(idle2.id)), { timeout: 10000 });
+      assert(!(await tabGone(activeAA.id)), "the active tab was shelved");
+      const items = await shelfItems(aaShelfId);
+      assert(items.length === 2 && items.some((x) => x.url === aaUrls[1]) && items.some((x) => x.url === aaUrls[2]), `shelf items ${JSON.stringify(items.map((x) => x.url))}`);
+      const grouped = items.find((x) => x.url === aaUrls[2]);
+      assert(grouped.group && grouped.group.title === "AA Grp" && grouped.group.color === "red", `the grouped item kept ${JSON.stringify(grouped.group)}`);
+      const tagged = await waitFor(async () => {
+        const list = (await (await worker()).evaluate(() => chrome.storage.local.get("recentlyClosed"))).recentlyClosed || [];
+        const mine = list.filter((e) => aaUrls.slice(1).includes(e.url));
+        return mine.length === 2 && mine.every((e) => e.shelf && e.shelf.id === aaShelfId) ? mine : null;
+      }, { timeout: 8000 });
+      const line = await waitForTextContains(appPage, "#ad-last-run", "2 shelved");
+
+      const extraUrl = `${ipBase}/one.html?aa=2`;
+      const extra = await (await worker()).evaluate(({ wid, url }) => chrome.tabs.create({ windowId: wid, url, active: false }), { wid: winAA.id, url: extraUrl });
+      await waitFor(async () => (await (await worker()).evaluate((id) => chrome.tabs.get(id), extra.id)).status === "complete", { timeout: 10000 });
+      await patchSettings({ recordClosed: false });
+      const run2 = await (await worker()).evaluate(() => self.runIdleRules({ manual: true }));
+      assert(run2.ok && run2.shelved === 1, `second run ${JSON.stringify(run2)}`);
+      await waitFor(async () => tabGone(extra.id));
+      await new Promise((r) => setTimeout(r, 1500));
+      const after = (await (await worker()).evaluate(() => chrome.storage.local.get("recentlyClosed"))).recentlyClosed || [];
+      assert(!after.some((e) => e.url === extraUrl), "a shelved tab was recorded while Remember recently closed tabs was off");
+      assert((await shelfItems(aaShelfId)).some((x) => x.url === extraUrl), "the third tab is not on the shelf");
+      await patchSettings({ recordClosed: recordedBefore });
+      record("AA", "PASS", `"*.com" refused ("${refused.trim()}"); rule 127.0.0.1 / 15 min / shelve to a new shelf created with the switch locked; the dry run said "${dryText.trim()}" and unlocked it (a changed time locked it again); saved on ${JSON.stringify(savedRule)}; Run idle rules now shelved ${idle1.id} and ${idle2.id} (the active ${activeAA.id} stayed), the grouped item kept AA Grp/red, both Recently closed entries tagged with the shelf (${tagged.map((e) => e.shelf.name).join(", ")}); line "${line}"; with Remember recently closed off a third shelved tab left no entry`);
+    } catch (e) {
+      record("AA", "FAIL", e.message);
+    }
+    // The rule off and the clock back, so the 5-minute alarm cannot shelve anything later.
+    await (await worker()).evaluate(async () => {
+      self.idleClockOffset = 0;
+      const { settings = {} } = await chrome.storage.local.get("settings");
+      await chrome.storage.local.set({ settings: { ...settings, idleRules: (settings.idleRules || []).map((r) => ({ ...r, enabled: false })) } });
+    }).catch(() => {});
+    await resetUi().catch(() => {});
+
+    // ---------------------------------------------------------------
+    // AB. The Shelves section: listed with its count and rule, Open
+    // brings the grouped item back into a recreated group (the item
+    // stays), Open and remove takes it off the shelf
+    // ---------------------------------------------------------------
+    try {
+      assert(aaShelfId, "no shelf from AA");
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await appPage.waitForSelector("#shelves:not([hidden])");
+      assert(await appPage.$eval("#shelves-list", (n) => n.hidden), "the Shelves section is not collapsed by default");
+      await appPage.click("#shelves-toggle");
+      const head = await waitForTextContains(appPage, `.shelf[data-shelf="${aaShelfId}"] .btitle`, "3 tabs");
+      assert(head.includes("E2E Shelf") && head.includes('from rule "127.0.0.1"'), `shelf header "${head}"`);
+      await appPage.click(`.shelf[data-shelf="${aaShelfId}"] .s-toggle`);
+      await appPage.waitForSelector(`.shelf[data-shelf="${aaShelfId}"] .srow`);
+      const items = await shelfItems(aaShelfId);
+      const grouped = items.find((x) => x.url === aaUrls[2]);
+      const ownWindow = await appPage.evaluate(() => chrome.tabs.getCurrent().then((x) => x.windowId));
+      await appPage.click(`.srow[data-item="${grouped.id}"] .s-open`);
+      const opened = await waitFor(async () => {
+        const ts = await (await worker()).evaluate((url) => chrome.tabs.query({ url }), aaUrls[2]);
+        return ts[0] && ts[0].groupId !== -1 ? ts[0] : null;
+      }, { timeout: 10000 });
+      const g = await (await worker()).evaluate((id) => chrome.tabGroups.get(id), opened.groupId);
+      assert(opened.windowId === ownWindow && g.title === "AA Grp" && g.color === "red", `opened in window ${opened.windowId} (own ${ownWindow}) group ${JSON.stringify(g)}`);
+      assert((await shelfItems(aaShelfId)).length === 3, "Open removed the item");
+      const plain = items.find((x) => x.url === aaUrls[1]);
+      await appPage.click(`.srow[data-item="${plain.id}"] .s-open-remove`);
+      await waitFor(async () => (await shelfItems(aaShelfId)).length === 2, { timeout: 8000 });
+      const reopened = await waitFor(async () => (await (await worker()).evaluate((url) => chrome.tabs.query({ url }), aaUrls[1]))[0] || null, { timeout: 8000 });
+      await waitForTextContains(appPage, `.shelf[data-shelf="${aaShelfId}"] .btitle`, "2 tabs");
+      await (await worker()).evaluate((ids) => chrome.tabs.remove(ids), [opened.id, reopened.id]).catch(() => {});
+      record("AB", "PASS", `Shelves listed collapsed, then "${head.trim()}"; Open put ${aaUrls[2]} back in the current window ${ownWindow} inside a recreated group ${JSON.stringify({ title: g.title, color: g.color })} and kept it on the shelf; Open and remove reopened ${aaUrls[1]} and the shelf went to 2 tabs`);
+    } catch (e) {
+      record("AB", "FAIL", e.message);
+    }
+    await resetUi().catch(() => {});
+
+    // ---------------------------------------------------------------
+    // AC. Compare a snapshot with now: one tab closed and one opened
+    // since show as one missing and one new; Reopen missing brings it back
+    // ---------------------------------------------------------------
+    try {
+      const acUrls = [`${oneUrl}?ac=1`, `${twoUrl}?ac=1`];
+      const { win: winAC, tabs: tabsAC } = await openWindowWith(acUrls);
+      const snap = await appPage.evaluate(() => chrome.runtime.sendMessage({ type: "snapshotNow" }));
+      assert(snap && snap.ok && snap.id, `snapshot ${JSON.stringify(snap)}`);
+      const newUrl = `${threeUrl}?ac=1`;
+      await (await worker()).evaluate((id) => chrome.tabs.remove(id), tabsAC[1].id);
+      await (await worker()).evaluate(({ wid, url }) => chrome.tabs.create({ windowId: wid, url, active: false }), { wid: winAC.id, url: newUrl });
+      await waitFor(async () => (await (await worker()).evaluate((url) => chrome.tabs.query({ url }), newUrl)).some((t) => t.status === "complete"), { timeout: 10000 });
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await appPage.click("#btn-snapshots");
+      await appPage.waitForSelector(`[data-snapshot="${snap.id}"] button.compare`);
+      await appPage.click(`[data-snapshot="${snap.id}"] button.compare`);
+      const counts = await waitForTextContains(appPage, "#compare-counts", "Missing now");
+      const missing = await appPage.$$eval('#compare-missing .crow[data-kind="missing"]', (ns) => ns.map((n) => n.dataset.url));
+      const added = await appPage.$$eval('#compare-added .crow[data-kind="added"]', (ns) => ns.map((n) => n.dataset.url));
+      assert(missing.length === 1 && missing[0] === acUrls[1], `missing ${JSON.stringify(missing)}`);
+      assert(added.length === 1 && added[0] === newUrl, `new since ${JSON.stringify(added)}`);
+      await appPage.click("#compare-reopen-new");
+      const back = await waitFor(async () => (await (await worker()).evaluate((url) => chrome.tabs.query({ url }), acUrls[1]))[0] || null, { timeout: 10000 });
+      await waitForTextContains(appPage, "#compare-counts", "Missing now 0");
+      await (await worker()).evaluate((ids) => Promise.all(ids.map((id) => chrome.windows.remove(id).catch(() => {}))), [winAC.id, back.windowId]);
+      record("AC", "PASS", `snapshot ${snap.id}, then ${acUrls[1]} closed and ${newUrl} opened: Compare showed "${counts.trim()}" with missing ${JSON.stringify(missing)} and new ${JSON.stringify(added)}; Reopen 1 in a new window brought it back (window ${back.windowId}) and the count went to 0`);
+    } catch (e) {
+      record("AC", "FAIL", e.message);
+    }
+    await resetUi().catch(() => {});
+
+    // ---------------------------------------------------------------
+    // AD. Saved search in the palette: two snapshots and a shelf hold
+    // the word; the Saved section lists the snapshot URL once with
+    // "+1 older", Enter opens it, Open all opens every match
+    // ---------------------------------------------------------------
+    try {
+      const sUrl = `${oneUrl}?saved=quokka`;
+      const shUrl = `${twoUrl}?saved=quokka`;
+      await (await worker()).evaluate(async ({ sUrl: a, shUrl: b }) => {
+        const TV = self.TabVault;
+        const session = { schema: 1, windows: [{ id: 1, type: "normal", windowName: "AD research", groups: [], tabs: [{ id: 1, index: 0, url: a, title: "Quokka field notes", groupId: null }] }] };
+        await TV.addSnapshot(chrome.storage.local, TV.makeSnapshot(session, "change", Date.now() - 2 * 3600000), 20);
+        await TV.addSnapshot(chrome.storage.local, TV.makeSnapshot(session, "change", Date.now() - 3600000), 20);
+        const shelf = await TV.createShelf(chrome.storage.local, "AD shelf");
+        await TV.appendItems(chrome.storage.local, shelf.id, [TV.shelfItem({ url: b, title: "Quokka shelf page" }, { savedAt: Date.now() })]);
+      }, { sUrl, shUrl });
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await blurAll();
+      await appPage.keyboard.press("Alt+K");
+      await appPage.waitForSelector("#palette-backdrop:not([hidden])");
+      await appPage.keyboard.type("quokka");
+      const rows = await waitFor(async () => {
+        const rs = await appPage.$$eval("#palette-list .prow", (ns) => ns.map((n) => ({ kind: n.dataset.kind, url: n.dataset.url || "", text: n.textContent, marks: [...n.querySelectorAll("mark")].map((m) => m.textContent) })));
+        return rs.filter((r) => r.kind === "saved").length === 2 ? rs : null;
+      }, { timeout: 8000 });
+      const snapRow = rows.findIndex((r) => r.url === sUrl);
+      assert(snapRow >= 0 && rows[snapRow].text.includes("+1 older") && rows[snapRow].text.includes("snapshot") && rows[snapRow].text.includes("AD research"), `snapshot row ${JSON.stringify(rows[snapRow])}`);
+      assert(rows[snapRow].marks.includes("Quokka"), `no highlight in ${JSON.stringify(rows[snapRow])}`);
+      assert(rows.some((r) => r.url === shUrl && r.text.includes("shelf AD shelf")), `shelf row missing: ${JSON.stringify(rows)}`);
+      assert(rows[rows.length - 1].kind === "openAll", `last row ${JSON.stringify(rows[rows.length - 1])}`);
+      const section = await appPage.$$eval("#palette-list .psection", (ns) => ns.map((n) => n.textContent));
+      assert(section.includes("Saved"), `sections ${JSON.stringify(section)}`);
+      for (let i = 0; i < snapRow; i++) await appPage.keyboard.press("ArrowDown");
+      await appPage.keyboard.press("Enter");
+      const openedSaved = await waitFor(async () => (await (await worker()).evaluate((url) => chrome.tabs.query({ url }), sUrl))[0] || null, { timeout: 10000 });
+      await appPage.bringToFront();
+      await (await worker()).evaluate((id) => chrome.tabs.remove(id), openedSaved.id);
+      await waitFor(async () => tabGone(openedSaved.id));
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await blurAll();
+      await appPage.keyboard.press("Alt+K");
+      await appPage.waitForSelector("#palette-backdrop:not([hidden])");
+      await appPage.keyboard.type("quokka");
+      await waitFor(async () => (await appPage.$$eval('#palette-list .prow[data-kind="openAll"]', (ns) => ns.length)) === 1, { timeout: 8000 });
+      await appPage.keyboard.press("ArrowUp");
+      const allText = await appPage.$eval("#palette-list .prow.on", (n) => n.textContent);
+      await appPage.keyboard.press("Enter");
+      const both = await waitFor(async () => {
+        const all = await (await worker()).evaluate(() => chrome.tabs.query({}));
+        const a = all.find((t) => t.url === sUrl);
+        const b = all.find((t) => t.url === shUrl);
+        return a && b && a.windowId === b.windowId ? a.windowId : null;
+      }, { timeout: 10000 });
+      await appPage.bringToFront();
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), both).catch(() => {});
+      record("AD", "PASS", `"quokka" listed 2 saved rows (the snapshot URL once with "+1 older", highlighted, and the shelf item) under a Saved section; Enter opened ${sUrl}; "${allText.trim()}" opened both in window ${both}`);
+    } catch (e) {
+      record("AD", "FAIL", e.message);
+    }
+    await appPage.keyboard.press("Escape").catch(() => {});
+    await appPage.bringToFront().catch(() => {});
+    await resetUi().catch(() => {});
+
+    // ---------------------------------------------------------------
+    // AE. Markdown: export the selected tabs of a fixture window as
+    // Markdown (download captured), paste it into Import with one
+    // javascript: link added, restore, compare the URLs and the group
+    // ---------------------------------------------------------------
+    try {
+      const aeUrls = [`${oneUrl}?ae=1`, `${twoUrl}?ae=1`, `${threeUrl}?ae=1`];
+      const { win: winAE, tabs: tabsAE } = await openWindowWith(aeUrls);
+      const gid = await (await worker()).evaluate(({ ids, windowId }) => chrome.tabs.group({ tabIds: ids, createProperties: { windowId } }), { ids: [tabsAE[1].id, tabsAE[2].id], windowId: winAE.id });
+      await (await worker()).evaluate((g) => chrome.tabGroups.update(g, { title: "AE Grp", color: "green" }), gid);
+      await appPage.evaluate(() => window.TabVaultApp.refresh());
+      await appPage.waitForSelector(`.window[data-window="${winAE.id}"]`);
+      for (const t of tabsAE) await appPage.click(`.tab[data-tab="${t.id}"] input[type=checkbox]`);
+      await openMenuItem("#btn-export");
+      await appPage.waitForSelector("#export-what-selected");
+      await appPage.check("#export-what-selected");
+      await appPage.check("#export-format-markdown");
+      await waitFor(async () => appPage.$eval("#export-download", (n) => !n.disabled && n.textContent === "Download Markdown"));
+      const downloadPromise = appPage.waitForEvent("download");
+      await appPage.click("#export-download");
+      const download = await downloadPromise;
+      const mdFile = path.join(DOWNLOAD_DIR, download.suggestedFilename());
+      await download.saveAs(mdFile);
+      const md = fs.readFileSync(mdFile, "utf8");
+      assert(/[.]md$/.test(mdFile) && md.includes("### AE Grp") && aeUrls.every((u) => md.includes(`](${u})`)), `markdown export:${md}`);
+      await clearSelection();
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), winAE.id);
+      await waitFor(async () => (await (await worker()).evaluate((id) => chrome.windows.get(id).then(() => false, () => true), winAE.id)));
+
+      await openMenuItem("#btn-import");
+      await appPage.waitForSelector("#import-paste");
+      await appPage.fill("#import-paste", md + "- [bad](javascript:alert(1))" + String.fromCharCode(10));
+      const summary = await waitForTextContains(appPage, "#import-summary", "Found 1 window, 3 tabs, 1 group");
+      assert(summary.includes("1 link skipped: not web pages"), `summary "${summary}"`);
+      const before = new Set((await (await worker()).evaluate(() => chrome.windows.getAll())).map((w) => w.id));
+      await appPage.click('#dialog button:has-text("Restore selected windows")');
+      await waitForTextContains(appPage, "#dialog h2", "Import complete");
+      const restored = await waitFor(async () => {
+        const wins = await (await worker()).evaluate(() => chrome.windows.getAll({ populate: true }));
+        const w = wins.find((x) => !before.has(x.id));
+        return w && w.tabs.length === 3 ? w : null;
+      }, { timeout: 10000 });
+      const got = restored.tabs.sort((a, b) => a.index - b.index).map((t) => t.url || t.pendingUrl);
+      assert(JSON.stringify(got) === JSON.stringify(aeUrls), `restored ${JSON.stringify(got)}`);
+      const groups = await (await worker()).evaluate((id) => chrome.tabGroups.query({ windowId: id }), restored.id);
+      assert(groups.length === 1 && groups[0].title === "AE Grp", `restored groups ${JSON.stringify(groups)}`);
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), restored.id).catch(() => {});
+      record("AE", "PASS", `exported the 3 selected tabs as ${path.basename(mdFile)} (### AE Grp, three links), pasted it back with a javascript: link: "${summary.trim()}"; restored window ${restored.id} with the same URLs in order and the group "AE Grp"`);
+    } catch (e) {
+      record("AE", "FAIL", e.message);
+    }
+    await resetUi().catch(() => {});
+    try {
+      await appPage.evaluate(() => window.TabVaultApp.saveSettings({ lazyRestore: true }));
+    } catch (e) {
+      console.log("  could not turn lazy restore back on: " + e.message);
+    }
 
 
 

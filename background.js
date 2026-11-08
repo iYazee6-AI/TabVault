@@ -251,14 +251,15 @@ async function shelveNow(picks, input) {
 }
 
 let discardRunning = null;
-// force: the manual run ("Run idle rules now"), which applies the global setting even while it is
-// off. The alarm's run applies the global setting only when it is on; rules whenever they are on.
-function runAutoDiscard({ now = idleNow(), force = false } = {}) {
+// The alarm and "Run idle rules now" (manual) apply the global setting only when it is on and
+// the rules whenever they are on. force (the palette's "Discard idle tabs now", as in 1.2)
+// applies the global setting even while it is off.
+function runAutoDiscard({ now = idleNow(), force = false, manual = false } = {}) {
   if (discardRunning) return discardRunning;
   discardRunning = (async () => {
     const input = await idleInputs();
     const plan = TV.planIdle(input.tabs, input.groups, input.settings, now, { ownPrefix: OWN_PREFIX, windows: input.windows, shelfIds: input.shelfIds, force });
-    if (!plan.eligible && !force) return { ok: true, skipped: true };
+    if (!plan.eligible && !force && !manual) return { ok: true, skipped: true };
     let unloaded = 0;
     let failed = 0;
     for (const id of plan.unload) {
@@ -271,7 +272,7 @@ function runAutoDiscard({ now = idleNow(), force = false } = {}) {
     }
     const sh = await shelveNow(plan.shelve, input).catch(() => ({ shelved: 0, failed: plan.shelve.length }));
     failed += sh.failed;
-    const lastRun = { at: Date.now(), unloaded, shelved: sh.shelved, failed, waiting: plan.waiting, manual: Boolean(force) };
+    const lastRun = { at: Date.now(), unloaded, shelved: sh.shelved, failed, waiting: plan.waiting, manual: Boolean(force || manual) };
     await chrome.storage.session.set({ [LAST_RUN_KEY]: lastRun }).catch(() => {});
     scheduleBadge();
     return { ok: true, ...lastRun };
@@ -448,8 +449,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       enqueue(async () => { await TV.pinSnapshot(chrome.storage.local, msg.id, msg.pinned); return { ok: true }; }).then(reply, fail);
       return true;
     case "openPage": openPage().then(() => reply({ ok: true }), fail); return true;
-    case "discardIdleNow":
-    case "runIdleNow": runAutoDiscard({ force: true }).then(reply, fail); return true;
+    case "discardIdleNow": runAutoDiscard({ force: true }).then(reply, fail); return true;
+    case "runIdleNow": runAutoDiscard({ manual: true }).then(reply, fail); return true;
     case "idleDryRun": idleDryRun(msg.rule || {}).then(reply, fail); return true;
     case "shelveTabs": shelveTabs(msg).then(reply, fail); return true;
     case "shelfCreate":

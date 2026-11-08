@@ -1149,7 +1149,9 @@
       if (changes[TV.WINDOW_NAMES_KEY]) scheduleRefresh();
       if (changes[TV.RECENT_KEY]) loadRecent().catch(console.error);
       if (Object.keys(changes).some((k) => k === TV.SHELF_INDEX_KEY || k.startsWith("shelf:"))) scheduleShelves();
-      if (changes.settings) renderShelves();
+      // Settings written elsewhere (the worker's 1.3 migration, another TabVault page) are taken
+      // over, so a later save here never writes back a stale copy.
+      if (changes.settings) { state.settings = TV.withDefaults(changes.settings.newValue); applySettings(); renderShelves(); }
       if (Object.keys(changes).some((k) => k === TV.RECENT_KEY || k === TV.SNAP_INDEX_KEY || k.startsWith("snap:") || k === TV.SHELF_INDEX_KEY || k.startsWith("shelf:"))) savedChanged();
     });
     $("recent-toggle").addEventListener("click", () => { state.recentOpen = !state.recentOpen; renderRecent(); });
