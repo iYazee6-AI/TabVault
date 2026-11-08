@@ -32,7 +32,7 @@ once the repository is public.
 
 ## 1. Pre-submission checklist
 
-- [ ] `npm test` passes (122 tests).
+- [ ] `npm test` passes (123 tests).
 - [ ] `npm run e2e` passes (32 scenarios; scenarios I-b and Z are expected to
       report LIMITED on this machine — `chrome.tabs.discard` crashes Playwright's
       bundled Chromium, see `e2e/README.md`. LIMITED is a pass for release
@@ -77,14 +77,21 @@ once the repository is public.
       Run workflow**, and was downloaded from the GitHub Release
       `v<manifest version>.<run number>` that the workflow created (for
       example `v1.0.0.7`). That zip is the upload. Never hand-make one.
+- [ ] **The 1.3.0 package supersedes 1.2.0.** If 1.2.0 has not been
+      uploaded yet, upload 1.3.0 instead (it carries everything in 1.2.0;
+      paste the NEW IN 1.3 block from section 14 and keep the NEW IN 1.2
+      bullets below it if you like). If 1.2.0 is already in review, wait for
+      it or cancel it first: one package in review at a time.
 - [ ] If you upload the local package instead (section 2 allows it), check
-      it is the one built with the `v1.2.0` tag: `dist/tabvault-1.2.0.zip`,
-      415,960 bytes, SHA-256
-      `a9ea9bb801c39ccf75ce91f58ff2aec9069e88f5374686c4108e7b1cc6a5e541`
-      (`certutil -hashfile dist/tabvault-1.2.0.zip SHA256` or `sha256sum`).
-      Its 29 files match the `v1.2.0` tag (checked 2026-11-08, line endings
-      aside). A Release build zip has its own hash, since the run number is
-      stamped into its manifest.
+      it is the one built with the `v1.3.0` tag: `dist/tabvault-1.3.0.zip`,
+      521,650 bytes, SHA-256
+      `7fabba2b8772c18a9b916ec1bb573edc63c549f8133b34afbd5914b78c8a80fe`
+      (`certutil -hashfile dist/tabvault-1.3.0.zip SHA256` or `sha256sum`).
+      Its 32 files match the `v1.3.0` tag (built 2026-11-08). The 1.2.0
+      package (`dist/tabvault-1.2.0.zip`, SHA-256
+      `a9ea9bb801c39ccf75ce91f58ff2aec9069e88f5374686c4108e7b1cc6a5e541`)
+      is no longer the one to upload. A Release build zip has its own hash,
+      since the run number is stamped into its manifest.
 
 ## 2. Build the package
 

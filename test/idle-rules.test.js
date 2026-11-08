@@ -184,3 +184,16 @@ test("fix 5: a Unicode host is accepted and stored as its ASCII (punycode) form"
   const p = plan([anchor(), tab], settings({ rules: [rule({ pattern: normalizePattern("bücher.example"), action: "unload" })] }));
   assert.deepEqual(p.unload, [tab.id]);
 });
+
+test("Allow it after a value change does not unlock: the large-match key must match the current values", () => {
+  const { allowLargeKey } = require("../lib/discard-rule.js");
+  const ran = ruleKey({ pattern: "news.example.com", idleMinutes: 60, action: "shelve" });
+  assert.equal(allowLargeKey(ran, ran), ran);
+  for (const changed of [{ idleMinutes: 30 }, { pattern: "other.example.com" }, { action: "unload" }]) {
+    const now = ruleKey({ pattern: "news.example.com", idleMinutes: 60, action: "shelve", ...changed });
+    const key = allowLargeKey(ran, now);
+    assert.equal(key, "", JSON.stringify(changed));
+    if (!changed.action) assert.equal(ruleUnlocked({ pattern: "news.example.com", idleMinutes: 60, action: "shelve", ...changed, previewedFor: key }), false);
+  }
+  assert.equal(allowLargeKey("", ""), "");
+});

@@ -754,13 +754,15 @@
         try {
           const ranKey = key();
           const out = await runDry(rule);
+          // Values changed while the dry run ran: its result is for a rule no longer on screen.
+          if (key() !== ranKey) return;
           shownKey = ranKey;
           dryOut.replaceChildren(el("p", {}, dryText(out, rule)), out.tabs.length ? dryList(out) : "");
           const gate = TV.dryRunUnlock(out.matchCount, false);
           if (draft.action === "shelve" && gate.needsConfirm) {
             dryKey = "";
             confirmLarge.replaceChildren(el("span", {}, `This rule matches ${out.matchCount} open tabs. Turn it on anyway?`),
-              el("button", { type: "button", class: "small", id: "rule-confirm-large", onclick: () => { if (key() === ranKey) dryKey = ranKey; confirmLarge.hidden = true; sync(); } }, "Allow it"));
+              el("button", { type: "button", class: "small", id: "rule-confirm-large", onclick: () => { dryKey = TV.allowLargeKey(ranKey, key()); confirmLarge.hidden = true; sync(); } }, "Allow it"));
             confirmLarge.hidden = false;
           } else {
             dryKey = ranKey;
