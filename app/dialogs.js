@@ -725,9 +725,13 @@
       const error = el("p", { class: "muted", id: "rule-error" });
       let dryKey = editing.dryKey || "";
       on.checked = isNew ? draft.action !== "shelve" : Boolean(draft.enabled);
-      const key = () => TV.ruleKey({ pattern: TV.normalizePattern(pattern.value), idleMinutes: Number(minutes.value) });
+      // The dry-run key covers the pattern, the time and the action (lib/discard-rule.js ruleKey):
+      // a dry run made as Unload or Never does not unlock the rule once it is set to Shelve.
+      const key = () => TV.ruleKey({ pattern: TV.normalizePattern(pattern.value), idleMinutes: Number(minutes.value), action: draft.action });
+      let shownKey = "";
       const unlocked = () => draft.action !== "shelve" || (dryKey && dryKey === key());
       function relock() {
+        if (shownKey && key() !== shownKey) { dryOut.replaceChildren(); confirmLarge.hidden = true; shownKey = ""; }
         if (!unlocked()) on.checked = false;
       }
       function sync() {
@@ -748,16 +752,18 @@
         const rule = { id: draft.id, pattern: p, idleMinutes: Number(minutes.value), action: draft.action, shelfId: draft.action === "shelve" ? shelfSel.value : null, enabled: true, previewedFor: "" };
         dryBtn.disabled = true;
         try {
+          const ranKey = key();
           const out = await runDry(rule);
+          shownKey = ranKey;
           dryOut.replaceChildren(el("p", {}, dryText(out, rule)), out.tabs.length ? dryList(out) : "");
           const gate = TV.dryRunUnlock(out.matchCount, false);
           if (draft.action === "shelve" && gate.needsConfirm) {
             dryKey = "";
             confirmLarge.replaceChildren(el("span", {}, `This rule matches ${out.matchCount} open tabs. Turn it on anyway?`),
-              el("button", { type: "button", class: "small", id: "rule-confirm-large", onclick: () => { dryKey = key(); confirmLarge.hidden = true; sync(); } }, "Allow it"));
+              el("button", { type: "button", class: "small", id: "rule-confirm-large", onclick: () => { if (key() === ranKey) dryKey = ranKey; confirmLarge.hidden = true; sync(); } }, "Allow it"));
             confirmLarge.hidden = false;
           } else {
-            dryKey = key();
+            dryKey = ranKey;
             confirmLarge.hidden = true;
           }
         } catch (e) {

@@ -232,7 +232,8 @@ async function closeShelved(ids) {
     const w = windows.find((x) => (x.tabs || []).some((t) => closing.has(t.id)));
     if (w) await chrome.tabs.create({ windowId: w.id, active: true });
   }
-  await chrome.tabs.remove(ids);
+  // One by one (lib/shelves.js closeEach): a tab the user closed meanwhile does not keep the rest open.
+  await TV.closeEach(ids, (id) => chrome.tabs.remove(id));
 }
 
 async function shelveNow(picks, input) {

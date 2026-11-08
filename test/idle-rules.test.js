@@ -123,7 +123,7 @@ test("when shelving would leave no normal window, the last tab is unloaded inste
 test("a pattern must leave a registrable domain", () => {
   for (const bad of ["*.com", "*.co.uk", "*.com.sa", "com", "co.uk", "", "two words.com", "a.com, b.com"]) assert.ok(patternError(bad), `${bad} accepted`);
   for (const ok of ["news.example.com", "*.example.com", "example.co.uk", "*.shop.com.sa", "127.0.0.1", "https://news.example.com/path"]) assert.equal(patternError(ok), null, ok);
-  assert.equal(ruleKey({ pattern: "a.com", idleMinutes: 15 }), "a.com|15");
+  assert.equal(ruleKey({ pattern: "a.com", idleMinutes: 15, action: "shelve" }), "a.com|15|shelve");
 });
 
 test("the dry run lists what the rule would do now; more than 50 matches needs a second confirmation", () => {
@@ -139,4 +139,48 @@ test("the dry run lists what the rule would do now; more than 50 matches needs a
   const earlier = rule({ action: "never" });
   const d2 = dryRunRule(r, tabs, [], settings({ rules: [earlier, r] }), NOW, { windows: [{ id: 1, type: "normal" }] });
   assert.equal(d2.tabs.length, 0, "an earlier never rule wins in the dry run too");
+});
+
+// ---- Naqid's fix round (2026-11-08) ------------------------------------------------
+const { normalizePattern, hostOf } = require("../lib/discard-rule.js");
+
+test("fix 1: the dry-run key covers the action, so a dry run as Unload does not unlock Shelve", () => {
+  const asUnload = { pattern: "news.example.com", idleMinutes: 60, action: "unload" };
+  const shelving = { ...asUnload, action: "shelve", shelfId: "s1", enabled: true, previewedFor: ruleKey(asUnload) };
+  assert.notEqual(ruleKey(asUnload), ruleKey(shelving));
+  assert.equal(ruleUnlocked(shelving), false);
+  const news = t({ url: "https://news.example.com/a" });
+  assert.deepEqual(plan([anchor(), news], settings({ rules: [{ id: "rx", ...shelving }] })).shelve, []);
+  assert.equal(ruleUnlocked({ ...shelving, previewedFor: ruleKey(shelving) }), true);
+});
+
+test("fix 2: only http and https tabs have a host for the rules; file://server/share never matches", () => {
+  assert.equal(hostOf("file://server.local/share/a.html"), "");
+  assert.equal(hostOf("ftp://server.local/a"), "");
+  assert.equal(hostOf("https://server.local/a"), "server.local");
+  const share = t({ url: "file://server.local/share/a.html" });
+  for (const action of ["unload", "shelve"]) {
+    const p = plan([anchor(), share], settings({ rules: [rule({ pattern: "server.local", action, shelfId: "s1" })] }));
+    assert.deepEqual([p.unload, p.shelve], [[], []], action);
+  }
+});
+
+test("fix 4: a tab still loading, or with only a pendingUrl, is exempt", () => {
+  const loading = t({ url: "https://news.example.com/l", status: "loading" });
+  const pending = t({ url: "", pendingUrl: "https://news.example.com/p" });
+  const done = t({ url: "https://news.example.com/d", status: "complete" });
+  const p = plan([anchor(), loading, pending, done], settings({ rules: [rule({ action: "shelve", shelfId: "s1" })], global: { enabled: true } }));
+  assert.deepEqual(p.shelve.map((x) => x.id), [done.id]);
+  assert.deepEqual(p.unload, []);
+  assert.ok(p.skipped.exempt >= 3);
+});
+
+test("fix 5: a Unicode host is accepted and stored as its ASCII (punycode) form", () => {
+  assert.equal(patternError("bücher.example"), null);
+  assert.equal(normalizePattern("bücher.example"), "xn--bcher-kva.example");
+  assert.equal(normalizePattern("*.bücher.de"), "*.xn--bcher-kva.de");
+  assert.ok(patternError("*.ελ"), "a wildcard over a one-label Unicode suffix is still refused");
+  const tab = t({ url: "https://www.bücher.example/x" });
+  const p = plan([anchor(), tab], settings({ rules: [rule({ pattern: normalizePattern("bücher.example"), action: "unload" })] }));
+  assert.deepEqual(p.unload, [tab.id]);
 });

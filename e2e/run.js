@@ -1516,13 +1516,34 @@ async function main() {
       const refused = await waitForTextContains(appPage, "#rule-error", "whole domain ending");
       await appPage.fill("#rule-pattern", "127.0.0.1");
       await appPage.selectOption("#rule-minutes", "15");
+
+      // Naqid fix 1: a dry run made as Unload (here on 60 more tabs of the host) must not unlock
+      // the rule once it is switched to Shelve; the Shelve dry run brings back the 50-tab question.
+      const bigUrls = Array.from({ length: 60 }, (_, n) => `${ipBase}/one.html?big=${n}`);
+      const bigWin = await (await worker()).evaluate((u) => chrome.windows.create({ url: u, focused: false }), bigUrls);
+      await waitFor(async () => {
+        const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), bigWin.id);
+        return ts.length === 60 && ts.every((x) => x.status === "complete" && String(x.url).includes("?big="));
+      }, { timeout: 60000, interval: 500 });
+      await (await worker()).evaluate(() => { self.idleClockOffset = 3 * 3600000; });
+      await appPage.check('input[name="rule-action"][value="unload"]');
+      await appPage.click("#rule-dry-run");
+      await waitForTextContains(appPage, "#rule-dry-result", "would be unloaded now");
+      assert(!(await appPage.$eval("#rule-on", (n) => n.disabled)), "an Unload rule's switch is locked");
       await appPage.check('input[name="rule-action"][value="shelve"]');
+      assert(await appPage.$eval("#rule-on", (n) => n.disabled), "switching from Unload to Shelve after an Unload dry run left the switch unlocked");
+      assert((await appPage.$eval("#rule-dry-result", (n) => n.textContent)) === "", "the Unload preview is still shown for the Shelve rule");
       await appPage.selectOption("#rule-shelf", "new");
       await appPage.fill("#rule-new-shelf", "E2E Shelf");
       const lockedBefore = await appPage.$eval("#rule-on", (n) => n.disabled);
       assert(lockedBefore === true, "the On switch is not locked before the dry run");
+      await appPage.click("#rule-dry-run");
+      const largeText = await waitForTextContains(appPage, "#rule-confirm-box", "Turn it on anyway?");
+      assert(/matches 6[0-9] open tabs/.test(largeText), `the large-match question said "${largeText}"`);
+      assert(await appPage.$eval("#rule-on", (n) => n.disabled), "the switch unlocked above 50 matches without the second confirmation");
+      await (await worker()).evaluate((id) => chrome.windows.remove(id), bigWin.id);
+      await waitFor(async () => (await (await worker()).evaluate((id) => chrome.windows.get(id).then(() => false, () => true), bigWin.id)));
 
-      await (await worker()).evaluate(() => { self.idleClockOffset = 3 * 3600000; });
       await appPage.click("#rule-dry-run");
       const dryText = await waitForTextContains(appPage, "#rule-dry-result", "would be shelved now");
       assert(/2 tabs would be shelved now/.test(dryText) && dryText.includes("Two") && dryText.includes("Three") && !dryText.includes("One"), `dry run said "${dryText}"`);
@@ -1537,7 +1558,7 @@ async function main() {
       const savedRule = await waitFor(async () => {
         const s = await settingsNow();
         const r = (s.idleRules || []).find((x) => x.pattern === "127.0.0.1");
-        return r && r.enabled === true && r.previewedFor === "127.0.0.1|15" && r.shelfId ? r : null;
+        return r && r.enabled === true && r.previewedFor === "127.0.0.1|15|shelve" && r.shelfId ? r : null;
       });
       aaShelfId = savedRule.shelfId;
       const recordedBefore = (await settingsNow()).recordClosed !== false;
@@ -1568,7 +1589,7 @@ async function main() {
       assert(!after.some((e) => e.url === extraUrl), "a shelved tab was recorded while Remember recently closed tabs was off");
       assert((await shelfItems(aaShelfId)).some((x) => x.url === extraUrl), "the third tab is not on the shelf");
       await patchSettings({ recordClosed: recordedBefore });
-      record("AA", "PASS", `"*.com" refused ("${refused.trim()}"); rule 127.0.0.1 / 15 min / shelve to a new shelf created with the switch locked; the dry run said "${dryText.trim()}" and unlocked it (a changed time locked it again); saved on ${JSON.stringify(savedRule)}; Run idle rules now shelved ${idle1.id} and ${idle2.id} (the active ${activeAA.id} stayed), the grouped item kept AA Grp/red, both Recently closed entries tagged with the shelf (${tagged.map((e) => e.shelf.name).join(", ")}); line "${line}"; with Remember recently closed off a third shelved tab left no entry`);
+      record("AA", "PASS", `"*.com" refused ("${refused.trim()}"); an Unload dry run on 60 more tabs left the switch locked once the action became Shelve, and the Shelve dry run asked "${largeText.trim()}" with the switch still locked; rule 127.0.0.1 / 15 min / shelve to a new shelf created with the switch locked; the dry run said "${dryText.trim()}" and unlocked it (a changed time locked it again); saved on ${JSON.stringify(savedRule)}; Run idle rules now shelved ${idle1.id} and ${idle2.id} (the active ${activeAA.id} stayed), the grouped item kept AA Grp/red, both Recently closed entries tagged with the shelf (${tagged.map((e) => e.shelf.name).join(", ")}); line "${line}"; with Remember recently closed off a third shelved tab left no entry`);
     } catch (e) {
       record("AA", "FAIL", e.message);
     }

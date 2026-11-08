@@ -164,3 +164,13 @@ test("an empty or junk paste gives a clear error and nothing to open", () => {
   assert.equal(parseImportText(toJsonFile(richSession(), { now: 1 }).text).windows.length, 2);
   assert.equal(parseImportText(toMarkdown(richSession())).windows.length, 2);
 });
+
+test("fix 6: a link whose destination is followed by text is dropped, not cut; the scan stays linear", () => {
+  const s = parseMarkdown(["- [x](https://a.com/a b)", "- [y](https://b.com/)", '- [z](https://c.com/ "a title")'].join(NL));
+  assert.deepEqual(s.windows[0].tabs.map((t) => t.url), ["https://b.com/"]);
+  assert.throws(() => parseMarkdown("- [x](https://a.com/a b)"), /no links/i);
+  const hostile = "[".repeat(40000) + "](" + "(".repeat(40000) + " " + "x](y".repeat(20000);
+  const started = Date.now();
+  assert.throws(() => parseMarkdown(hostile), /no links/i);
+  assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
+});

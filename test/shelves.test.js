@@ -123,3 +123,14 @@ test("a write that reads back without the items counts as failed and closes noth
   const r = await S.executeShelve(area, [{ id: 1, shelfId: shelf.id, ruleId: null }], { tabsById, groupsById: new Map(), now: 1, removeTabs: async () => { throw new Error("must not close"); } });
   assert.equal(r.failed, 1);
 });
+
+test("fix 3: closeEach closes tab by tab, so one vanished tab does not leave the others open", async () => {
+  const open = new Set([1, 2, 3]);
+  const closed = [];
+  const remove = async (id) => { if (!open.has(id)) throw new Error(`No tab with id: ${id}.`); open.delete(id); closed.push(id); };
+  open.delete(2); // the user closed it between the plan and the close
+  const r = await S.closeEach([1, 2, 3], remove);
+  assert.deepEqual(closed, [1, 3]);
+  assert.deepEqual(r, { closed: [1, 3], missing: [2] });
+  assert.equal(open.size, 0);
+});
