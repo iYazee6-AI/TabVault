@@ -9,7 +9,8 @@
 //
 // Output:
 //   docs/store/screenshots/01..05-*.png   1280x800 (all windows, command palette,
-//                                         unload idle tabs, duplicates, snapshots)
+//                                         idle rules with a dry run (1.3), the
+//                                         palette's saved search (1.3), snapshots)
 //   docs/store/promo-tile-440x280.png     440x280 (from docs/store/promo-tile.html)
 //
 // The example pages are served locally on port 8771 (e2e/server.js owns 8765;
@@ -422,6 +423,31 @@ async function main() {
       for (const x of plan.slice().reverse()) await self.TabVault.addSnapshot(chrome.storage.local, self.TabVault.makeSnapshot(x.session, x.reason, x.at), 20);
     });
 
+    // ---- seed a shelf, the idle rules and one more closed tab (1.3) -------------
+    // The shelf "Reading later" holds a few saved tabs; the rules are a never rule, an unload
+    // rule and a shelving rule that is OFF (never dry-run, so the 5-minute alarm cannot close
+    // anything while this script runs). The extra closed tab gives the saved search a third place.
+    const shelfId = await sw(async (fav) => {
+      const TV = self.TabVault;
+      const shelf = await TV.createShelf(chrome.storage.local, "Reading later");
+      const at = Date.now() - 3 * 3600000;
+      const items = [
+        { url: "http://news.example.com/storage-errors", title: "Storage quota errors in MV3", favIconUrl: fav.news },
+        { url: "http://news.example.com/long-read", title: "The long read: thirty years of browsers", favIconUrl: fav.news },
+        { url: "http://blog.example.com/quiet-tabs", title: "Fewer tabs, quieter mind", favIconUrl: fav.blog },
+      ].map((t, i) => TV.shelfItem(t, { savedAt: at + i * 61000, ruleId: null }));
+      await TV.appendItems(chrome.storage.local, shelf.id, items);
+      const recent = (await chrome.storage.local.get("recentlyClosed")).recentlyClosed || [];
+      const extra = TV.closedEntry({ url: "http://blog.example.com/raising-the-quota", title: "Raising the quota", favIconUrl: fav.blog, windowId: null }, { closedAt: Date.now() - 2 * 60000 });
+      await chrome.storage.local.set({ recentlyClosed: [extra, ...recent] });
+      return shelf.id;
+    }, { news: faviconHref("#b45309", "N"), blog: faviconHref("#6d28d9", "B") });
+    await app.evaluate((id) => window.TabVaultApp.saveSettings({ idleRules: [
+      { id: "r-never", pattern: "*.tracker.example.com", idleMinutes: 60, action: "never", shelfId: null, enabled: true, previewedFor: "" },
+      { id: "r-shop", pattern: "shop.example.com", idleMinutes: 240, action: "unload", shelfId: null, enabled: true, previewedFor: "" },
+      { id: "r-news", pattern: "news.example.com", idleMinutes: 60, action: "shelve", shelfId: id, enabled: false, previewedFor: "" },
+    ] }), shelfId);
+
     // Window names (1.1) live in chrome.storage.local under TabVault.WINDOW_NAMES_KEY
     // (the worker clears them on browser startup); the page re-renders when they change.
     await app.evaluate((names) => chrome.storage.local.set({ [self.TabVault.WINDOW_NAMES_KEY]: names }), {
@@ -466,33 +492,48 @@ async function main() {
     await app.keyboard.press("Escape");
     await app.waitForFunction(() => document.getElementById("palette-backdrop").hidden);
 
-    // 03 — Settings: unload idle tabs. The boxes are ticked and filled on screen only (Cancel
-    // below, nothing saved), so no alarm discards anything while this script runs; the last-run
-    // line reads a run record written here, since a real run's chrome.tabs.discard crashes
-    // Playwright's Chromium (see CLAUDE.md).
-    await app.evaluate(() => chrome.storage.session.set({ "autoDiscard.lastRun": { at: Date.now() - 4 * 60000, unloaded: 7, failed: 0, waiting: 0, manual: false } }));
+    // 03 — Settings, Idle tabs (1.3): the rules and the shelving rule's dry run open in its
+    // editor. The global box is ticked on screen only (Cancel below, nothing saved); the worker's
+    // idle clock is moved two hours on so the news tabs count as idle for the dry run, and set
+    // back right after; the shelving rule stays off, so nothing is closed. The last-run line reads
+    // a run record written here.
+    await app.evaluate(() => chrome.storage.session.set({ "autoDiscard.lastRun": { at: Date.now() - 4 * 60000, unloaded: 7, shelved: 3, failed: 0, waiting: 0, manual: false } }));
+    await sw(() => { self.idleClockOffset = 2 * 3600000; });
     await app.click("#btn-more");
     await app.click("#btn-settings");
     await app.waitForSelector("#ad-enabled");
     await app.check("#ad-enabled");
-    await app.fill("#ad-allow", ["mail.example.com", "*.tracker.example.com"].join(String.fromCharCode(10)));
-    await app.waitForFunction(() => document.getElementById("ad-last-run").textContent.includes("unloaded"));
-    // From the top: the title and every 1.2 row show; only the Save row falls below the fold.
-    await app.$eval("#dialog", (box) => { box.scrollTop = 0; });
+    await app.waitForSelector('.rule[data-rule="r-news"] .rule-edit');
+    await app.click('.rule[data-rule="r-news"] .rule-edit');
+    await app.waitForSelector("#rule-dry-run");
+    await app.click("#rule-dry-run");
+    await app.waitForFunction(() => document.getElementById("rule-dry-result").textContent.includes("would be shelved now"));
+    await sw(() => { self.idleClockOffset = 0; });
+    await app.waitForFunction(() => document.getElementById("ad-last-run").textContent.includes("shelved"));
+    await app.$eval("#dialog", (box) => {
+      const head = [...box.querySelectorAll("h3")].find((h) => h.textContent === "Idle tabs");
+      box.scrollTop = head ? head.offsetTop - 12 : 0;
+    });
     await app.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
+    await app.mouse.move(5, 5);
     await sleep(400);
-    await shot("03-unload-idle-tabs.png");
+    await shot("03-idle-rules.png");
+    await app.click("#rule-cancel");
     await app.click('#dialog button:has-text("Cancel")');
     await app.waitForFunction(() => document.getElementById("dialog-backdrop").hidden);
 
-    // 04 — the duplicate finder (two URLs are open twice in the seeded session)
-    await app.click("#btn-dupes");
-    await app.waitForSelector("#dialog h2");
-    await app.waitForFunction(() => document.querySelector("#dialog").textContent.includes("duplicated URL"));
+    // 04 — the palette's Saved section (1.3): "quota" finds the open tab, then the same page in
+    // the snapshots ("+N older"), the shelf item and the recently closed tab, highlighted.
+    await app.keyboard.press("Alt+K");
+    await app.waitForSelector("#palette-backdrop:not([hidden])");
+    await app.keyboard.type("quota");
+    await app.waitForFunction(() => document.querySelectorAll('#palette-list .prow[data-kind="saved"]').length >= 3);
+    await app.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
+    await app.mouse.move(5, 5);
     await sleep(400);
-    await shot("04-duplicates.png");
-    await app.click("#dialog-backdrop", { position: { x: 5, y: 5 } });
-    await app.waitForFunction(() => document.getElementById("dialog-backdrop").hidden);
+    await shot("04-saved-search.png");
+    await app.keyboard.press("Escape");
+    await app.waitForFunction(() => document.getElementById("palette-backdrop").hidden);
 
     // 05 — snapshots: a named, kept save-and-close snapshot of the Personal window (the worker's
     // own takeSnapshot, without closing anything), and a manual one taken through the UI

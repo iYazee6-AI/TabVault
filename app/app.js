@@ -957,7 +957,8 @@
   }
   // Title text with the query words in <mark>, built from text nodes (lib/palette.js ranges).
   function markedText(text, cls) {
-    const words = TV.terms(TV.parsePaletteQuery($("palette-input").value).text);
+    // A one-letter word matches nearly every row; it is not highlighted.
+    const words = TV.terms(TV.parsePaletteQuery($("palette-input").value).text).filter((w) => w.length > 1);
     const span = el("span", { class: cls });
     let at = 0;
     for (const [s, e] of TV.highlightRanges(text, words)) {
@@ -976,12 +977,15 @@
       $("palette-input").removeAttribute("aria-activedescendant");
       return;
     }
+    // With saved matches, the ranked actions and open tabs get a heading above them, then Saved.
     const hasSaved = palette.rows.some((r) => r.kind === "saved");
+    const live = palette.rows.filter((r) => r.kind === "action" || r.kind === "tab");
+    const liveLabel = live.some((r) => r.kind === "action") ? (live.some((r) => r.kind === "tab") ? "Actions and open tabs" : "Actions") : "Open tabs";
     const nodes = [];
     let shownTabs = false;
     let shownSaved = false;
     palette.rows.forEach((r, i) => {
-      if (r.kind === "tab" && hasSaved && !shownTabs) { shownTabs = true; nodes.push(el("div", { class: "psection", role: "presentation" }, "Open tabs")); }
+      if ((r.kind === "tab" || r.kind === "action") && hasSaved && !shownTabs) { shownTabs = true; nodes.push(el("div", { class: "psection", role: "presentation" }, liveLabel)); }
       if (r.kind === "saved" && !shownSaved) { shownSaved = true; nodes.push(el("div", { class: "psection", role: "presentation" }, "Saved")); }
       const on = i === palette.index;
       const attrs = { id: `palette-row-${i}`, class: `prow${on ? " on" : ""}`, role: "option", "aria-selected": String(on), dataset: { kind: r.kind, index: String(i) } };
