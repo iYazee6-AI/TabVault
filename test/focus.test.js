@@ -43,7 +43,7 @@ test("planVeil: every tab outside the focused window, sorted into veil, unloaded
     { id: 4, type: "devtools", tabs: [{ id: 40, url: "devtools://x" }] },
   ];
   const plan = F.planVeil(windows, 1, OWN);
-  assert.deepEqual(plan.veil, [20, 24, 30]);
+  assert.deepEqual(plan.veil, [20, 24]); // the popup window (30) is never veiled
   assert.deepEqual(plan.skip, [21, 25]);
   assert.deepEqual(plan.unloaded, [22]);
 });
@@ -61,6 +61,15 @@ test("tabAction: what a tab that loads, opens or moves needs while focus is on",
   assert.equal(F.tabAction(on, { id: 5, windowId: 2, url: OWN + "app/index.html" }, OWN), "none");
   assert.equal(F.tabAction(F.FOCUS_OFF, { id: 5, windowId: 2, url: "https://a.com/" }, OWN), "none");
   assert.equal(F.tabAction(F.startState(1, "minimize", 0), { id: 5, windowId: 2, url: "https://a.com/" }, OWN), "none");
+});
+
+test("tabAction: a popup opened from the focused window (a sign-in, a payment) stays clear", () => {
+  const on = F.startState(1, "veil", 0);
+  const tab = { id: 6, windowId: 3, url: "https://login.example.com/" };
+  assert.equal(F.tabAction(on, tab, OWN, { type: "popup" }), "none");
+  assert.equal(F.tabAction(on, tab, OWN, { type: "app" }), "none");
+  assert.equal(F.tabAction(on, tab, OWN, { type: "normal" }), "veil");
+  assert.equal(F.tabAction(on, { ...tab, windowId: 1 }, OWN, { type: "popup" }), "unveil");
 });
 
 test("withSkipped keeps a sorted set and does not touch the input", () => {

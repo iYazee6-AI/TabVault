@@ -553,7 +553,9 @@ function onFocusTab(tab) {
   if (!tab || typeof tab.id !== "number") return;
   focusWrite(async () => {
     const state = await getFocus();
-    const action = TV.tabAction(state, tab, OWN_PREFIX);
+    if (!state.on || state.mode !== "veil") return;
+    const win = tab.windowId === state.windowId ? null : await chrome.windows.get(tab.windowId).catch(() => null);
+    const action = TV.tabAction(state, tab, OWN_PREFIX, win);
     if (action === "none") return;
     if (action === "unveil") {
       await unveilTab(tab.id);

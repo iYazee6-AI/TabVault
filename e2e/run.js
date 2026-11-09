@@ -1890,6 +1890,15 @@ async function main() {
         await (await worker()).evaluate((id) => chrome.tabs.remove(id), blank.id);
         await waitFor(async () => !((await focusState()).skipped || []).includes(blank.id), { timeout: 5000 });
 
+        // A popup window (a sign-in, a payment) stays clear while the focus is on.
+        const popupWin = await (await worker()).evaluate((u) => chrome.windows.create({ type: "popup", url: u, focused: false, width: 420, height: 320 }), `${BASE}/three.html?af=popup`);
+        const pagePopup = await pageFor("three.html?af=popup");
+        await pagePopup.waitForLoadState("load");
+        await new Promise((r) => setTimeout(r, 1000));
+        const popupVeiled = await hasVeil(pagePopup);
+        await (await worker()).evaluate((id) => chrome.windows.remove(id), popupWin.id).catch(() => {});
+        assert(!popupVeiled, "a popup window got the veil");
+
         // The pill lifts everything.
         await pageNew.locator("#tabvault-focus-veil button").click();
         await waitFor(async () => !(await focusState()).on, { timeout: 10000 });
@@ -1934,7 +1943,7 @@ async function main() {
         }, { timeout: 10000 });
         await askPage.close().catch(() => {});
 
-        record("AF", "PASS", `focus on from window ${ownWindow}: the other window's tab veiled (${look.filter}, ${look.bg}, pill "${look.pill}"), the own window's tab not; badge dot, bar "${barOn}"; a new tab in the other window veiled; about:blank counted ("${barSkip}"); the pill lifted every veil and the bar; the command toggled on and moved the focus to window ${winAF.id} (own tab veiled, other sharp) and lifted it; declined: the question "${askText.slice(0, 40)}...", "${declined.trim().slice(0, 50)}...", Minimise put window ${winAF.id} ${minState} and remembered it, the lift brought it back ${backState}`);
+        record("AF", "PASS", `focus on from window ${ownWindow}: the other window's tab veiled (${look.filter}, ${look.bg}, pill "${look.pill}"), the own window's tab not; badge dot, bar "${barOn}"; a new tab in the other window veiled; a popup window left clear; about:blank counted ("${barSkip}"); the pill lifted every veil and the bar; the command toggled on and moved the focus to window ${winAF.id} (own tab veiled, other sharp) and lifted it; declined: the question "${askText.slice(0, 40)}...", "${declined.trim().slice(0, 50)}...", Minimise put window ${winAF.id} ${minState} and remembered it, the lift brought it back ${backState}`);
       } catch (e) {
         record("AF", "FAIL", e.message);
       } finally {
