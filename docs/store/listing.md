@@ -501,7 +501,9 @@ real Chrome with the package loaded unpacked:
 ## 15. What's new in 1.4.0 (for the update)
 
 1.4.0 goes up after 1.3.0 has passed review (one package in review at a
-time). It adds two permissions, `contextMenus` and `scripting`, neither of
+time). Its `minimum_chrome_version` is 123 (from 120): the promise form of
+`chrome.contextMenus` that Focus mode uses arrived in Chrome 123; users on
+120 to 122 stay on 1.3.0. It adds two permissions, `contextMenus` and `scripting`, neither of
 which shows a warning, and one optional host permission, `<all_urls>`,
 which Chrome asks for only when the user first turns Focus mode on; existing
 users are not asked anything at the update. The dashboard asks for a

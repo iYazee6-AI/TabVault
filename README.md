@@ -151,7 +151,7 @@ A few things live elsewhere: the page keeps a copy of your Appearance choice in 
 - **Restored tabs** — with lazy loading on (the default; **Settings** → "Load restored tabs only when opened (lazy)"), restored tabs load when opened: only the first tab in each restored window loads immediately, and the rest are created discarded and load the next time you click them, to avoid restoring dozens of tabs' worth of network traffic and memory at once. Turning the option off loads every restored tab immediately instead.
 - **Chrome and Edge only** — TabVault uses `chrome.tabGroups` and other Chromium-only APIs; it does not run on Firefox or Safari.
 - **No history search** — TabVault only shows tabs that are currently open (and the ones it saw close). It does not search browser history or bookmarks.
-- **Idle time needs Chrome 121+** — the idle rule reads each tab's `lastAccessed`, which Chrome added in 121; on Chrome 120 (the minimum) a tab without it is skipped, never guessed.
+- **Chrome 123 or later** (since 1.4) — Focus mode uses the promise form of `chrome.contextMenus`, which Chrome added in 123. The idle rule reads each tab's `lastAccessed` (Chrome 121); a tab without it is skipped, never guessed.
 - **Focus mode cannot veil every page** — Chrome does not let an extension draw on its own pages, the Web Store, the PDF viewer or other extensions' pages; those tabs are counted, not veiled. Incognito windows are veiled only when TabVault is allowed in incognito.
 
 ## Testing

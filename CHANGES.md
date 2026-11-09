@@ -20,6 +20,9 @@ decision log with the details is `docs/HISTORY.md`.
   under the PolyForm Noncommercial License 1.0.0; commercial use needs the
   author's written permission. Versions up to 1.3.0 stay MIT for those who
   have them. The bundled IBM Plex fonts keep their own licence (OFL 1.1).
+- **Chrome 123 or later.** TabVault 1.4 needs Chrome (or Edge) 123 or newer, up
+  from 120: Focus mode's toolbar menu uses a feature Chrome added in 123. A
+  browser older than that keeps 1.3.0.
 - **Behind the scenes.** The build tools were brought up to date (ESLint 10,
   Playwright 1.65 and the GitHub Actions steps), and every push now runs the
   lint, the tests and the package build on GitHub.
