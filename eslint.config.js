@@ -1,4 +1,4 @@
-// ESLint 9 flat config. Run it with `npm run lint`.
+// ESLint 10 flat config. Run it with `npm run lint`.
 //
 // Three layers, in order:
 //   1. @eslint/js recommended  - the real-bug rules (unused vars, undefined
