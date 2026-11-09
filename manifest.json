@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TabVault: Open-Source Tab Manager",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "minimum_chrome_version": "123",
   "homepage_url": "https://github.com/iYazee6-AI/TabVault",
   "description": "Every window and tab in one page or the side panel. Search, group, dedupe, unload idle tabs, reopen closed tabs, keep snapshots.",

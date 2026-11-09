@@ -982,6 +982,12 @@
     const back = palette.returnFocus;
     palette.returnFocus = null;
     if (refocus && back && back.isConnected && typeof back.focus === "function") back.focus();
+    // Hiding the backdrop does not move focus out of the input at once: Chromium only drops focus
+    // from a hidden element at its next rendering update, which a window in the background may not
+    // get. Until then every key (Alt+K included) still went to the hidden input and was swallowed
+    // there, so the palette could not be opened again right after running a command from it.
+    const active = document.activeElement;
+    if (active && $("palette").contains(active)) active.blur();
   }
   // keep: keep the highlighted row where it is (the saved index arrived after typing).
   function drawPalette(keep = false) {
@@ -1110,6 +1116,7 @@
     const input = $("palette-input");
     input.addEventListener("input", drawPalette);
     input.addEventListener("keydown", (e) => {
+      if (!palette.open) return; // a closed palette never swallows a key (see closePalette)
       e.stopPropagation();
       if (e.key === "Escape") { e.preventDefault(); closePalette(); return; }
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {

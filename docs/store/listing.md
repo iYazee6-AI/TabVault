@@ -59,8 +59,8 @@ once the repository is public.
 - [ ] `PRIVACY.md` contact email filled in and the file is reachable at a
       public URL.
 - [ ] `manifest.json` `version` is the base you want to publish (currently
-      `1.4.0`). The Release workflow appends the run number, so the uploaded
-      package is `1.4.0.<run number>`; every later upload must be higher.
+      `1.4.1`). The Release workflow appends the run number, so the uploaded
+      package is `1.4.1.<run number>`; every later upload must be higher.
 - [ ] `manifest.json` `name` is `TabVault: Open-Source Tab Manager` (33 characters; Chrome
       allows 75, and this kit keeps the title at or under 45 so store cards
       and search do not cut it). The store title is read from this field, so
@@ -82,6 +82,12 @@ once the repository is public.
       paste the NEW IN 1.3 block from section 14 and keep the NEW IN 1.2
       bullets below it if you like). If 1.2.0 is already in review, wait for
       it or cancel it first: one package in review at a time.
+- [ ] **1.4.1 supersedes 1.4.0** (a palette fix, no new permission, section
+      15): if 1.4.0 is not uploaded yet, upload 1.4.1 instead, with the 1.4
+      texts as they are. Its local package: `dist/tabvault-1.4.1.zip`,
+      554,550 bytes, SHA-256
+      `87882e1734640a11ab2af69ffe2b89fac6a42ca1aa89a88dec6f529556548262`, reproducible from the `v1.4.1` tag on a
+      Windows checkout as below.
 - [ ] 1.4.0 (section 15) supersedes 1.3.0 the same way, and adds a
       permission prompt for existing users: none (`contextMenus` and
       `scripting` carry no warning, and `<all_urls>` is optional). Its local
@@ -503,6 +509,9 @@ real Chrome with the package loaded unpacked:
    current window with its title and colour.
 
 ## 15. What's new in 1.4.0 (for the update)
+
+Upload 1.4.1 in place of 1.4.0 when 1.4.0 has not gone up yet (section 1):
+the same texts and screenshots; it only fixes the palette after a command.
 
 1.4.0 goes up after 1.3.0 has passed review (one package in review at a
 time). Its `minimum_chrome_version` is 123 (from 120): the promise form of
