@@ -28,7 +28,7 @@ npm run screenshots  # re-captures docs/store/ screenshots + promo tile (port 87
 Three commands, and they are the same three the release workflow runs:
 
 ```
-npm run lint    # eslint 9 flat config: @eslint/js recommended + eslint-plugin-security
+npm run lint    # eslint 10 flat config: @eslint/js recommended + eslint-plugin-security
 npm test        # node --test
 npm run pack    # dist/tabvault-<version>.zip
 ```
