@@ -47,7 +47,7 @@ jobs:
         run: docker run --rm -v "$PWD:/repo" aquasec/trivy:0.74.0 fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
 
       - name: Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
