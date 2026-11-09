@@ -274,7 +274,12 @@ async function main() {
     // window B's "two" tab placed in a blue "Grp" group.
     // ---------------------------------------------------------------
     const winB = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls }), [oneUrl, twoUrl]);
-    let tabsB = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winB.id);
+    // A newer Chromium can answer windows.create before its tabs carry their URL (only pendingUrl),
+    // so the fixture waits until both tabs have committed theirs.
+    let tabsB = await waitFor(async () => {
+      const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winB.id);
+      return ts.length === 2 && ts.every((t) => t.url && t.url.endsWith(".html")) ? ts : null;
+    }, { timeout: 15000 });
     tabsB.sort((a, b) => a.index - b.index);
     const oneInB = tabsB.find((t) => t.url.endsWith("one.html"));
     const twoInB = tabsB.find((t) => t.url.endsWith("two.html"));
@@ -365,7 +370,17 @@ async function main() {
     // D. Drag row onto another window's column
     // ---------------------------------------------------------------
     try {
-      await appPage.locator(`.tab[data-tab="${twoInB.id}"]`).dragTo(appPage.locator(`.window[data-window="${winC.id}"] .whead`));
+      // C's move re-renders the grid; a drag that starts while a row is being replaced is lost
+      // (the failures D had on a busy machine). Settle the page first, and drag once more if the
+      // first drop did not land; the assertions below are unchanged.
+      const dragOnce = async () => {
+        await appPage.evaluate(() => window.TabVaultApp.refresh());
+        await appPage.waitForTimeout(300);
+        await appPage.locator(`.tab[data-tab="${twoInB.id}"]`).dragTo(appPage.locator(`.window[data-window="${winC.id}"] .whead`));
+      };
+      const landed = async () => (await (await worker()).evaluate((id) => chrome.tabs.get(id), twoInB.id)).windowId === winC.id;
+      await dragOnce();
+      if (!(await waitFor(landed, { timeout: 3000 }).catch(() => false))) await dragOnce();
       const moved = await waitFor(async () => {
         const t = await (await worker()).evaluate((id) => chrome.tabs.get(id), twoInB.id);
         return t.windowId === winC.id && t.groupId === -1 ? t : null;
@@ -715,6 +730,9 @@ async function main() {
     // own last (successful) attempt could itself be moments from crashing
     // again, same as after the main Restore click.
     await settleAndRelaunchIfDisconnected("after scenario I-b");
+    // Playwright 1.65's Chromium survives chrome.tabs.discard, so I-b can PASS live and leave its
+    // Restore result dialog open (a crash and relaunch used to close it): close it before J.
+    await resetUi().catch(() => {});
 
     // ---------------------------------------------------------------
     // J. Snapshot now / delete / keep-unkeep
@@ -1253,10 +1271,13 @@ async function main() {
     // tabs, Enter runs the action, Esc closes
     // ---------------------------------------------------------------
     try {
+      // V's Reopen can leave another tab active in TabVault's window; keys go to the page in front.
+      await appPage.bringToFront();
       await appPage.evaluate(() => window.TabVaultApp.refresh());
       await blurAll();
+      await appPage.evaluate(() => { window.__wkeys = []; document.addEventListener("keydown", (k) => window.__wkeys.push([k.key, k.code, k.altKey, k.defaultPrevented]), true); });
       await appPage.keyboard.press("Alt+K");
-      await appPage.waitForSelector("#palette-backdrop:not([hidden])");
+      await appPage.waitForSelector("#palette-backdrop:not([hidden])", { timeout: 10000 });
       const focusedInput = await appPage.evaluate(() => document.activeElement && document.activeElement.id);
       assert(focusedInput === "palette-input", `focus after Alt+K is on ${focusedInput}`);
       const allRows = await appPage.$$eval("#palette-list .prow", (rs) => rs.length);
@@ -1286,7 +1307,14 @@ async function main() {
       await appPage.waitForSelector("#palette-backdrop[hidden]", { state: "attached" });
       record("W", "PASS", `Alt+K opened the palette with focus in its input (${allRows} rows on an empty query); "duplicates" selected the dupes action showing key "d"; "Three" listed a tab row; "snapshot now" + Enter closed it and stored manual snapshot ${newest.id}; Esc closed it again`);
     } catch (e) {
-      record("W", "FAIL", e.message);
+      const why = await appPage.evaluate(() => ({
+        active: document.activeElement && (document.activeElement.id || document.activeElement.tagName),
+        dialog: !document.getElementById("dialog-backdrop").hidden,
+        menus: [...document.querySelectorAll(".menu:not([hidden])")].map((m) => m.id),
+        palette: !document.getElementById("palette-backdrop").hidden,
+        visible: document.visibilityState, focused: document.hasFocus(), keys: window.__wkeys,
+      })).catch((x) => String(x));
+      record("W", "FAIL", `${e.message} | page state ${JSON.stringify(why)}`);
     }
     await appPage.keyboard.press("Escape").catch(() => {});
     await resetUi();
