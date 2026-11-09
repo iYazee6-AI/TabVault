@@ -10,6 +10,12 @@ const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
 const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF"];
+// --only W,X (or TABVAULT_E2E_ONLY=W,X) runs just those scenarios. The shared fixtures and the
+// steps between scenarios still run, so a scenario alone sees the same setup as in the full run.
+const onlyArg = process.argv.indexOf("--only");
+const ONLY = new Set(String((onlyArg > 0 && process.argv[onlyArg + 1]) || process.env.TABVAULT_E2E_ONLY || "").split(",").map((x) => x.trim()).filter(Boolean));
+for (const id of ONLY) if (!ORDER.includes(id)) { console.error(`--only: no scenario ${id}`); process.exit(2); }
+function want(id) { return ONLY.size === 0 || ONLY.has(id); }
 const byId = new Map();
 const consoleErrors = { worker: [], app: [] };
 
@@ -301,7 +307,7 @@ async function main() {
     // ---------------------------------------------------------------
     // A. Initial listing
     // ---------------------------------------------------------------
-    try {
+    if (want("A")) try {
       await appPage.waitForFunction(() => document.querySelectorAll("#grid .window").length >= 2);
       const cols = await appPage.$$eval(".window", (nodes) =>
         nodes.map((n) => ({ window: n.dataset.window, count: n.querySelector(".whead .count")?.textContent }))
@@ -332,7 +338,7 @@ async function main() {
     // ---------------------------------------------------------------
     // B. Search + Escape
     // ---------------------------------------------------------------
-    try {
+    if (want("B")) try {
       const expected = await expectedCounts();
       await appPage.fill("#search", "three");
       const countsText = await waitForTextContains(appPage, "#counts", " of ");
@@ -358,7 +364,7 @@ async function main() {
     // ---------------------------------------------------------------
     // C. Move via "Move to…"
     // ---------------------------------------------------------------
-    try {
+    if (want("C")) try {
       await clearSelection();
       await appPage.click(`.tab[data-tab="${oneInB.id}"] input[type=checkbox]`);
       await appPage.click("#move-btn");
@@ -376,7 +382,7 @@ async function main() {
     // ---------------------------------------------------------------
     // D. Drag row onto another window's column
     // ---------------------------------------------------------------
-    try {
+    if (want("D")) try {
       // C's move re-renders the grid; a drag that starts while a row is being replaced is lost
       // (the failures D had on a busy machine). Settle the page first, and drag once more if the
       // first drop did not land; the assertions below are unchanged.
@@ -403,7 +409,7 @@ async function main() {
     // ---------------------------------------------------------------
     // E. Select two tabs, Close
     // ---------------------------------------------------------------
-    try {
+    if (want("E")) try {
       const tabsC = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winC.id);
       const threeTab = tabsC.find((t) => t.url.endsWith("three.html"));
       const oneTabs = tabsC.filter((t) => t.url.endsWith("one.html")).sort((a, b) => a.id - b.id);
@@ -427,7 +433,7 @@ async function main() {
     // ---------------------------------------------------------------
     // F. Group + rename + color
     // ---------------------------------------------------------------
-    try {
+    if (want("F")) try {
       await appPage.evaluate(() => window.TabVaultApp.refresh());
       const tabsC = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winC.id);
       assert(tabsC.length === 2, `expected exactly 2 tabs in window C before grouping, got ${tabsC.length}: ${JSON.stringify(tabsC.map((t) => t.url))}`);
@@ -459,7 +465,7 @@ async function main() {
     // ---------------------------------------------------------------
     // G. Duplicates
     // ---------------------------------------------------------------
-    try {
+    if (want("G")) try {
       await (await worker()).evaluate(({ windowId, url }) => Promise.all([1, 2].map(() => chrome.tabs.create({ windowId, url, active: false }))), { windowId: winC.id, url: oneUrl });
       await appPage.evaluate(() => window.TabVaultApp.refresh());
 
@@ -514,7 +520,7 @@ async function main() {
     // ---------------------------------------------------------------
     let exportedJson = null;
     let exportedFilePath = null;
-    try {
+    if (want("H")) try {
       // Force a refresh: G's fixture mutations went through sw.evaluate/direct
       // chrome.* calls outside the app's own click handlers, so state.session
       // may still reflect an intermediate point in G (e.g. right after the two
@@ -607,7 +613,7 @@ async function main() {
     // ---------------------------------------------------------------
     // I-a. Import with lazy loading OFF: real, live restore verification
     // ---------------------------------------------------------------
-    try {
+    if (want("I-a")) try {
       assert(exportedFilePath, "no exported file from scenario H to import");
       await setLazyRestore(false);
 
@@ -671,7 +677,7 @@ async function main() {
     // I-b. Import with lazy loading back ON: the real discardTab step, which
     // is expected to crash this environment (see the note above)
     // ---------------------------------------------------------------
-    try {
+    if (want("I-b")) try {
       assert(exportedFilePath, "no exported file from scenario H to import");
       await setLazyRestore(true);
 
@@ -744,7 +750,7 @@ async function main() {
     // ---------------------------------------------------------------
     // J. Snapshot now / delete / keep-unkeep
     // ---------------------------------------------------------------
-    try {
+    if (want("J")) try {
       await appPage.click("#btn-snapshots");
       await appPage.waitForSelector("#dialog h2");
 
@@ -834,7 +840,7 @@ async function main() {
     // ---------------------------------------------------------------
     // M. Dark theme via the Settings override
     // ---------------------------------------------------------------
-    try {
+    if (want("M")) try {
       await appPage.emulateMedia({ colorScheme: "light" });
       await setAppearance("dark");
       const darkBg = await bodyBg();
@@ -868,7 +874,7 @@ async function main() {
     // ---------------------------------------------------------------
     // N. The window hosting TabVault is marked CURRENT with the --p ring
     // ---------------------------------------------------------------
-    try {
+    if (want("N")) try {
       const appTab = (await (await worker()).evaluate((prefix) => chrome.tabs.query({ url: prefix + "*" }), ownPrefix))[0];
       await (await worker()).evaluate(({ windowId, url }) => chrome.tabs.create({ windowId, url, active: false }), { windowId: appTab.windowId, url: threeUrl });
       await appPage.evaluate(() => window.TabVaultApp.refresh());
@@ -891,7 +897,7 @@ async function main() {
     // ---------------------------------------------------------------
     // O. The bulk bar appears on selection and Esc closes it
     // ---------------------------------------------------------------
-    try {
+    if (want("O")) try {
       assert(winM, "no fixture window for M-R");
       await clearSelection();
       await blurAll();
@@ -951,7 +957,7 @@ async function main() {
     // ---------------------------------------------------------------
     // P. The colour dots change a group's colour
     // ---------------------------------------------------------------
-    try {
+    if (want("P")) try {
       assert(winM, "no fixture window for M-R");
       const gid = await (await worker()).evaluate(async ({ tabId, windowId }) => {
         const id = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId } });
@@ -983,7 +989,7 @@ async function main() {
     // ---------------------------------------------------------------
     // Q. The ? panel, the hint strip, named icon buttons
     // ---------------------------------------------------------------
-    try {
+    if (want("Q")) try {
       await blurAll();
       await appPage.keyboard.press("?");
       await waitForTextContains(appPage, "#dialog h2", "Keyboard shortcuts");
@@ -1027,7 +1033,7 @@ async function main() {
     // ---------------------------------------------------------------
     // R. Window rename round-trips through storage, export and import
     // ---------------------------------------------------------------
-    try {
+    if (want("R")) try {
       assert(winM, "no fixture window for M-R");
       const card = `.window[data-window="${winM.id}"]`;
       await appPage.click(`${card} button[aria-label="Rename window"]`);
@@ -1071,7 +1077,7 @@ async function main() {
     // ---------------------------------------------------------------
     // S. About dialog from the ⋯ menu: version from the manifest, links
     // ---------------------------------------------------------------
-    try {
+    if (want("S")) try {
       const REPO_URL = "https://github.com/iYazee6-AI/TabVault";
       const fileVersion = JSON.parse(fs.readFileSync(path.join(REPO, "manifest.json"), "utf8")).version;
       const live = await (await worker()).evaluate(() => { const m = chrome.runtime.getManifest(); return { version: m.version, homepage: m.homepage_url }; });
@@ -1097,7 +1103,7 @@ async function main() {
     // window (query strings keep them apart from every other one.html or
     // two.html in the session); one extra copy is unchecked and survives.
     // ---------------------------------------------------------------
-    try {
+    if (want("T")) try {
       assert(winM, "no fixture window for T");
       const urlA = oneUrl + "?dupT";
       const urlB = twoUrl + "?dupT";
@@ -1205,7 +1211,7 @@ async function main() {
     // ---------------------------------------------------------------
     // U. The icon badge counts tabs after opening and closing one
     // ---------------------------------------------------------------
-    try {
+    if (want("U")) try {
       const first = await expectBadge("at start");
       const windowId = await anyNormalWindowId();
       const created = await (await worker()).evaluate(({ windowId: wid, url }) => chrome.tabs.create({ windowId: wid, url, active: false }), { windowId, url: `${oneUrl}?badge=1` });
@@ -1223,7 +1229,7 @@ async function main() {
     // V. Recently closed: a closed tab is listed and reopens in the
     // current window; a closed window's tabs reopen together
     // ---------------------------------------------------------------
-    try {
+    if (want("V")) try {
       const recentList = async () => (await worker()).evaluate(() => chrome.storage.local.get("recentlyClosed").then((r) => r.recentlyClosed || []));
       const windowId = await anyNormalWindowId();
       const rcUrl = `${threeUrl}?rc=1`;
@@ -1277,12 +1283,12 @@ async function main() {
     // W. Command palette: Alt+K opens it, typing filters actions and
     // tabs, Enter runs the action, Esc closes
     // ---------------------------------------------------------------
-    try {
+    if (want("W")) try {
       // V's Reopen can leave another tab active in TabVault's window; keys go to the page in front.
       await appPage.bringToFront();
       await appPage.evaluate(() => window.TabVaultApp.refresh());
       await blurAll();
-      await appPage.evaluate(() => { window.__wkeys = []; document.addEventListener("keydown", (k) => window.__wkeys.push([k.key, k.code, k.altKey, k.defaultPrevented]), true); });
+      await appPage.evaluate(() => { window.__wkeys = []; document.addEventListener("keydown", (k) => window.__wkeys.push([k.key, k.code, k.altKey, (k.target && (k.target.id || k.target.tagName)) || ""]), true); });
       await appPage.keyboard.press("Alt+K");
       await appPage.waitForSelector("#palette-backdrop:not([hidden])", { timeout: 10000 });
       const focusedInput = await appPage.evaluate(() => document.activeElement && document.activeElement.id);
@@ -1331,7 +1337,7 @@ async function main() {
     // the count; Cancel keeps the tabs; confirming stores a kept, named
     // snapshot and closes the window's tabs
     // ---------------------------------------------------------------
-    try {
+    if (want("X")) try {
       const xUrls = [`${oneUrl}?x=1`, `${twoUrl}?x=1`];
       const winX = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), xUrls);
       const tabsX = await waitFor(async () => {
@@ -1378,7 +1384,7 @@ async function main() {
     // fixture window: the layout is asserted, not the panel API.
     // ---------------------------------------------------------------
     let panelPage = null;
-    try {
+    if (want("Y")) try {
       const options = await (await worker()).evaluate(() => (chrome.sidePanel ? chrome.sidePanel.getOptions({}) : null));
       assert(options && String(options.path || "").endsWith("app/index.html?panel=1"), `side panel options ${JSON.stringify(options)}`);
       const winY = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), [`${oneUrl}?y=1`, `${twoUrl}?y=1`]);
@@ -1428,7 +1434,7 @@ async function main() {
     // Chromium here (see I-b), so the run is PASS when it survives and
     // LIMITED when the browser dies; the plan part must pass either way.
     // ---------------------------------------------------------------
-    try {
+    if (want("Z")) try {
       const winZ = await (await worker()).evaluate((urls) => chrome.windows.create({ url: urls, focused: false }), [`${oneUrl}?z=1`, `${twoUrl}?z=1`, `${threeUrl}?z=1`]);
       const tabsZ = await waitFor(async () => {
         const ts = await (await worker()).evaluate((id) => chrome.tabs.query({ windowId: id }), winZ.id);
@@ -1533,7 +1539,7 @@ async function main() {
     // tags their Recently closed entries, and records nothing there
     // when "Remember recently closed tabs" is off
     // ---------------------------------------------------------------
-    try {
+    if (want("AA")) try {
       aaUrls = [`${ipBase}/one.html?aa=1`, `${ipBase}/two.html?aa=1`, `${ipBase}/three.html?aa=1`];
       const { win: winAA, tabs: tabsAA } = await openWindowWith(aaUrls);
       const [activeAA, idle1, idle2] = tabsAA;
@@ -1641,7 +1647,7 @@ async function main() {
     // brings the grouped item back into a recreated group (the item
     // stays), Open and remove takes it off the shelf
     // ---------------------------------------------------------------
-    try {
+    if (want("AB")) try {
       assert(aaShelfId, "no shelf from AA");
       await appPage.evaluate(() => window.TabVaultApp.refresh());
       await appPage.waitForSelector("#shelves:not([hidden])");
@@ -1678,7 +1684,7 @@ async function main() {
     // AC. Compare a snapshot with now: one tab closed and one opened
     // since show as one missing and one new; Reopen missing brings it back
     // ---------------------------------------------------------------
-    try {
+    if (want("AC")) try {
       const acUrls = [`${oneUrl}?ac=1`, `${twoUrl}?ac=1`];
       const { win: winAC, tabs: tabsAC } = await openWindowWith(acUrls);
       const snap = await appPage.evaluate(() => chrome.runtime.sendMessage({ type: "snapshotNow" }));
@@ -1711,7 +1717,7 @@ async function main() {
     // the word; the Saved section lists the snapshot URL once with
     // "+1 older", Enter opens it, Open all opens every match
     // ---------------------------------------------------------------
-    try {
+    if (want("AD")) try {
       const sUrl = `${oneUrl}?saved=quokka`;
       const shUrl = `${twoUrl}?saved=quokka`;
       await (await worker()).evaluate(async ({ sUrl: a, shUrl: b }) => {
@@ -1774,7 +1780,7 @@ async function main() {
     // Markdown (download captured), paste it into Import with one
     // javascript: link added, restore, compare the URLs and the group
     // ---------------------------------------------------------------
-    try {
+    if (want("AE")) try {
       const aeUrls = [`${oneUrl}?ae=1`, `${twoUrl}?ae=1`, `${threeUrl}?ae=1`];
       const { win: winAE, tabs: tabsAE } = await openWindowWith(aeUrls);
       const gid = await (await worker()).evaluate(({ ids, windowId }) => chrome.tabs.group({ tabIds: ids, createProperties: { windowId } }), { ids: [tabsAE[1].id, tabsAE[2].id], windowId: winAE.id });
@@ -1837,7 +1843,7 @@ async function main() {
     // runs with self.focusPermissionOverride = false and chrome.permissions.request stubbed to
     // answer false in the asking page.
     // ---------------------------------------------------------------
-    {
+    if (want("AF")) {
       let winAF = null;
       const extraTabs = [];
       // The veil is an element with the install's random name (storage.local focusVeilTag) and a
@@ -2005,7 +2011,7 @@ async function main() {
     // L. Settings persistence (run before K; K's real-time wait is kept
     // last so it does not slow down debugging of the others)
     // ---------------------------------------------------------------
-    try {
+    if (want("L")) try {
       await openMenuItem("#btn-settings");
       await appPage.waitForSelector("#dialog h2");
       await appPage.selectOption("#dialog select >> nth=1", "compact"); // density select (theme is select#0)
@@ -2036,7 +2042,7 @@ async function main() {
     // ---------------------------------------------------------------
     // K. Change-driven snapshot (slow, kept last)
     // ---------------------------------------------------------------
-    try {
+    if (want("K")) try {
       const before = await (await worker()).evaluate(async () => (await chrome.storage.local.get("snapIndex").then((r) => ({ snapshots: r.snapIndex || [] }))).snapshots || []);
       const countBefore = before.length;
 
@@ -2067,7 +2073,7 @@ async function main() {
 
     if (appPage && !appPage.isClosed()) await appPage.close().catch(() => {});
   } finally {
-    const results = ORDER.map((id) => byId.get(id));
+    const results = ORDER.filter(want).map((id) => byId.get(id));
     const passed = results.filter((r) => r.status === "PASS");
     const failed = results.filter((r) => r.status === "FAIL");
     const limited = results.filter((r) => r.status === "LIMITED");
