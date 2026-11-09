@@ -52,7 +52,8 @@ whatever the pages you have open happen to be.
   permission to access your pages; if you decline, it minimises your other
   windows instead and never touches a page. The veil reads nothing from the
   page, stores nothing about it and sends nothing anywhere; its only message
-  is the lift request to TabVault itself. While Focus mode is on, TabVault
+  is the lift request to TabVault itself. Focus mode never touches an
+  incognito window: no veil, and the fallback never minimises one. While Focus mode is on, TabVault
   keeps in `chrome.storage.session` which window is focused, the ids of the
   tabs it could not veil, and, for the minimise fallback, which windows it
   minimised and their earlier state; the browser clears it when it closes.
@@ -146,7 +147,10 @@ permissions.
 TabVault can only see incognito windows if you explicitly allow it to run in
 incognito at `chrome://extensions`. If you do not, incognito windows are
 skipped entirely. If you do, incognito tabs are treated like any other tab:
-listed in the page and included in snapshots that are stored locally.
+listed in the page and included in snapshots that are stored locally. One
+exception: Focus mode never touches an incognito window, even when TabVault
+is allowed there: no veil is drawn on an incognito page and the minimise
+fallback never minimises an incognito window.
 
 ## Children
 

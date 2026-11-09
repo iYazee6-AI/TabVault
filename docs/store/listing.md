@@ -180,7 +180,7 @@ WHAT IT NEVER DOES
 GOOD TO KNOW
 • Chrome and Edge only: TabVault uses the Chromium tab groups API.
 • It shows the tabs you have open; it does not search history or bookmarks.
-• Incognito windows are only visible if you allow the extension in incognito at chrome://extensions.
+• Incognito windows are only visible if you allow the extension in incognito at chrome://extensions. Focus mode never veils or minimises an incognito window.
 
 Free for personal and non-commercial use under the PolyForm Noncommercial License 1.0.0; commercial use needs the author's written permission. Plain HTML and JavaScript, no build step and no dependencies; the source is public: https://github.com/iYazee6-AI/TabVault
 ```
@@ -250,7 +250,7 @@ permission)
 | `sidePanel` | At install. | Shows the same TabVault page (`app/index.html?panel=1`, a one-column layout) in Chrome's side panel when the user opens it from TabVault's menu, the command palette, or a keyboard shortcut they assign. The toolbar icon still opens the full page. It grants no access to any website. | TabVault could only be used as a full tab. |
 | `contextMenus` | At install. (No warning.) | Adds one item to the right-click menu of TabVault's own toolbar icon (`contexts: ["action"]`): "Focus this window", or "Lift the focus" while it is on. It adds nothing to the menu of any web page. | Focus mode would start only from the keyboard shortcut or the TabVault page. |
 | `scripting` | At install. (No warning; it reaches no page without a host permission.) | Focus mode calls `chrome.scripting.executeScript` with the packaged file `app/focus-veil.js` on the tabs of the windows the user is not focused on, to draw a blurred overlay with a "Click to lift" pill, and once more to remove it when the focus is lifted. The script reads nothing from the page and sends nothing but the lift request to the extension. | No veil: Focus mode could only minimise the other windows. |
-| `<all_urls>` (optional host permission) | Never at install. Requested with `chrome.permissions.request` only when the user turns on Focus mode the first time, after TabVault's own page explains it ("Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them"). The user can decline, or withdraw it later at chrome://extensions. | The veil must be drawn on whatever pages the user has open in the other windows, so the host cannot be narrowed to a list of sites. Used only to inject the veil and remove it; no page content is read, stored or sent. | Focus mode minimises the other windows instead of veiling them; everything else works as before. |
+| `<all_urls>` (optional host permission) | Never at install. Requested with `chrome.permissions.request` only when the user turns on Focus mode the first time, after TabVault's own page explains it ("Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them"). The user can decline, or withdraw it later at chrome://extensions. | The veil must be drawn on whatever pages the user has open in the other windows, so the host cannot be narrowed to a list of sites. Used only to inject the veil and remove it; no page content is read, stored or sent. Incognito windows are never veiled, even when the extension is allowed in incognito. | Focus mode minimises the other windows instead of veiling them; everything else works as before. |
 
 **Remote code**
 

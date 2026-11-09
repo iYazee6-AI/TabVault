@@ -152,7 +152,7 @@ A few things live elsewhere: the page keeps a copy of your Appearance choice in 
 - **Chrome and Edge only** — TabVault uses `chrome.tabGroups` and other Chromium-only APIs; it does not run on Firefox or Safari.
 - **No history search** — TabVault only shows tabs that are currently open (and the ones it saw close). It does not search browser history or bookmarks.
 - **Chrome 123 or later** (since 1.4) — Focus mode uses the promise form of `chrome.contextMenus`, which Chrome added in 123. The idle rule reads each tab's `lastAccessed` (Chrome 121); a tab without it is skipped, never guessed.
-- **Focus mode cannot veil every page** — Chrome does not let an extension draw on its own pages, the Web Store, the PDF viewer or other extensions' pages; those tabs are counted, not veiled. Incognito windows are veiled only when TabVault is allowed in incognito.
+- **Focus mode cannot veil every page** — Chrome does not let an extension draw on its own pages, the Web Store, the PDF viewer or other extensions' pages; those tabs are counted, not veiled. Incognito windows are never veiled or minimised, even when TabVault is allowed in incognito.
 
 ## Testing
 

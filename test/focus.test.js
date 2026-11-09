@@ -121,3 +121,16 @@ test("veilTagFrom: a random custom-element name with nothing of TabVault in it",
   assert.equal(F.isVeilTag("x-abc<def>gh"), false);
   assert.equal(F.isVeilTag(undefined), false);
 });
+
+test("incognito windows are never veiled, counted or minimised", () => {
+  const windows = [
+    { id: 1, type: "normal", tabs: [{ id: 10, url: "https://a.com/" }] },
+    { id: 2, type: "normal", incognito: true, state: "normal", tabs: [{ id: 20, url: "https://b.com/", incognito: true }, { id: 21, url: "chrome://newtab/", incognito: true }] },
+    { id: 3, type: "normal", state: "normal", tabs: [{ id: 30, url: "https://c.com/" }] },
+  ];
+  assert.deepEqual(F.planVeil(windows, 1, OWN), { veil: [30], skip: [], unloaded: [] });
+  assert.deepEqual(F.minimizePlan(windows, 1), [{ id: 3, state: "normal" }]);
+  const on = F.startState(1, "veil", 0);
+  assert.equal(F.tabAction(on, { id: 22, windowId: 2, url: "https://b.com/x", incognito: true }, OWN, { type: "normal", incognito: true }), "none");
+  assert.equal(F.tabAction(on, { id: 22, windowId: 2, url: "https://b.com/x", incognito: true }, OWN), "none");
+});
