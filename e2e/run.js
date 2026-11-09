@@ -1932,6 +1932,16 @@ async function main() {
         await waitFor(async () => (await badge()) !== "●", { timeout: 5000 });
         await appPage.waitForSelector("#focus-bar", { state: "hidden", timeout: 5000 });
 
+        // A keyboard user lifts it too: the pill focused (Tab would land on it; here the extension's
+        // isolated world focuses it), then a real Enter.
+        await command(ownWindow);
+        await waitFor(async () => (await hasVeil(pageOther)) && (await hasVeil(pageNew)), { timeout: 10000 });
+        await pageNew.bringToFront();
+        await (await worker()).evaluate((id) => chrome.scripting.executeScript({ target: { tabId: id }, func: () => { globalThis.tabvaultVeil.pill.focus(); } }), await tabIdOf(pageNew));
+        await pageNew.keyboard.press("Enter");
+        await waitFor(async () => !(await focusState()).on, { timeout: 10000 });
+        await waitFor(async () => !(await hasVeil(pageOther)) && !(await hasVeil(pageNew)), { timeout: 10000 });
+
         // An update or reload while the focus is on: the sweep the worker runs at onInstalled and
         // onStartup clears the state and every veil (the real reload would close this harness's
         // own page, so the listener's function is called directly).
@@ -1979,7 +1989,7 @@ async function main() {
         }, { timeout: 10000 });
         await askPage.close().catch(() => {});
 
-        record("AF", "PASS", `focus on from window ${ownWindow}: the other window's tab veiled (${look.filter}, ${look.bg}, pill "${look.pill}"), the own window's tab not; badge dot, bar "${barOn}"; a new tab in the other window veiled; a popup window left clear; the page sees only <${tag}> (closed shadow, no id) and its synthetic clicks lifted nothing; about:blank counted ("${barSkip}"); a real press on the pill lifted every veil and the bar; the install/startup sweep cleared the state and every veil; the command toggled on and moved the focus to window ${winAF.id} (own tab veiled, other sharp) and lifted it; declined: the question "${askText.slice(0, 40)}...", "${declined.trim().slice(0, 50)}...", Minimise put window ${winAF.id} ${minState} and remembered it, the lift brought it back ${backState}`);
+        record("AF", "PASS", `focus on from window ${ownWindow}: the other window's tab veiled (${look.filter}, ${look.bg}, pill "${look.pill}"), the own window's tab not; badge dot, bar "${barOn}"; a new tab in the other window veiled; a popup window left clear; the page sees only <${tag}> (closed shadow, no id) and its synthetic clicks lifted nothing; about:blank counted ("${barSkip}"); a real press on the pill lifted every veil and the bar; Enter on the focused pill lifted them too; the install/startup sweep cleared the state and every veil; the command toggled on and moved the focus to window ${winAF.id} (own tab veiled, other sharp) and lifted it; declined: the question "${askText.slice(0, 40)}...", "${declined.trim().slice(0, 50)}...", Minimise put window ${winAF.id} ${minState} and remembered it, the lift brought it back ${backState}`);
       } catch (e) {
         record("AF", "FAIL", e.message);
       } finally {

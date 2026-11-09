@@ -35,15 +35,13 @@
   });
 
   const remove = () => { host.remove(); if (globalThis.tabvaultVeil && globalThis.tabvaultVeil.host === host) globalThis.tabvaultVeil = null; };
-  // Only a real press lifts the focus: a trusted pointerdown on the pill, then a trusted click.
-  // A page script cannot reach the pill (closed shadow root), and a synthetic event is ignored.
-  let armed = false;
-  pill.addEventListener("pointerdown", (e) => { armed = e.isTrusted; });
+  // Only a real activation lifts the focus: a trusted click, from the mouse or from Enter or
+  // Space on the focused pill. A page script cannot reach the pill (closed shadow root), and a
+  // synthetic event (isTrusted false) is ignored.
   pill.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!e.isTrusted || !armed) { armed = false; return; }
-    armed = false;
+    if (!e.isTrusted) return;
     remove(); // this page's veil goes at once, even when the extension was reloaded meanwhile
     try {
       chrome.runtime.sendMessage({ type: "focusLift" }).catch(() => {});
