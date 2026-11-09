@@ -617,8 +617,24 @@ function createFocusMenu() {
     });
   });
 }
-chrome.runtime.onInstalled.addListener(createFocusMenu);
-chrome.runtime.onStartup.addListener(createFocusMenu);
+// An update or a reload while the focus is on drops the worker's state but not the veils already
+// drawn in the pages (each pill would lift only its own), and a restored browser session may carry
+// a stale state: so at install, update, reload and startup the state is cleared and every veil in
+// every tab the permission reaches is removed (found by the install's element name, which
+// storage.local keeps across versions). The e2e harness calls it as self.focusSweep.
+function focusSweep() {
+  return focusWrite(async () => {
+    await setFocus(TV.FOCUS_OFF).catch(() => {});
+    if (!(await canVeil())) return { ok: true, swept: 0 };
+    const tabs = await chrome.tabs.query({});
+    const reach = tabs.filter((t) => TV.isVeilable(t.url));
+    await Promise.all(reach.map((t) => unveilTab(t.id)));
+    return { ok: true, swept: reach.length };
+  });
+}
+self.focusSweep = focusSweep;
+chrome.runtime.onInstalled.addListener(() => { createFocusMenu(); focusSweep().catch(() => {}); });
+chrome.runtime.onStartup.addListener(() => { createFocusMenu(); focusSweep().catch(() => {}); });
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== FOCUS_MENU) return;
   runFocusCommand(tab && typeof tab.windowId === "number" ? tab.windowId : undefined).catch((e) => console.warn("TabVault focus failed", e));
