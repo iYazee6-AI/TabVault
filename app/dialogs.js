@@ -856,7 +856,7 @@
         el("li", {}, "Source: ", link(REPO_URL, REPO_URL.replace("https://", ""))),
         el("li", {}, link(REPO_URL + "/issues", "Report an issue")),
         el("li", {}, link(REPO_URL + "/blob/main/PRIVACY.md", "Privacy policy"))),
-      el("p", { class: "muted" }, "Free for personal and non-commercial use (PolyForm Noncommercial License 1.0.0); commercial use needs the author's written permission. Type: IBM Plex Sans and Plex Mono (SIL Open Font License 1.1)."),
+      el("p", { class: "muted" }, "MIT licence. Type: IBM Plex Sans and Plex Mono (SIL Open Font License)."),
       el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
   };
 

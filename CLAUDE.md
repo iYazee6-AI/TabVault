@@ -10,7 +10,7 @@ A Manifest V3 Chrome extension: one page showing every window, tab group and
 tab; search, bulk move/close, native groups, duplicate cleanup; automatic
 local snapshots on change; lossless JSON export; restore with lazy-loaded
 tabs; Focus mode veils every other window. Plain HTML/JS, no build step, no
-runtime dependencies, PolyForm Noncommercial 1.0.0 since 1.4 (MIT up to 1.3.0).
+runtime dependencies, MIT.
 Modeled on Tab Manager v2 (MIT) but written from scratch.
 
 ## Commands
@@ -92,12 +92,11 @@ contact email is still the `<your contact email>` placeholder).
 
 ## License
 
-PolyForm Noncommercial 1.0.0 since 1.4.0 (`LICENSE`, verbatim, with the
-`Required Notice:` line on top; `package.json` `"license":
-"PolyForm-Noncommercial-1.0.0"`). Free for personal and non-commercial use;
-commercial use needs the author's written permission. Versions up to 1.3.0
-were MIT and stay MIT for those who have them. The IBM Plex fonts in
-`app/fonts/` keep the SIL OFL 1.1. Never edit the licence text.
+MIT (`LICENSE`; `package.json` `"license": "MIT"`). The owner's word of
+2026-11-09 (`tabvault title keep`): TabVault stays MIT and keeps the
+"Open-Source Tab Manager" title; a PolyForm Noncommercial change made on
+`feat/focus-1.4` was reverted before 1.4.0. The IBM Plex fonts in
+`app/fonts/` keep the SIL OFL 1.1.
 
 ## Known follow-ups (as of 2026-11-08)
 

@@ -2,7 +2,7 @@
 
 <!-- TODO: add the Chrome Web Store badge and listing link here once the listing URL is known (not yet pasted by the owner; do not guess it). -->
 
-TabVault is a source-available tab manager for Chrome and Edge (Manifest V3) that puts every window and tab into one page: search across all of them, select and move tabs between windows, group and rename, clean up duplicates, unload the tabs you select (or, when you turn it on, the tabs you have left idle) to free their memory, file idle tabs onto shelves by rules you write, reopen recently closed tabs, search everything you saved, and keep your session safe with automatic snapshots plus JSON and Markdown export/import. It's a from-scratch reimplementation inspired by [Tab Manager v2](https://github.com/xcv58/Tab-Manager-v2), written in plain JavaScript with no build step and no runtime dependencies. Free for personal and non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE); commercial use needs the author's written permission (see [License](#license)).
+TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that puts every window and tab into one page: search across all of them, select and move tabs between windows, group and rename, clean up duplicates, unload the tabs you select (or, when you turn it on, the tabs you have left idle) to free their memory, file idle tabs onto shelves by rules you write, reopen recently closed tabs, search everything you saved, and keep your session safe with automatic snapshots plus JSON and Markdown export/import. It's a from-scratch reimplementation inspired by [Tab Manager v2](https://github.com/xcv58/Tab-Manager-v2), written in plain JavaScript with no build step and no runtime dependencies. Licensed under the [MIT License](LICENSE).
 
 ## Features
 
@@ -181,7 +181,7 @@ Chrome shows a permission warning for this extension because of the `tabs` permi
 
 ## License
 
-TabVault is free for personal and non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE); commercial use needs the author's written permission. Versions up to 1.3.0 were released under the MIT licence and stay MIT for those who have them.
+TabVault is open source under the [MIT License](LICENSE).
 
 The bundled IBM Plex Sans and Plex Mono fonts (`app/fonts/`) keep their own licence, the SIL Open Font License 1.1 (`app/fonts/LICENSE.txt`).
 

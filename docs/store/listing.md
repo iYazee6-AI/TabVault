@@ -85,8 +85,8 @@ once the repository is public.
 - [ ] 1.4.0 (section 15) supersedes 1.3.0 the same way, and adds a
       permission prompt for existing users: none (`contextMenus` and
       `scripting` carry no warning, and `<all_urls>` is optional). Its local
-      package: `dist/tabvault-1.4.0.zip`, 554,077 bytes, SHA-256
-      `9de2fb249b26069314e434b3ebbfc454b1090f669a1f127fe2987f9a1a53c918`.
+      package: `dist/tabvault-1.4.0.zip`, 553,951 bytes, SHA-256
+      `fc5d62b51d815bc72942b4b0d00fad710db138fa08b092d5dc1a18c25853b20c`.
       Since 1.4.0 `npm run pack` is reproducible (every entry carries the
       fixed time 2026-01-01 00:00 and the entries are sorted), so `npm run pack`
       on a Windows checkout of the `v1.4.0` tag (`core.autocrlf` true, the
@@ -148,7 +148,7 @@ the `setup-trivy` tag it depended on).
 **Description** (paste as is):
 
 ```
-TabVault is a source-available tab manager, free for personal and non-commercial use. It puts every window and tab you have open into a single page, and keeps local snapshots of your session so a crash or a stray click does not cost you your tabs.
+TabVault is an open-source tab manager. It puts every window and tab you have open into a single page, and keeps local snapshots of your session so a crash or a stray click does not cost you your tabs.
 
 Free memory on your terms: pick the tabs you are not using and click Discard, or turn on Unload idle tabs in Settings and TabVault unloads tabs you have not used for the time you choose (15 minutes to 4 hours). Unloaded tabs stay in their windows and reload when you click them; the tab you are on, tabs playing sound, pinned tabs (unless you allow it) and protected groups are never unloaded. Write a rule per site to unload its tabs sooner, never touch them, or file them onto a shelf. Nothing is closed unless a rule you wrote says so: a shelving rule stays off until you have run its dry run and turned it on, and every tab it closes is saved to the shelf first. All of it is off until you turn it on.
 
@@ -186,7 +186,7 @@ GOOD TO KNOW
 • It shows the tabs you have open; it does not search history or bookmarks.
 • Incognito windows are only visible if you allow the extension in incognito at chrome://extensions. Focus mode never veils or minimises an incognito window.
 
-Free for personal and non-commercial use under the PolyForm Noncommercial License 1.0.0; commercial use needs the author's written permission. Plain HTML and JavaScript, no build step and no dependencies; the source is public: https://github.com/iYazee6-AI/TabVault
+Open source, plain HTML and JavaScript, no build step and no dependencies, MIT licensed. Source: https://github.com/iYazee6-AI/TabVault
 ```
 
 **Graphic assets**
@@ -514,27 +514,23 @@ users are not asked anything at the update. The dashboard asks for a
 justification for each: paste the three new rows of section 5, the reworded
 single purpose, and the reworded Website content row. Upload the package as
 in section 8 (`dist/tabvault-1.4.0.zip`, SHA-256
-`9de2fb249b26069314e434b3ebbfc454b1090f669a1f127fe2987f9a1a53c918`, reproducible from the `v1.4.0` tag as section 1 says), replace the fifth screenshot,
+`fc5d62b51d815bc72942b4b0d00fad710db138fa08b092d5dc1a18c25853b20c`, reproducible from the `v1.4.0` tag as section 1 says), replace the fifth screenshot,
 `05-snapshots.png`, with `docs/store/screenshots/06-focus-mode.png` (the
 store takes at most five; the snapshot list is the one the description
 already explains best in words). Update the
 description from section 4 and paste this block at the top of it, above
-"TabVault is a source-available tab manager...", with one blank line after
+"TabVault is an open-source tab manager...", with one blank line after
 it (it replaces the NEW IN 1.3 block):
 
 ```
 NEW IN 1.4
 • Focus mode: press Alt+Shift+F (or right-click the toolbar icon, Focus this window) and every other window is blurred and dimmed, with a "Click to lift" pill on top. The same keys lift it; in another window they move the focus there.
 • It asks once for access to your pages, only to draw the veil; TabVault still reads nothing from them. Say no and it minimises your other windows instead.
-• TabVault is now free for personal and non-commercial use under the PolyForm Noncommercial License 1.0.0.
 ```
 
-The licence in the listing: the description's last paragraph and the NEW IN
-1.4 block say "free for personal and non-commercial use"; the title still
-reads "TabVault: Open-Source Tab Manager" (from `manifest.json` `name`,
-the owner's rename of 2026-11-02). PolyForm Noncommercial is source-available,
-not an OSI open-source licence, so the title is the owner's call before this
-upload (Wakeel's report names it).
+The licence in the listing stays MIT and the title stays "TabVault:
+Open-Source Tab Manager" (the owner's word of 2026-11-09, `tabvault title
+keep`); nothing about the licence changes in this upload.
 
 Before the upload, the real-install checks no automation covers, in real
 Chrome with the package loaded unpacked:
