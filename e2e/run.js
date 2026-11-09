@@ -1840,7 +1840,19 @@ async function main() {
     {
       let winAF = null;
       const extraTabs = [];
-      const hasVeil = (p) => p.evaluate(() => Boolean(document.getElementById("tabvault-focus-veil")));
+      // The veil is an element with the install's random name (storage.local focusVeilTag) and a
+      // closed shadow root; its parts are read in the extension's isolated world, where the veil
+      // script keeps them, never from the page.
+      const veilTag = async () => (await worker()).evaluate(() => chrome.storage.local.get("focusVeilTag").then((r) => r.focusVeilTag));
+      const hasVeil = async (p) => { const tag = await veilTag(); return Boolean(tag) && p.evaluate((t) => Boolean(document.querySelector(t)), tag); };
+      const tabIdOf = async (p) => (await worker()).evaluate((u) => chrome.tabs.query({}).then((ts) => (ts.find((t) => t.url === u) || {}).id), p.url());
+      const isolated = async (p) => (await worker()).evaluate((id) => chrome.scripting.executeScript({ target: { tabId: id }, func: () => {
+        const v = globalThis.tabvaultVeil;
+        if (!v) return null;
+        const cs = getComputedStyle(v.veil);
+        const r = v.pill.getBoundingClientRect();
+        return { filter: cs.backdropFilter || cs.webkitBackdropFilter, bg: cs.backgroundColor, pill: v.pill.textContent, x: r.left + r.width / 2, y: r.top + r.height / 2, mode: v.host.shadowRoot === null ? "closed" : "open" };
+      } }).then((res) => res[0] && res[0].result), await tabIdOf(p));
       const pageFor = (suffix) => waitFor(async () => context.pages().find((p) => p.url().endsWith(suffix)) || null, { timeout: 15000 });
       const focusState = async () => (await worker()).evaluate(() => chrome.storage.session.get("focus").then((r) => r.focus || { on: false }));
       const badge = async () => (await worker()).evaluate(() => chrome.action.getBadgeText({}));
@@ -1863,12 +1875,11 @@ async function main() {
         const on = await command(ownWindow);
         assert(on && on.ok && on.mode === "veil" && on.veiled >= 1, `focus on answered ${JSON.stringify(on)}`);
         await waitFor(() => hasVeil(pageOther), { timeout: 10000 });
-        const look = await pageOther.evaluate(() => {
-          const root = document.getElementById("tabvault-focus-veil").shadowRoot;
-          const v = root.querySelector("[part=veil]");
-          const cs = getComputedStyle(v);
-          return { filter: cs.backdropFilter || cs.webkitBackdropFilter, bg: cs.backgroundColor, pill: root.querySelector("button").textContent };
-        });
+        const look = await isolated(pageOther);
+        assert(look && look.mode === "closed", `veil shadow root ${look && look.mode}`);
+        const tag = await veilTag();
+        const seen = await pageOther.evaluate((t) => { const h = document.querySelector(t); return { attrs: h.getAttributeNames(), shadow: h.shadowRoot === null ? "hidden" : "visible", byId: Boolean(document.getElementById("tabvault-focus-veil")) }; }, tag);
+        assert(!tag.includes("tab") && seen.shadow === "hidden" && !seen.byId && seen.attrs.join() === "style", `what the page sees: ${tag} ${JSON.stringify(seen)}`);
         assert(String(look.filter).includes("blur(8px)"), `veil filter ${look.filter}`);
         assert(look.bg.includes("0.35"), `veil dim ${look.bg}`);
         assert(look.pill === "TabVault focus is on this other window. Click to lift.", `pill "${look.pill}"`);
@@ -1899,8 +1910,23 @@ async function main() {
         await (await worker()).evaluate((id) => chrome.windows.remove(id), popupWin.id).catch(() => {});
         assert(!popupVeiled, "a popup window got the veil");
 
-        // The pill lifts everything.
-        await pageNew.locator("#tabvault-focus-veil button").click();
+        // A page script cannot lift the focus: clicks on the element, synthetic pointer events and
+        // a click at the pill's spot (elementFromPoint gives the host, the shadow root is closed).
+        const pillAt = await isolated(pageNew);
+        await pageNew.evaluate(({ t, x, y }) => {
+          const h = document.querySelector(t);
+          h.click();
+          h.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
+          h.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+          const at = document.elementFromPoint(x, y);
+          if (at) { at.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true })); at.click(); }
+        }, { t: tag, x: pillAt.x, y: pillAt.y });
+        await new Promise((r) => setTimeout(r, 800));
+        assert((await focusState()).on && (await hasVeil(pageNew)) && (await hasVeil(pageOther)), "a synthetic click from page script lifted the focus");
+
+        // A real press on the pill lifts everything.
+        await pageNew.bringToFront();
+        await pageNew.mouse.click(pillAt.x, pillAt.y);
         await waitFor(async () => !(await focusState()).on, { timeout: 10000 });
         await waitFor(async () => !(await hasVeil(pageOther)) && !(await hasVeil(pageNew)), { timeout: 10000 });
         await waitFor(async () => (await badge()) !== "●", { timeout: 5000 });
@@ -1943,7 +1969,7 @@ async function main() {
         }, { timeout: 10000 });
         await askPage.close().catch(() => {});
 
-        record("AF", "PASS", `focus on from window ${ownWindow}: the other window's tab veiled (${look.filter}, ${look.bg}, pill "${look.pill}"), the own window's tab not; badge dot, bar "${barOn}"; a new tab in the other window veiled; a popup window left clear; about:blank counted ("${barSkip}"); the pill lifted every veil and the bar; the command toggled on and moved the focus to window ${winAF.id} (own tab veiled, other sharp) and lifted it; declined: the question "${askText.slice(0, 40)}...", "${declined.trim().slice(0, 50)}...", Minimise put window ${winAF.id} ${minState} and remembered it, the lift brought it back ${backState}`);
+        record("AF", "PASS", `focus on from window ${ownWindow}: the other window's tab veiled (${look.filter}, ${look.bg}, pill "${look.pill}"), the own window's tab not; badge dot, bar "${barOn}"; a new tab in the other window veiled; a popup window left clear; the page sees only <${tag}> (closed shadow, no id) and its synthetic clicks lifted nothing; about:blank counted ("${barSkip}"); a real press on the pill lifted every veil and the bar; the command toggled on and moved the focus to window ${winAF.id} (own tab veiled, other sharp) and lifted it; declined: the question "${askText.slice(0, 40)}...", "${declined.trim().slice(0, 50)}...", Minimise put window ${winAF.id} ${minState} and remembered it, the lift brought it back ${backState}`);
       } catch (e) {
         record("AF", "FAIL", e.message);
       } finally {

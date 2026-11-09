@@ -562,7 +562,8 @@ async function main() {
     if (!reading) throw new Error("no page for " + U["/manifest-v3"]);
     await reading.setViewportSize({ width: WIDTH, height: HEIGHT });
     await reading.bringToFront();
-    await reading.waitForFunction(() => Boolean(document.getElementById("tabvault-focus-veil")), null, { timeout: 15000 });
+    const veilTagName = await sw(() => chrome.storage.local.get("focusVeilTag").then((r) => r.focusVeilTag));
+    await reading.waitForFunction((t) => Boolean(t && document.querySelector(t)), veilTagName, { timeout: 15000 });
     await reading.mouse.move(5, 5);
     await sleep(600);
     const focusFile = path.join(SHOTS, "06-focus-mode.png");

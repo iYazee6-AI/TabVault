@@ -110,3 +110,14 @@ test("the badge dot and the permission are fixed values", () => {
   assert.equal(F.FOCUS_BADGE, "●");
   assert.deepEqual(F.FOCUS_ORIGINS, ["<all_urls>"]);
 });
+
+test("veilTagFrom: a random custom-element name with nothing of TabVault in it", () => {
+  const tag = F.veilTagFrom(new Uint8Array([0, 1, 25, 26, 51, 255, 3, 4, 5, 6, 7, 8]));
+  assert.equal(tag, "x-abzazvdefghi");
+  assert.equal(F.isVeilTag(tag), true);
+  assert.equal(tag.includes("tab"), false);
+  assert.equal(F.isVeilTag("tabvault-focus-veil"), false);
+  assert.equal(F.isVeilTag("x-AB"), false);
+  assert.equal(F.isVeilTag("x-abc<def>gh"), false);
+  assert.equal(F.isVeilTag(undefined), false);
+});

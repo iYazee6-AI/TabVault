@@ -66,7 +66,7 @@ Two windows open and you want to work in one: press `Alt+Shift+F` in it (change 
 - The same command in the focused window lifts the focus; in another window it moves the focus there. The toolbar icon shows a dot while the focus is on, and the TabVault page shows a bar with **Lift the focus**. The state is kept in `chrome.storage.session`, so it survives the service worker sleeping and ends when the browser closes.
 - Drawing on pages needs a permission TabVault does not otherwise ask for: the first time, the TabVault page explains why ("Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them") and Chrome asks you. Say no, or choose **Minimise the other windows instead**, and Focus mode minimises the other windows instead of veiling them (and lifting puts them back); the shortcut remembers that choice, and ⋯ → Focus this window asks again.
 - Pages Chrome does not let an extension draw on (`chrome://` pages, the New Tab page, the Chrome Web Store, the PDF viewer, other extensions' pages) are skipped and counted: the TabVault page shows "N tabs could not be veiled". An unloaded tab is veiled when it loads.
-- The veil reads nothing from the page and stores nothing about it; it is a shadow-DOM overlay drawn on top, removed when the focus is lifted.
+- The veil reads nothing from the page and stores nothing about it; it is an overlay in a closed shadow root drawn on top, removed when the focus is lifted. A page sees only one element with a random name (made once per install) and cannot reach the pill; only a real press on the pill lifts the focus, never a click a page script makes.
 
 ## Settings
 

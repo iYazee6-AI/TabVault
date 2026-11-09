@@ -1,22 +1,23 @@
 // Focus mode's veil (1.4). The worker injects this file with chrome.scripting.executeScript into
-// every tab of every window but the focused one. It reads nothing from the page and sends
-// nothing but the lift request: it draws a full-page blur with a pill on top, inside a shadow
-// root so the page's own styles cannot reach it. Styles are set through the CSSOM (element.style),
-// which a page's Content-Security-Policy does not block, unlike a <style> element.
+// every tab of every normal window but the focused one, right after setting
+// globalThis.tabvaultVeilTag (in this isolated world, which the page cannot see) to the install's
+// random custom-element name. It reads nothing from the page and sends nothing but the lift
+// request: it draws a full-page blur with a pill on top, inside a closed shadow root, so the
+// page's own scripts and styles cannot reach the pill. The only thing a page can see is one
+// element with a random name and no id, class or data attribute. Styles are set through the
+// CSSOM (element.style), which a page's Content-Security-Policy does not block.
 (() => {
-  const ID = "tabvault-focus-veil";
-  if (document.getElementById(ID)) return;
+  const TAG = globalThis.tabvaultVeilTag;
+  if (typeof TAG !== "string" || !TAG.startsWith("x-")) return;
+  if (document.querySelector(TAG)) return;
 
   const set = (node, styles) => { for (const [k, v] of Object.entries(styles)) node.style.setProperty(k, v, "important"); };
 
-  const host = document.createElement("div");
-  host.id = ID;
-  host.dataset.tabvaultVeil = "1";
+  const host = document.createElement(TAG);
   set(host, { position: "fixed", inset: "0", "z-index": "2147483647", display: "block", margin: "0", padding: "0", border: "0" });
 
-  const root = host.attachShadow({ mode: "open" });
+  const root = host.attachShadow({ mode: "closed" });
   const veil = document.createElement("div");
-  veil.setAttribute("part", "veil");
   set(veil, {
     position: "absolute", inset: "0",
     "backdrop-filter": "blur(8px)", "-webkit-backdrop-filter": "blur(8px)",
@@ -25,7 +26,6 @@
 
   const pill = document.createElement("button");
   pill.type = "button";
-  pill.className = "pill";
   pill.textContent = "TabVault focus is on this other window. Click to lift.";
   set(pill, {
     position: "absolute", top: "16px", left: "50%", transform: "translateX(-50%)",
@@ -34,10 +34,16 @@
     font: "500 13px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif",
   });
 
-  const remove = () => { const h = document.getElementById(ID); if (h) h.remove(); };
+  const remove = () => { host.remove(); if (globalThis.tabvaultVeil && globalThis.tabvaultVeil.host === host) globalThis.tabvaultVeil = null; };
+  // Only a real press lifts the focus: a trusted pointerdown on the pill, then a trusted click.
+  // A page script cannot reach the pill (closed shadow root), and a synthetic event is ignored.
+  let armed = false;
+  pill.addEventListener("pointerdown", (e) => { armed = e.isTrusted; });
   pill.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!e.isTrusted || !armed) { armed = false; return; }
+    armed = false;
     remove(); // this page's veil goes at once, even when the extension was reloaded meanwhile
     try {
       chrome.runtime.sendMessage({ type: "focusLift" }).catch(() => {});
@@ -48,4 +54,7 @@
 
   root.append(veil, pill);
   document.documentElement.append(host);
+  // Kept in this isolated world only (the page cannot see it): the worker's unveil and the e2e
+  // harness read the veil through it.
+  globalThis.tabvaultVeil = { host, veil, pill };
 })();

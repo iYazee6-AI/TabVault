@@ -464,18 +464,35 @@ async function canVeil() {
   if (!chrome.scripting) return false;
   return chrome.permissions.contains({ origins: TV.FOCUS_ORIGINS }).catch(() => false);
 }
+// The veil's element name: a random custom-element name made once per install and kept in
+// storage.local (so a later version can still find and remove the veils an earlier one drew),
+// never an id a page could look for. lib/focus.js veilTagFrom builds it.
+let veilTag = null;
+async function getVeilTag() {
+  if (veilTag) return veilTag;
+  const { [TV.FOCUS_TAG_KEY]: stored } = await chrome.storage.local.get(TV.FOCUS_TAG_KEY).catch(() => ({}));
+  if (TV.isVeilTag(stored)) return (veilTag = stored);
+  veilTag = TV.veilTagFrom(crypto.getRandomValues(new Uint8Array(12)));
+  await chrome.storage.local.set({ [TV.FOCUS_TAG_KEY]: veilTag }).catch(() => {});
+  return veilTag;
+}
 async function veilTab(tabId) {
   try {
+    const tag = await getVeilTag();
+    // The tag goes into this extension's isolated world first; the page never sees it.
+    await chrome.scripting.executeScript({ target: { tabId }, func: (t) => { globalThis.tabvaultVeilTag = t; }, args: [tag] });
     await chrome.scripting.executeScript({ target: { tabId }, files: [VEIL_FILE] });
     return true;
   } catch {
     return false; // a PDF viewer, an error page, a page that refuses: counted on the page
   }
 }
-function unveilTab(tabId) {
+async function unveilTab(tabId) {
+  const tag = await getVeilTag();
   return chrome.scripting.executeScript({
     target: { tabId },
-    func: () => { const h = document.getElementById("tabvault-focus-veil"); if (h) h.remove(); },
+    func: (t) => { for (const h of document.querySelectorAll(t)) h.remove(); globalThis.tabvaultVeil = null; },
+    args: [tag],
   }).catch(() => {});
 }
 
