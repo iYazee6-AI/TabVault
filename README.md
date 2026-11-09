@@ -29,6 +29,7 @@ TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that pu
 - Command palette (`Alt+K`): every action by name and every tab, ranked as you type
 - Save and close: a kept, named snapshot of a window, then its tabs close, always after a confirmation with the count
 - Side panel: the same page in one column in Chrome's side panel (⋯ → Open in side panel, the palette, or a shortcut you assign)
+- Focus mode (1.4): one command from any page (`Alt+Shift+F`, or right-click the toolbar icon → Focus this window) keeps the window you are in sharp and veils every tab of every other window with a blur and a "Click to lift" pill; the same command lifts it (see [Focus mode](#focus-mode))
 
 ## Installing (load unpacked)
 
@@ -57,6 +58,16 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 - **Export** — ⋯ → **Export**: choose what (this session, the selected tabs, a snapshot, a shelf) and the format (JSON with every detail, or Markdown: `## Window`, `### Group`, `- [title](url)`), then **Download** or **Copy to clipboard**.
 - **Import** — ⋯ → **Import**: choose a file (a JSON export, or a `.md` or `.txt` list of links; up to 50 MB) or paste links (`## Name` starts a window, `### Name` a group, no headings means one window); the preview counts windows, tabs, groups and the links skipped because they are not web pages; choose which windows to restore and click **Restore selected windows** (above 100 tabs it asks again). Each window reopens with the same tabs, groups and pinned state; with the **Settings** → "Load restored tabs only when opened (lazy)" option on (the default), only the first tab in each window loads right away and the rest load the next time you click them.
 
+## Focus mode
+
+Two windows open and you want to work in one: press `Alt+Shift+F` in it (change the keys at `chrome://extensions/shortcuts`), right-click the TabVault toolbar icon and choose **Focus this window**, or use ⋯ → **Focus this window** (or the palette) on the TabVault page for the window that page is in.
+
+- Every tab of every other normal window gets a veil (pop-up windows, such as a sign-in or payment window opened from the page you are on, stay clear): the page blurred and dimmed, with a pill at the top, "TabVault focus is on this other window. Click to lift.", which lifts the focus everywhere. Tabs opened, loaded or moved into another window while the focus is on get the veil too; a tab moved into the focused window loses it.
+- The same command in the focused window lifts the focus; in another window it moves the focus there. The toolbar icon shows a dot while the focus is on, and the TabVault page shows a bar with **Lift the focus**. The state is kept in `chrome.storage.session`, so it survives the service worker sleeping and ends when the browser closes.
+- Drawing on pages needs a permission TabVault does not otherwise ask for: the first time, the TabVault page explains why ("Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them") and Chrome asks you. Say no, or choose **Minimise the other windows instead**, and Focus mode minimises the other windows instead of veiling them (and lifting puts them back); the shortcut remembers that choice, and ⋯ → Focus this window asks again.
+- Pages Chrome does not let an extension draw on (`chrome://` pages, the New Tab page, the Chrome Web Store, the PDF viewer, other extensions' pages) are skipped and counted: the TabVault page shows "N tabs could not be veiled". An unloaded tab is veiled when it loads.
+- The veil reads nothing from the page and stores nothing about it; it is an overlay in a closed shadow root drawn on top, removed when the focus is lifted. A page sees only one element with a random name (made once per install) and cannot reach the pill; only a real click on the pill, or Enter or Space with the pill focused, lifts the focus, never a click a page script makes.
+
 ## Settings
 
 Available from **Settings** in the **⋯** menu (which also holds Export, Import, Help and **About**: the version, the repository, the issue tracker and the privacy policy): the snapshot debounce (how many seconds of no tab changes before an automatic snapshot is taken) and how many snapshots to keep; whether duplicate-finding ignores the URL `#hash`; Appearance (System/Light/Dark) and density (comfortable/compact); whether URLs are shown under titles; and **"Load restored tabs only when opened (lazy)"**, which controls whether Import/Restore loads only the first tab of each restored window immediately (the rest open discarded, loading on click) or loads every restored tab right away. It's on by default. Since 1.2 also: **Icon badge** (tab count, unloaded tabs, or off), **Remember recently closed tabs** (on by default), and **Unload idle tabs** (off by default: the idle time, whether pinned tabs are spared, the "last run" line). Since 1.3 the **Idle tabs** block also holds the **rules** (first match wins: + Add rule, the inline editor with Dry run, the On switch, ↑ ↓, Delete) and **Run idle rules now**; the 1.2 site list became `never` rules on the first start of 1.3.
@@ -80,6 +91,7 @@ Available from **Settings** in the **⋯** menu (which also holds Export, Import
 | `Esc` | Close a menu; otherwise clear search and selection |
 | `?` | All shortcuts |
 | `Alt+Shift+T` | Open TabVault (browser-level shortcut, configurable at `chrome://extensions/shortcuts`) |
+| `Alt+Shift+F` | Focus this window: veil every other window; again to lift (browser-level, configurable there too) |
 
 The list lives in one place, `lib/shortcuts.js`; the page's key handler, the hint strip and the `?` panel all read it.
 
@@ -110,6 +122,8 @@ The list lives in one place, `lib/shortcuts.js`; the page's key handler, the hin
 | `lib/recent.js` | The recently closed list |
 | `lib/palette.js` | Command palette entries and ranking |
 | `lib/save-close.js` | Which tabs save and close closes, and the window kept open |
+| `lib/focus.js` | Focus mode: which tabs get the veil, the toggle, the minimise fallback, the page's line |
+| `app/focus-veil.js` | The veil Focus mode injects into the tabs of the other windows (a blur and the lift pill) |
 | `lib/exporters.js` | JSON and Markdown export, import parsing and the scheme filter |
 | `lib/restore-plan.js` | Turns a session into an ordered list of `chrome.*` restore steps |
 | `icons/` | Toolbar and store icons |
@@ -137,8 +151,8 @@ A few things live elsewhere: the page keeps a copy of your Appearance choice in 
 - **Restored tabs** — with lazy loading on (the default; **Settings** → "Load restored tabs only when opened (lazy)"), restored tabs load when opened: only the first tab in each restored window loads immediately, and the rest are created discarded and load the next time you click them, to avoid restoring dozens of tabs' worth of network traffic and memory at once. Turning the option off loads every restored tab immediately instead.
 - **Chrome and Edge only** — TabVault uses `chrome.tabGroups` and other Chromium-only APIs; it does not run on Firefox or Safari.
 - **No history search** — TabVault only shows tabs that are currently open (and the ones it saw close). It does not search browser history or bookmarks.
-- **Idle time needs Chrome 121+** — the idle rule reads each tab's `lastAccessed`, which Chrome added in 121; on Chrome 120 (the minimum) a tab without it is skipped, never guessed.
-- **No toolbar-icon context menu** — an "Open in side panel" entry there would need the `contextMenus` permission; the panel opens from ⋯, the palette or a shortcut instead.
+- **Chrome 123 or later** (since 1.4) — Focus mode uses the promise form of `chrome.contextMenus`, which Chrome added in 123. The idle rule reads each tab's `lastAccessed` (Chrome 121); a tab without it is skipped, never guessed.
+- **Focus mode cannot veil every page** — Chrome does not let an extension draw on its own pages, the Web Store, the PDF viewer or other extensions' pages; those tabs are counted, not veiled. Incognito windows are never veiled or minimised, even when TabVault is allowed in incognito.
 
 ## Testing
 
@@ -158,11 +172,18 @@ A few things the automated tests can't (fully) cover, worth checking by hand in 
 - Restore with `file://` tabs in the exported/imported session (these need "Allow access to file URLs" in `chrome://extensions` to reopen correctly).
 - The 1.3 real-install checks: Copy to clipboard from the Export dialog (no `clipboardWrite`), a shelving rule at 15 minutes on a test site (dry run, unlock, shelved with the group and closed, the active tab kept), and opening a shelved item whose group is gone (recreated with its title and colour).
 - Unload idle tabs in real Chrome (turn it on at 15 minutes, wait, and confirm `zz` on the idle tabs and the "last run" line), and the side panel itself (⋯ → Open in side panel): Playwright can neither run `chrome.tabs.discard()` (below) nor drive the panel.
+- Focus mode in real Chrome (1.4): `Alt+Shift+F` is free and bound at `chrome://extensions/shortcuts`; right-click the toolbar icon → Focus this window; Chrome's permission prompt appears after Allow, and declining it falls back to minimising; a PDF tab and a `chrome://` tab in another window are counted, not veiled.
 - Lazy restore (Settings → "Load restored tabs only when opened (lazy)") in real, non-automated Chrome, since `npm run e2e`'s `chrome.tabs.discard()` coverage is limited by a Playwright/Chromium environment defect (see `e2e/README.md`).
 
 ## Privacy
 
-Chrome shows a permission warning for this extension because of the `tabs` permission: it means TabVault can read the URL, title and favicon of every tab in every window, and open, close, move or modify them — which is exactly what a tab manager needs to do. TabVault sends nothing to any server of its own, does not include any analytics or telemetry, and does not send tab data anywhere (the only network activity is the browser fetching each tab's favicon from that tab's own site, which 1.0 did too): everything it reads and writes stays in `chrome.storage.local` on your machine (see [How data is stored](#how-data-is-stored)). Export and import are manual, local file operations you initiate.
+Chrome shows a permission warning for this extension because of the `tabs` permission: it means TabVault can read the URL, title and favicon of every tab in every window, and open, close, move or modify them — which is exactly what a tab manager needs to do. Focus mode (1.4) adds an optional permission to touch your pages, asked for only when you first turn Focus mode on and used only to draw the veil on top of them; nothing is read from any page. TabVault sends nothing to any server of its own, does not include any analytics or telemetry, and does not send tab data anywhere (the only network activity is the browser fetching each tab's favicon from that tab's own site, which 1.0 did too): everything it reads and writes stays in `chrome.storage.local` on your machine (see [How data is stored](#how-data-is-stored)). Export and import are manual, local file operations you initiate.
+
+## License
+
+TabVault is open source under the [MIT License](LICENSE).
+
+The bundled IBM Plex Sans and Plex Mono fonts (`app/fonts/`) keep their own licence, the SIL Open Font License 1.1 (`app/fonts/LICENSE.txt`).
 
 ## Publishing
 

@@ -1,4 +1,4 @@
-importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js", "lib/shelves.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js", "lib/shelves.js", "lib/focus.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
@@ -39,6 +39,7 @@ chrome.action.onClicked.addListener(() => { openPage().catch((e) => console.warn
 // sidePanel.open must run inside the command's user gesture, so nothing is awaited before it.
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === "open-tabvault") openPage().catch(() => {});
+  if (command === "focus-window") runFocusCommand(tab && typeof tab.windowId === "number" ? tab.windowId : undefined).catch((e) => console.warn("TabVault focus failed", e));
   if (command === "open-side-panel" && chrome.sidePanel && tab && typeof tab.windowId === "number") {
     chrome.sidePanel.open({ windowId: tab.windowId }).catch((e) => console.warn("TabVault side panel failed", e));
   }
@@ -142,8 +143,9 @@ chrome.runtime.onInstalled.addListener(() => {
 let badgeLastAt = 0;
 let badgeTrailing = null;
 async function refreshBadge() {
-  const [settings, tabs] = await Promise.all([getSettings(), chrome.tabs.query({})]);
-  await chrome.action.setBadgeText({ text: TV.badgeText(settings.badge, TV.countForBadge(tabs, OWN_PREFIX)) });
+  const [settings, tabs, focus] = await Promise.all([getSettings(), chrome.tabs.query({}), getFocus()]);
+  // Focus mode shows a dot instead of the count while it is on.
+  await chrome.action.setBadgeText({ text: focus.on ? TV.FOCUS_BADGE : TV.badgeText(settings.badge, TV.countForBadge(tabs, OWN_PREFIX)) });
 }
 function scheduleBadge() {
   const now = Date.now();
@@ -432,11 +434,222 @@ async function saveAndClose({ windowIds, name }) {
   return { ok: true, closed: plan.count, snapshotId: saved.id };
 }
 
+// ---- focus mode (1.4) -----------------------------------------------------------------
+// One window stays sharp; every tab of every other window gets a veil (app/focus-veil.js: a blur
+// and a lift pill) through chrome.scripting, which needs the optional <all_urls> host permission.
+// The page asks for it once (app/dialogs.js focus); without it the other windows are minimised
+// instead. The state lives in storage.session (lib/focus.js FOCUS_KEY), so a worker restart keeps
+// it; every write goes through focusWrite. Nothing is read from any page.
+const FOCUS_MENU = "tabvault-focus";
+const VEIL_FILE = "app/focus-veil.js";
+let focusQueue = Promise.resolve();
+function focusWrite(fn) {
+  const run = focusQueue.then(fn);
+  focusQueue = run.catch(() => {});
+  return run;
+}
+async function getFocus() {
+  const r = await chrome.storage.session.get(TV.FOCUS_KEY).catch(() => ({}));
+  return r[TV.FOCUS_KEY] || TV.FOCUS_OFF;
+}
+async function setFocus(state) {
+  await chrome.storage.session.set({ [TV.FOCUS_KEY]: state });
+  chrome.contextMenus.update(FOCUS_MENU, { title: state.on ? "Lift the focus" : "Focus this window" }).catch(() => {});
+  refreshBadge().catch(() => {});
+}
+// The e2e harness sets self.focusPermissionOverride to false to walk the declined path; nothing
+// in the extension sets it.
+async function canVeil() {
+  if (self.focusPermissionOverride === false) return false;
+  if (!chrome.scripting) return false;
+  return chrome.permissions.contains({ origins: TV.FOCUS_ORIGINS }).catch(() => false);
+}
+// The veil's element name: a random custom-element name made once per install and kept in
+// storage.local (so a later version can still find and remove the veils an earlier one drew),
+// never an id a page could look for. lib/focus.js veilTagFrom builds it.
+let veilTag = null;
+async function getVeilTag() {
+  if (veilTag) return veilTag;
+  const { [TV.FOCUS_TAG_KEY]: stored } = await chrome.storage.local.get(TV.FOCUS_TAG_KEY).catch(() => ({}));
+  if (TV.isVeilTag(stored)) return (veilTag = stored);
+  veilTag = TV.veilTagFrom(crypto.getRandomValues(new Uint8Array(12)));
+  await chrome.storage.local.set({ [TV.FOCUS_TAG_KEY]: veilTag }).catch(() => {});
+  return veilTag;
+}
+async function veilTab(tabId) {
+  try {
+    const tag = await getVeilTag();
+    // The tag goes into this extension's isolated world first; the page never sees it.
+    await chrome.scripting.executeScript({ target: { tabId }, func: (t) => { globalThis.tabvaultVeilTag = t; }, args: [tag] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: [VEIL_FILE] });
+    return true;
+  } catch {
+    return false; // a PDF viewer, an error page, a page that refuses: counted on the page
+  }
+}
+async function unveilTab(tabId) {
+  const tag = await getVeilTag();
+  return chrome.scripting.executeScript({
+    target: { tabId },
+    func: (t) => { for (const h of document.querySelectorAll(t)) h.remove(); globalThis.tabvaultVeil = null; },
+    args: [tag],
+  }).catch(() => {});
+}
+
+async function startVeil(windowId) {
+  const windows = await chrome.windows.getAll({ populate: true });
+  const plan = TV.planVeil(windows, windowId, OWN_PREFIX);
+  const results = await Promise.all(plan.veil.map((id) => veilTab(id).then((ok) => ({ id, ok }))));
+  const skipped = plan.skip.concat(results.filter((r) => !r.ok).map((r) => r.id));
+  const state = TV.startState(windowId, "veil", Date.now());
+  await setFocus(skipped.reduce((s, id) => TV.withSkipped(s, id, true), state));
+  return { ok: true, mode: "veil", veiled: results.filter((r) => r.ok).length, skipped: skipped.length, waiting: plan.unloaded.length };
+}
+async function startMinimize(windowId) {
+  const windows = await chrome.windows.getAll({});
+  const plan = TV.minimizePlan(windows, windowId);
+  for (const w of plan) await chrome.windows.update(w.id, { state: "minimized" }).catch(() => {});
+  await chrome.windows.update(windowId, { focused: true }).catch(() => {});
+  await setFocus(TV.startState(windowId, "minimize", Date.now(), { minimized: plan }));
+  return { ok: true, mode: "minimize", minimized: plan.length };
+}
+async function liftNow() {
+  const state = await getFocus();
+  if (!state.on) return { ok: true, lifted: false };
+  await setFocus(TV.FOCUS_OFF);
+  if (state.mode === "minimize") {
+    for (const w of state.minimized || []) await chrome.windows.update(w.id, { state: w.state }).catch(() => {});
+    await chrome.windows.update(state.windowId, { focused: true }).catch(() => {});
+  } else if (chrome.scripting) {
+    const tabs = await chrome.tabs.query({});
+    await Promise.all(tabs.filter((t) => TV.isVeilable(t.url)).map((t) => unveilTab(t.id)));
+  }
+  return { ok: true, lifted: true };
+}
+function liftFocus() { return focusWrite(liftNow); }
+
+// mode: "veil", "minimize", or undefined to decide here: the veil when the permission is
+// granted, the minimise fallback when the user chose it, else "ask" (the caller opens the page).
+function startFocus(windowId, mode) {
+  return focusWrite(async () => {
+    if (typeof windowId !== "number") return { ok: false, error: "no window to focus" };
+    await liftNow();
+    if (mode === undefined) {
+      if (await canVeil()) mode = "veil";
+      else {
+        const { [TV.FOCUS_FALLBACK_KEY]: fallback } = await chrome.storage.local.get(TV.FOCUS_FALLBACK_KEY).catch(() => ({}));
+        if (fallback !== "minimize") return { ok: true, ask: true };
+        mode = "minimize";
+      }
+    }
+    if (mode === "veil" && !(await canVeil())) return { ok: false, error: "Focus mode needs the permission to draw on your other windows" };
+    return mode === "minimize" ? startMinimize(windowId) : startVeil(windowId);
+  });
+}
+
+// The command: from the shortcut, the toolbar menu or the page. The same window lifts the focus,
+// another window moves it there; the first use without the permission opens the page's question
+// in that window. The e2e harness calls it as self.runFocusCommand.
+async function runFocusCommand(windowId) {
+  if (typeof windowId !== "number") {
+    const w = await chrome.windows.getLastFocused().catch(() => null);
+    windowId = w ? w.id : undefined;
+  }
+  const action = TV.focusCommand(await getFocus(), windowId);
+  if (action === "lift") return liftFocus();
+  const r = await startFocus(windowId);
+  if (r && r.ask) await chrome.tabs.create({ windowId, url: `${PAGE_URL}?focus=${windowId}`, active: true });
+  return r;
+}
+self.runFocusCommand = runFocusCommand;
+self.liftFocus = liftFocus;
+
+// A tab that loads, opens or moves while the veil is on gets it (another window) or loses it
+// (the focused window); one that cannot take it is counted.
+function onFocusTab(tab) {
+  if (!tab || typeof tab.id !== "number") return;
+  focusWrite(async () => {
+    const state = await getFocus();
+    if (!state.on || state.mode !== "veil") return;
+    const win = tab.windowId === state.windowId ? null : await chrome.windows.get(tab.windowId).catch(() => null);
+    const action = TV.tabAction(state, tab, OWN_PREFIX, win);
+    if (action === "none") return;
+    if (action === "unveil") {
+      await unveilTab(tab.id);
+      if ((state.skipped || []).includes(tab.id)) await setFocus(TV.withSkipped(state, tab.id, false));
+      return;
+    }
+    const ok = action === "veil" ? await veilTab(tab.id) : false;
+    const was = (state.skipped || []).includes(tab.id);
+    if (was === !ok) return;
+    await setFocus(TV.withSkipped(state, tab.id, !ok));
+  }).catch(() => {});
+}
+chrome.tabs.onCreated.addListener((tab) => { if (tab.status === "complete") onFocusTab(tab); });
+chrome.tabs.onUpdated.addListener((_id, info, tab) => { if (info.status === "complete") onFocusTab(tab); });
+chrome.tabs.onAttached.addListener((id) => { chrome.tabs.get(id).then(onFocusTab, () => {}); });
+chrome.tabs.onRemoved.addListener((id) => {
+  focusWrite(async () => {
+    const state = await getFocus();
+    if (state.on && (state.skipped || []).includes(id)) await setFocus(TV.withSkipped(state, id, false));
+  }).catch(() => {});
+});
+chrome.windows.onRemoved.addListener((windowId) => {
+  focusWrite(async () => {
+    const state = await getFocus();
+    if (state.on && state.windowId === windowId) await liftNow();
+  }).catch(() => {});
+});
+// The user took the permission back: the veils cannot be lifted from here any more (each pill
+// still removes its own), so the state is cleared.
+chrome.permissions.onRemoved.addListener(() => {
+  focusWrite(async () => {
+    const state = await getFocus();
+    if (state.on && state.mode === "veil" && !(await canVeil())) await setFocus(TV.FOCUS_OFF);
+  }).catch(() => {});
+});
+
+function createFocusMenu() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: FOCUS_MENU, title: "Focus this window", contexts: ["action"] }, () => {
+      void chrome.runtime.lastError; // a second create during a quick reload: the item is there already
+      getFocus().then((s) => { if (s.on) chrome.contextMenus.update(FOCUS_MENU, { title: "Lift the focus" }).catch(() => {}); }, () => {});
+    });
+  });
+}
+// An update or a reload while the focus is on drops the worker's state but not the veils already
+// drawn in the pages (each pill would lift only its own), and a restored browser session may carry
+// a stale state: so at install, update, reload and startup the state is cleared and every veil in
+// every tab the permission reaches is removed (found by the install's element name, which
+// storage.local keeps across versions). The e2e harness calls it as self.focusSweep.
+function focusSweep() {
+  return focusWrite(async () => {
+    await setFocus(TV.FOCUS_OFF).catch(() => {});
+    if (!(await canVeil())) return { ok: true, swept: 0 };
+    const tabs = await chrome.tabs.query({});
+    const reach = tabs.filter((t) => TV.isVeilable(t.url));
+    await Promise.all(reach.map((t) => unveilTab(t.id)));
+    return { ok: true, swept: reach.length };
+  });
+}
+self.focusSweep = focusSweep;
+chrome.runtime.onInstalled.addListener(() => { createFocusMenu(); focusSweep().catch(() => {}); });
+chrome.runtime.onStartup.addListener(() => { createFocusMenu(); focusSweep().catch(() => {}); });
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== FOCUS_MENU) return;
+  runFocusCommand(tab && typeof tab.windowId === "number" ? tab.windowId : undefined).catch((e) => console.warn("TabVault focus failed", e));
+});
+
 // ---- messages from the page ------------------------------------------------
 function safeRespond(sendResponse, payload) { try { sendResponse(payload); } catch { /* page closed */ } }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== "string") return;
+  // The veil's pill (app/focus-veil.js, injected by this worker) asks for one thing only: lift.
+  if (msg.type === "focusLift" && sender && sender.id === chrome.runtime.id && sender.tab) {
+    liftFocus().then((r) => safeRespond(sendResponse, r), () => safeRespond(sendResponse, { ok: false }));
+    return true;
+  }
   const fromPage = sender && sender.id === chrome.runtime.id && typeof sender.url === "string" && sender.url.startsWith(OWN_PREFIX);
   if (!fromPage) return;
   const reply = (p) => safeRespond(sendResponse, p);
@@ -470,6 +683,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }).then(reply, fail);
       return true;
     case "saveAndClose": saveAndClose(msg).then(reply, fail); return true;
+    case "focusToggle": runFocusCommand(msg.windowId).then(reply, fail); return true;
+    case "focusStart": startFocus(msg.windowId, msg.mode === "minimize" ? "minimize" : "veil").then(reply, fail); return true;
+    case "focusLift": liftFocus().then(reply, fail); return true;
     case "recentRemove":
       recentWrite(async () => {
         const { [TV.RECENT_KEY]: current = [] } = await chrome.storage.local.get(TV.RECENT_KEY);

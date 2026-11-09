@@ -9,7 +9,7 @@ const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF"];
 const byId = new Map();
 const consoleErrors = { worker: [], app: [] };
 
@@ -68,9 +68,8 @@ function looksLikeDisconnect(err) {
   return /closed|destroyed|crashed|disconnected/i.test((err && err.message) || String(err));
 }
 
-// Builds a fresh copy of the extension under e2e/.tmp/ext. No manifest changes
-// are needed: TabVault declares no host permissions, so nothing needs patching
-// for the harness (unlike FormKeeper, which needed a localhost host_permission).
+// Builds a fresh copy of the extension under e2e/.tmp/ext, with Focus mode's optional
+// host permission granted at install (below).
 function buildExtensionCopy() {
   fs.rmSync(EXT_DIR, { recursive: true, force: true });
   fs.mkdirSync(EXT_DIR, { recursive: true });
@@ -78,6 +77,14 @@ function buildExtensionCopy() {
   for (const entry of entries) {
     fs.cpSync(path.join(REPO, entry), path.join(EXT_DIR, entry), { recursive: true });
   }
+  // Focus mode (1.4) asks for <all_urls> at run time (optional_host_permissions); no one can
+  // click Chrome's prompt here, so the copy grants it at install. AF walks the declined path
+  // with self.focusPermissionOverride instead.
+  const mf = path.join(EXT_DIR, "manifest.json");
+  const m = JSON.parse(fs.readFileSync(mf, "utf8"));
+  m.host_permissions = m.optional_host_permissions || [];
+  delete m.optional_host_permissions;
+  fs.writeFileSync(mf, JSON.stringify(m, null, 2));
 }
 
 function attachPageListeners(page) {
@@ -1821,6 +1828,178 @@ async function main() {
     }
 
 
+
+    // ---------------------------------------------------------------
+    // AF. Focus mode (1.4), two windows. The harness's manifest copy lists <all_urls> under
+    // host_permissions (no one can click Chrome's permission prompt here), and the browser-level
+    // shortcut is called through self.runFocusCommand, the function the Alt+Shift+F command and
+    // the toolbar menu item call (Playwright cannot press a browser command). The declined path
+    // runs with self.focusPermissionOverride = false and chrome.permissions.request stubbed to
+    // answer false in the asking page.
+    // ---------------------------------------------------------------
+    {
+      let winAF = null;
+      const extraTabs = [];
+      // The veil is an element with the install's random name (storage.local focusVeilTag) and a
+      // closed shadow root; its parts are read in the extension's isolated world, where the veil
+      // script keeps them, never from the page.
+      const veilTag = async () => (await worker()).evaluate(() => chrome.storage.local.get("focusVeilTag").then((r) => r.focusVeilTag));
+      const hasVeil = async (p) => { const tag = await veilTag(); return Boolean(tag) && p.evaluate((t) => Boolean(document.querySelector(t)), tag); };
+      const tabIdOf = async (p) => (await worker()).evaluate((u) => chrome.tabs.query({}).then((ts) => (ts.find((t) => t.url === u) || {}).id), p.url());
+      const isolated = async (p) => (await worker()).evaluate((id) => chrome.scripting.executeScript({ target: { tabId: id }, func: () => {
+        const v = globalThis.tabvaultVeil;
+        if (!v) return null;
+        const cs = getComputedStyle(v.veil);
+        const r = v.pill.getBoundingClientRect();
+        return { filter: cs.backdropFilter || cs.webkitBackdropFilter, bg: cs.backgroundColor, pill: v.pill.textContent, x: r.left + r.width / 2, y: r.top + r.height / 2, mode: v.host.shadowRoot === null ? "closed" : "open" };
+      } }).then((res) => res[0] && res[0].result), await tabIdOf(p));
+      const pageFor = (suffix) => waitFor(async () => context.pages().find((p) => p.url().endsWith(suffix)) || null, { timeout: 15000 });
+      const focusState = async () => (await worker()).evaluate(() => chrome.storage.session.get("focus").then((r) => r.focus || { on: false }));
+      const badge = async () => (await worker()).evaluate(() => chrome.action.getBadgeText({}));
+      const command = async (windowId) => (await worker()).evaluate((id) => self.runFocusCommand(id), windowId);
+      try {
+        await resetUi();
+        const ownWindow = await appPage.evaluate(() => chrome.tabs.getCurrent().then((x) => x.windowId));
+        // A test page in TabVault's own window (it must stay sharp) and a second window with one.
+        const ownUrl = `${BASE}/three.html?af=own`;
+        const ownTab = await (await worker()).evaluate(({ w, u }) => chrome.tabs.create({ windowId: w, url: u, active: false }), { w: ownWindow, u: ownUrl });
+        extraTabs.push(ownTab.id);
+        const otherUrl = `${BASE}/one.html?af=other`;
+        const opened = await openWindowWith([otherUrl]);
+        winAF = opened.win;
+        const pageOwn = await pageFor("three.html?af=own");
+        const pageOther = await pageFor("one.html?af=other");
+        await appPage.bringToFront();
+
+        // On: the other window's tab is veiled (blur 8px, dimmed, the pill), the own window's is not.
+        const on = await command(ownWindow);
+        assert(on && on.ok && on.mode === "veil" && on.veiled >= 1, `focus on answered ${JSON.stringify(on)}`);
+        await waitFor(() => hasVeil(pageOther), { timeout: 10000 });
+        const look = await isolated(pageOther);
+        assert(look && look.mode === "closed", `veil shadow root ${look && look.mode}`);
+        const tag = await veilTag();
+        const seen = await pageOther.evaluate((t) => { const h = document.querySelector(t); return { attrs: h.getAttributeNames(), shadow: h.shadowRoot === null ? "hidden" : "visible", byId: Boolean(document.getElementById("tabvault-focus-veil")) }; }, tag);
+        assert(!tag.includes("tab") && seen.shadow === "hidden" && !seen.byId && seen.attrs.join() === "style", `what the page sees: ${tag} ${JSON.stringify(seen)}`);
+        assert(String(look.filter).includes("blur(8px)"), `veil filter ${look.filter}`);
+        assert(look.bg.includes("0.35"), `veil dim ${look.bg}`);
+        assert(look.pill === "TabVault focus is on this other window. Click to lift.", `pill "${look.pill}"`);
+        assert(!(await hasVeil(pageOwn)), "the focused window's tab got a veil");
+        const st = await focusState();
+        assert(st.on && st.windowId === ownWindow && st.mode === "veil", `state ${JSON.stringify(st)}`);
+        assert((await badge()) === "●", `badge "${await badge()}" while focus is on`);
+        await appPage.waitForSelector("#focus-bar:not([hidden])", { timeout: 5000 });
+        const barOn = await appPage.$eval("#focus-text", (n) => n.textContent);
+
+        // A tab opened in the other window gets the veil; a tab Chrome will not let us touch is counted.
+        const newUrl = `${BASE}/two.html?af=new`;
+        await (await worker()).evaluate(({ w, u }) => chrome.tabs.create({ windowId: w, url: u, active: true }), { w: winAF.id, u: newUrl });
+        const pageNew = await pageFor("two.html?af=new");
+        await waitFor(() => hasVeil(pageNew), { timeout: 10000 });
+        const blank = await (await worker()).evaluate((w) => chrome.tabs.create({ windowId: w, url: "about:blank", active: false }), winAF.id);
+        await waitFor(async () => ((await focusState()).skipped || []).includes(blank.id), { timeout: 10000 });
+        const barSkip = await waitForTextContains(appPage, "#focus-text", "could not be veiled", 5000);
+        await (await worker()).evaluate((id) => chrome.tabs.remove(id), blank.id);
+        await waitFor(async () => !((await focusState()).skipped || []).includes(blank.id), { timeout: 5000 });
+
+        // A popup window (a sign-in, a payment) stays clear while the focus is on.
+        const popupWin = await (await worker()).evaluate((u) => chrome.windows.create({ type: "popup", url: u, focused: false, width: 420, height: 320 }), `${BASE}/three.html?af=popup`);
+        const pagePopup = await pageFor("three.html?af=popup");
+        await pagePopup.waitForLoadState("load");
+        await new Promise((r) => setTimeout(r, 1000));
+        const popupVeiled = await hasVeil(pagePopup);
+        await (await worker()).evaluate((id) => chrome.windows.remove(id), popupWin.id).catch(() => {});
+        assert(!popupVeiled, "a popup window got the veil");
+
+        // A page script cannot lift the focus: clicks on the element, synthetic pointer events and
+        // a click at the pill's spot (elementFromPoint gives the host, the shadow root is closed).
+        const pillAt = await isolated(pageNew);
+        await pageNew.evaluate(({ t, x, y }) => {
+          const h = document.querySelector(t);
+          h.click();
+          h.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
+          h.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+          const at = document.elementFromPoint(x, y);
+          if (at) { at.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true })); at.click(); }
+        }, { t: tag, x: pillAt.x, y: pillAt.y });
+        await new Promise((r) => setTimeout(r, 800));
+        assert((await focusState()).on && (await hasVeil(pageNew)) && (await hasVeil(pageOther)), "a synthetic click from page script lifted the focus");
+
+        // A real press on the pill lifts everything.
+        await pageNew.bringToFront();
+        await pageNew.mouse.click(pillAt.x, pillAt.y);
+        await waitFor(async () => !(await focusState()).on, { timeout: 10000 });
+        await waitFor(async () => !(await hasVeil(pageOther)) && !(await hasVeil(pageNew)), { timeout: 10000 });
+        await waitFor(async () => (await badge()) !== "●", { timeout: 5000 });
+        await appPage.waitForSelector("#focus-bar", { state: "hidden", timeout: 5000 });
+
+        // A keyboard user lifts it too: the pill focused (Tab would land on it; here the extension's
+        // isolated world focuses it), then a real Enter.
+        await command(ownWindow);
+        await waitFor(async () => (await hasVeil(pageOther)) && (await hasVeil(pageNew)), { timeout: 10000 });
+        await pageNew.bringToFront();
+        await (await worker()).evaluate((id) => chrome.scripting.executeScript({ target: { tabId: id }, func: () => { globalThis.tabvaultVeil.pill.focus(); } }), await tabIdOf(pageNew));
+        await pageNew.keyboard.press("Enter");
+        await waitFor(async () => !(await focusState()).on, { timeout: 10000 });
+        await waitFor(async () => !(await hasVeil(pageOther)) && !(await hasVeil(pageNew)), { timeout: 10000 });
+
+        // An update or reload while the focus is on: the sweep the worker runs at onInstalled and
+        // onStartup clears the state and every veil (the real reload would close this harness's
+        // own page, so the listener's function is called directly).
+        await command(ownWindow);
+        await waitFor(async () => (await hasVeil(pageOther)) && (await hasVeil(pageNew)), { timeout: 10000 });
+        const swept = await (await worker()).evaluate(() => self.focusSweep());
+        assert(swept && swept.ok && swept.swept >= 2, `sweep answered ${JSON.stringify(swept)}`);
+        assert(!(await focusState()).on, "the sweep left the focus on");
+        await waitFor(async () => !(await hasVeil(pageOther)) && !(await hasVeil(pageNew)), { timeout: 10000 });
+
+        // The command toggles: on, again from the same window lifts; from the other window it moves.
+        await command(ownWindow);
+        await waitFor(() => hasVeil(pageOther), { timeout: 10000 });
+        const moved = await command(winAF.id);
+        assert(moved && moved.ok && moved.mode === "veil", `move answered ${JSON.stringify(moved)}`);
+        await waitFor(async () => (await hasVeil(pageOwn)) && !(await hasVeil(pageOther)), { timeout: 10000 });
+        assert((await focusState()).windowId === winAF.id, "focus did not move to the other window");
+        const off = await command(winAF.id);
+        assert(off && off.lifted === true, `lift answered ${JSON.stringify(off)}`);
+        await waitFor(async () => !(await hasVeil(pageOwn)) && !(await hasVeil(pageOther)), { timeout: 10000 });
+
+        // Declined: the command opens the page's question in the window; Chrome says no; Minimise.
+        await (await worker()).evaluate(() => { self.focusPermissionOverride = false; return chrome.storage.local.remove("focusFallback"); });
+        const ask = await command(ownWindow);
+        assert(ask && ask.ask === true, `without the permission the command answered ${JSON.stringify(ask)}`);
+        const askPage = await pageFor(`app/index.html?focus=${ownWindow}`);
+        await askPage.waitForSelector("#focus-allow", { timeout: 10000 });
+        const askText = await askPage.$eval("#focus-text-ask", (n) => n.textContent);
+        assert(askText === "Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them.", `question "${askText}"`);
+        await askPage.evaluate(() => { Object.defineProperty(chrome.permissions, "request", { value: () => Promise.resolve(false), configurable: true, writable: true }); });
+        await askPage.click("#focus-allow");
+        const declined = await waitForTextContains(askPage, "#focus-note", "did not grant", 5000);
+        await askPage.click("#focus-minimize");
+        await waitFor(async () => (await focusState()).mode === "minimize", { timeout: 10000 });
+        const minState = await (await worker()).evaluate((id) => chrome.windows.get(id).then((w) => w.state), winAF.id);
+        assert(minState === "minimized", `other window state ${minState}`);
+        const fallback = await (await worker()).evaluate(() => chrome.storage.local.get("focusFallback").then((r) => r.focusFallback));
+        assert(fallback === "minimize", `fallback ${fallback}`);
+        assert(!(await hasVeil(pageOther)), "the minimise fallback drew a veil");
+        const lifted = await command(ownWindow);
+        assert(lifted && lifted.lifted === true, `fallback lift answered ${JSON.stringify(lifted)}`);
+        const backState = await waitFor(async () => {
+          const s = await (await worker()).evaluate((id) => chrome.windows.get(id).then((w) => w.state), winAF.id);
+          return s !== "minimized" ? s : null;
+        }, { timeout: 10000 });
+        await askPage.close().catch(() => {});
+
+        record("AF", "PASS", `focus on from window ${ownWindow}: the other window's tab veiled (${look.filter}, ${look.bg}, pill "${look.pill}"), the own window's tab not; badge dot, bar "${barOn}"; a new tab in the other window veiled; a popup window left clear; the page sees only <${tag}> (closed shadow, no id) and its synthetic clicks lifted nothing; about:blank counted ("${barSkip}"); a real press on the pill lifted every veil and the bar; Enter on the focused pill lifted them too; the install/startup sweep cleared the state and every veil; the command toggled on and moved the focus to window ${winAF.id} (own tab veiled, other sharp) and lifted it; declined: the question "${askText.slice(0, 40)}...", "${declined.trim().slice(0, 50)}...", Minimise put window ${winAF.id} ${minState} and remembered it, the lift brought it back ${backState}`);
+      } catch (e) {
+        record("AF", "FAIL", e.message);
+      } finally {
+        await (await worker()).evaluate(async () => { self.focusPermissionOverride = undefined; await self.liftFocus(); await chrome.storage.local.remove("focusFallback"); }).catch(() => {});
+        if (winAF) await (await worker()).evaluate((id) => chrome.windows.remove(id), winAF.id).catch(() => {});
+        for (const id of extraTabs) await (await worker()).evaluate((tid) => chrome.tabs.remove(tid), id).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
 
     // ---------------------------------------------------------------
     // L. Settings persistence (run before K; K's real-time wait is kept

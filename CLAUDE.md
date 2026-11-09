@@ -9,8 +9,9 @@ holds the spec, plan, and build ledgers. The method is described in
 A Manifest V3 Chrome extension: one page showing every window, tab group and
 tab; search, bulk move/close, native groups, duplicate cleanup; automatic
 local snapshots on change; lossless JSON export; restore with lazy-loaded
-tabs. Plain HTML/JS, no build step, no runtime dependencies, MIT. Modeled on
-Tab Manager v2 (MIT) but written from scratch.
+tabs; Focus mode veils every other window. Plain HTML/JS, no build step, no
+runtime dependencies, MIT.
+Modeled on Tab Manager v2 (MIT) but written from scratch.
 
 ## Commands
 
@@ -76,7 +77,7 @@ contact email is still the `<your contact email>` placeholder).
 - Import (1.3): JSON and Markdown both pass the scheme filter (`isImportableUrl`: http, https, file, about:blank); `parseImportText` picks JSON when the text starts with `{`. Markdown export writes `<!-- end of group -->` when ungrouped tabs follow a group, so the round trip keeps order.
 - Settings written elsewhere (the worker's migration, another TabVault page) are taken over by the page on `storage.onChanged`, so a later save never writes back a stale copy.
 - Save and close always confirms in the page (focus on Cancel) before the `saveAndClose` message; the worker closes only the tabs the snapshot saved (`lib/save-close.js`).
-- The side panel is `app/index.html?panel=1` (`state.layout`, `data-layout="panel"`, CSS section `== panel ==`); `chrome.sidePanel.open` must be called inside the user gesture, never after an await. No `contextMenus`: the brief allows `sidePanel` only.
+- The side panel is `app/index.html?panel=1` (`state.layout`, `data-layout="panel"`, CSS section `== panel ==`); `chrome.sidePanel.open` must be called inside the user gesture, never after an await. `contextMenus` (1.4) carries one item only, Focus mode's on the toolbar icon (`contexts: ["action"]`).
 - `/` is Search; the palette is `Alt+K`, handled before the modifier bail-out in the keydown handler (matched on `e.code === "KeyK"`).
 
 - Pure logic lives in `lib/` with the UMD wrapper; everything that touches
@@ -84,12 +85,22 @@ contact email is still the `<your contact email>` placeholder).
 - Snapshots are event-driven (debounced), never on a timer; identical
   sessions are not stored twice; manual/pinned snapshots are never rotated out.
 - Restore creates tabs inactive and discards them; nothing loads until clicked.
-- No host permissions, no downloads permission; `alarms` debounces the change-driven snapshots and runs the 5-minute idle/badge alarm.
+- Focus mode (1.4): `lib/focus.js` decides, the worker injects `app/focus-veil.js` with `chrome.scripting` into every tab outside the focused window (`planVeil`), re-veils on `tabs.onUpdated` status complete and `onAttached`, and keeps the state in `storage.session` under `focus` through its `focusWrite` queue. The only host permission is `<all_urls>` in `optional_host_permissions`, requested by the page's focus dialog inside the Allow click; without it the other windows are minimised (`focusFallback: "minimize"` in `storage.local` once chosen; the page's row always asks again). Pages that refuse injection are counted (`skipped`), never retried in a loop. The e2e harness grants the permission by moving it to `host_permissions` in its copy, sets `self.focusPermissionOverride = false` for the declined path, and calls `self.runFocusCommand` for the shortcut (Playwright cannot press a browser-level command).
+- No required host permissions, no downloads permission; `alarms` debounces the change-driven snapshots and runs the 5-minute idle/badge alarm.
 - Never use alert/confirm/prompt; confirmations are inline.
 - Commit messages end with the attribution trailer used in sibling repos.
 
+## License
+
+MIT (`LICENSE`; `package.json` `"license": "MIT"`). The owner's word of
+2026-11-09 (`tabvault title keep`): TabVault stays MIT and keeps the
+"Open-Source Tab Manager" title; a PolyForm Noncommercial change made on
+`feat/focus-1.4` was reverted before 1.4.0. The IBM Plex fonts in
+`app/fonts/` keep the SIL OFL 1.1.
+
 ## Known follow-ups (as of 2026-11-08)
 
+- 1.4 real-install checks (no automation): Alt+Shift+F bound and free at chrome://extensions/shortcuts; the toolbar icon's right-click item; Chrome's permission prompt after Allow, and its decline; a PDF and a chrome:// tab in another window counted, not veiled.
 - 1.3 real-install checks (no automation): Copy to clipboard from the Export dialog without `clipboardWrite`; a shelving rule at 15 minutes in real Chrome; opening a shelved item whose group is gone.
 
 - Closed in 1.2: the cap-branch alarm fallback, no drops in `nodrop` columns, the snapshot storage split.

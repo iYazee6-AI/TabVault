@@ -1,6 +1,6 @@
 # TabVault Privacy Policy
 
-Effective date: 2026-11-08
+Effective date: 2026-11-09
 
 TabVault is a browser extension that shows every window and tab you have open
 in one page, and keeps local snapshots of your session so you can get it back.
@@ -44,9 +44,22 @@ whatever the pages you have open happen to be.
 
 ## What TabVault does not store
 
-- TabVault never reads the **content** of any web page. It declares no host
-  permissions and injects no content scripts, so it can see the address,
-  title and favicon of a tab, and nothing inside it.
+- TabVault never reads the **content** of any web page. It can see the
+  address, title and favicon of a tab, and nothing inside it.
+- **Focus mode** (1.4, only when you turn it on) draws a veil, a blurred
+  overlay with a "Click to lift" pill, on top of the tabs in your other
+  windows. For that it asks you, the first time, for Chrome's optional
+  permission to access your pages; if you decline, it minimises your other
+  windows instead and never touches a page. The veil reads nothing from the
+  page, stores nothing about it and sends nothing anywhere; its only message
+  is the lift request to TabVault itself. Focus mode never touches an
+  incognito window: no veil, and the fallback never minimises one. While Focus mode is on, TabVault
+  keeps in `chrome.storage.session` which window is focused, the ids of the
+  tabs it could not veil, and, for the minimise fallback, which windows it
+  minimised and their earlier state; the browser clears it when it closes.
+  If you chose the minimise fallback, that choice is kept in
+  `chrome.storage.local`. You can withdraw the permission at any time at
+  `chrome://extensions` → TabVault → Site access.
 - It never captures what you type, your cookies, your passwords, your
   bookmarks, or your browsing history. Only tabs that are open right now, the
   snapshots you have kept, the shelves, and the recently closed list above are
@@ -134,7 +147,10 @@ permissions.
 TabVault can only see incognito windows if you explicitly allow it to run in
 incognito at `chrome://extensions`. If you do not, incognito windows are
 skipped entirely. If you do, incognito tabs are treated like any other tab:
-listed in the page and included in snapshots that are stored locally.
+listed in the page and included in snapshots that are stored locally. One
+exception: Focus mode never touches an incognito window, even when TabVault
+is allowed there: no veil is drawn on an incognito page and the minimise
+fallback never minimises an incognito window.
 
 ## Children
 
