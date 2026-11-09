@@ -91,3 +91,7 @@ They run after Z and before L, with lazy restore turned off through the page (an
 - **AE** Markdown: the three selected tabs of a fixture window (two of them grouped) are exported as Markdown (the download is captured), pasted back into Import with a `javascript:` link added (the summary says "1 link skipped"), restored, and the new window has the same URLs in order and the group.
 
 Scenario D (a drag between window cards) failed in two of the four full runs made while 1.3 was built, both times on a machine in use, and passed in the other two with no code change between; when it fails, F, H, I-a and the scenarios after them that depend on its window layout fail with it. Re-run the full suite once before reading anything into it.
+
+## Playwright 1.65 (2026-11-09)
+
+With Playwright 1.65 (Chromium 158) `chrome.tabs.discard()` no longer crashed the browser in the runs made for TabVault 1.4, so I-b and Z came back as live PASS; the LIMITED path above stays for builds that still crash. Three harness changes came with the bump, none of them an assertion: the first fixture window waits until both tabs have committed their URL (the newer Chromium can answer `windows.create` while a tab has only a `pendingUrl`); D settles the page before its drag and drags once more if the first drop did not land; and the Restore result dialog a live I-b leaves open is closed before J, and W brings the TabVault page to the front before `Alt+K`.
