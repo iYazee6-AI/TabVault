@@ -54,14 +54,17 @@ function collectEntries() {
   entries.push(...walk("app"));
   entries.push(...walk("lib"));
   entries.push(...walk("icons"));
-  return entries;
+  // A fixed order (the file system's listing order differs between machines).
+  return [...topLevelFiles, ...entries.slice(topLevelFiles.length).sort()];
 }
 
 function buildZip(entries) {
   const localChunks = [];
   const centralChunks = [];
   let offset = 0;
-  const now = dosDateTime(new Date());
+  // Every entry carries the same fixed time (2026-01-01 00:00), never the build time, so a rebuild
+  // from the same files gives the same bytes and the recorded SHA-256 can be checked.
+  const now = dosDateTime(new Date(2026, 0, 1, 0, 0, 0));
 
   for (const relName of entries) {
     const filePath = path.join(rootDir, ...relName.split("/"));

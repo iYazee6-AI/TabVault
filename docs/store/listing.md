@@ -85,10 +85,14 @@ once the repository is public.
 - [ ] 1.4.0 (section 15) supersedes 1.3.0 the same way, and adds a
       permission prompt for existing users: none (`contextMenus` and
       `scripting` carry no warning, and `<all_urls>` is optional). Its local
-      package: `dist/tabvault-1.4.0.zip`, 549,950 bytes, SHA-256
-      `1d71abd21d94318aad9de5814f1839248dc7c02e111ed9c0fb865fa1431e51d6`, built 2026-11-09 from `feat/focus-1.4`
-      before the merge; rebuild from the `v1.4.0` tag if the merge changed
-      anything in `manifest.json`, `background.js`, `app/`, `lib/` or `icons/`.
+      package: `dist/tabvault-1.4.0.zip`, 554,114 bytes, SHA-256
+      `c8ff730297734f69b687b6d2d0a2835a27a058643b34e82be1e77870762be9c7`.
+      Since 1.4.0 `npm run pack` is reproducible (every entry carries the
+      fixed time 2026-01-01 00:00 and the entries are sorted), so `npm run pack`
+      on a Windows checkout of the `v1.4.0` tag (`core.autocrlf` true, the
+      files with CRLF endings) gives this exact hash; a Linux checkout has LF
+      endings and another hash, and a Release build zip differs too (its
+      manifest carries the run number).
 - [ ] If you upload the 1.3.0 local package instead (section 2 allows it), check
       it is the one built with the `v1.3.0` tag: `dist/tabvault-1.3.0.zip`,
       525,817 bytes, SHA-256
@@ -510,7 +514,7 @@ users are not asked anything at the update. The dashboard asks for a
 justification for each: paste the three new rows of section 5, the reworded
 single purpose, and the reworded Website content row. Upload the package as
 in section 8 (`dist/tabvault-1.4.0.zip`, SHA-256
-`1d71abd21d94318aad9de5814f1839248dc7c02e111ed9c0fb865fa1431e51d6`), replace the fifth screenshot,
+`c8ff730297734f69b687b6d2d0a2835a27a058643b34e82be1e77870762be9c7`, reproducible from the `v1.4.0` tag as section 1 says), replace the fifth screenshot,
 `05-snapshots.png`, with `docs/store/screenshots/06-focus-mode.png` (the
 store takes at most five; the snapshot list is the one the description
 already explains best in words). Update the
