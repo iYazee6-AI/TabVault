@@ -3,6 +3,13 @@
 TabVault's releases, newest first, written for the person who uses it. The
 decision log with the details is `docs/HISTORY.md`.
 
+## 1.4.1 — 2026-11-09
+
+- **The command palette opens again right after a command.** Running a
+  command from the Alt+K palette (Snapshot now, for one) and pressing Alt+K
+  at once could do nothing: the closed palette kept the keyboard and
+  swallowed the keys. It now lets go as it closes.
+
 ## 1.4.0 — 2026-11-09
 
 - **Focus mode.** Two windows open and you want to work in one: press
