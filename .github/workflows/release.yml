@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Secret scan, before the build gets anywhere near a release asset.
       # gitleaks/gitleaks-action@v2 is the usual choice, but it is only free
@@ -47,7 +47,7 @@ jobs:
         run: docker run --rm -v "$PWD:/repo" aquasec/trivy:0.74.0 fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
 
       - name: Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -96,7 +96,7 @@ jobs:
           if [ -f tools/list-zip.js ]; then node tools/list-zip.js dist/*.zip; fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ github.event.repository.name }}-${{ steps.stamp.outputs.version }}
           path: dist/*.zip

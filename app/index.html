@@ -47,7 +47,7 @@
     button.icon { padding: 2px 6px; line-height: 1.2; background: transparent; border-color: transparent; color: var(--t2); }
     button.icon:hover { background: var(--g3); color: var(--t); }
     button.icon.danger { color: var(--danger); }
-    input[type=text], input[type=search], input[type=number], select { font: inherit; color: inherit; background: var(--g2); border: 1px solid var(--l); border-radius: 6px; padding: 4px 8px; }
+    input[type=text], input[type=search], input[type=number], select, textarea { font: inherit; color: inherit; background: var(--g2); border: 1px solid var(--l); border-radius: 6px; padding: 4px 8px; }
     input[type=checkbox], input[type=radio] { accent-color: var(--p); }
     :focus-visible { outline: 2px solid var(--p); outline-offset: 1px; }
     input:focus-visible, select:focus-visible { outline-offset: 0; }
@@ -136,6 +136,38 @@
     .tab .close { visibility: hidden; }
     .tab:hover .close, .tab:focus-within .close, .tab.cursor .close { visibility: visible; }
     .tab.dragover { box-shadow: inset 0 2px 0 var(--p); }
+    /* == recent == */
+    #recent, #shelves { margin-top: 16px; background: var(--g2); border: 1px solid var(--l); border-radius: 10px; }
+    #recent .rhead, #shelves .rhead { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+    #recent .rtoggle, #shelves .rtoggle { flex: 1; text-align: left; color: var(--t); font-weight: 500; padding: 2px 6px; }
+    #recent .rtoggle .caret, #shelves .rtoggle .caret { display: inline-block; width: 12px; color: var(--t2); }
+    #recent-count, #shelves-count { font-size: 11px; color: var(--t2); font-variant-numeric: tabular-nums; margin-left: 4px; }
+    #recent button.small { padding: 2px 8px; font-size: 12px; }
+    #shelves-list { border-top: 1px solid var(--l); padding: 4px 0; max-height: 60vh; overflow: auto; }
+    .shelf .bhead button.icon { padding: 0 4px; }
+    .rrow .shelved { color: var(--pText); }
+    #recent-list { border-top: 1px solid var(--l); padding: 4px 0; max-height: 50vh; overflow: auto; }
+    .rbatch { margin: 4px 4px 2px; }
+    .rbatch .bhead { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 10px; background: var(--g3); border-radius: 5px; font-weight: 500; }
+    .rbatch .bhead .btitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rrow { display: flex; align-items: center; gap: 8px; height: var(--row); padding: 0 6px 0 10px; margin: 0 4px; border-radius: 5px; }
+    .rbatch .rrow { margin-left: 16px; }
+    .rrow:hover { background: var(--g3); }
+    .rrow .rtitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rrow .domain, .rrow .when, .bhead .when { flex: none; font-size: 11px; color: var(--t2); white-space: nowrap; }
+    .rrow .domain { max-width: 30%; overflow: hidden; text-overflow: ellipsis; }
+    .rrow button, .bhead button { padding: 1px 8px; font-size: 12px; }
+    /* == panel == */
+    /* ?panel=1: the same page in Chrome's side panel. One column, the panel's window first,
+       compact rows, the search on its own line at the top, the bulk bar along the bottom. */
+    :root[data-layout="panel"] { --row: 24px; }
+    :root[data-layout="panel"] #toolbar { padding: 6px 8px; gap: 6px; }
+    :root[data-layout="panel"] .search-wrap { order: 10; flex: 1 1 100%; min-width: 0; max-width: none; }
+    :root[data-layout="panel"] #main { padding: 8px; }
+    :root[data-layout="panel"] #grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    :root[data-layout="panel"] .tab .domain { display: none; }
+    :root[data-layout="panel"] #selbar { bottom: 0; width: 100%; justify-content: center; border-radius: 10px 10px 0 0; padding: 6px 8px; }
+    :root[data-layout="panel"] #hints { display: none; }
     /* == hints == */
     #hints { flex: none; padding: 6px 16px; background: var(--g2); border-top: 1px solid var(--l); color: var(--t2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #hints kbd { font-size: 10.5px; }
@@ -143,10 +175,34 @@
     #hints button.link:hover { color: var(--t); background: transparent; }
     #dialog table.shortcuts td:first-child { width: 1%; white-space: nowrap; padding-right: 18px; }
     #dialog table.shortcuts kbd + kbd { margin-left: 4px; }
+    /* == palette == */
+    #palette-backdrop { position: fixed; inset: 0; z-index: 25; background: rgba(10, 12, 14, .35); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+    #palette { width: min(640px, 92vw); display: flex; flex-direction: column; overflow: hidden; background: var(--g2); color: var(--t); border: 1px solid var(--l); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); }
+    #palette-input { border: 0; border-bottom: 1px solid var(--l); border-radius: 0; padding: 12px 14px; font-size: 14px; background: var(--g2); }
+    #palette-input:focus-visible { outline: none; }
+    #palette-list { max-height: 50vh; overflow: auto; padding: 4px; }
+    .prow { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: 6px; cursor: pointer; }
+    .prow:hover { background: var(--g3); }
+    .prow.on { background: var(--pSoft); }
+    .prow .plabel { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .prow .pkind { flex: none; width: 16px; text-align: center; color: var(--pText); font-weight: 600; }
+    .prow .pwin, .prow .domain { flex: none; max-width: 28%; font-size: 11px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .prow .pkeys kbd + kbd { margin-left: 4px; }
+    .pempty { padding: 12px; color: var(--t2); }
+    .psection { padding: 8px 8px 2px; font: 500 10.5px var(--mono); font-synthesis: none; letter-spacing: .06em; text-transform: uppercase; color: var(--t2); }
+    .prow mark { background: var(--pSoft); color: var(--pText); border-radius: 2px; }
+    .prow.on mark { background: transparent; text-decoration: underline; }
+    .prow .polder { flex: none; font-size: 10.5px; color: var(--t2); }
+    .phint { padding: 6px 12px; border-top: 1px solid var(--l); color: var(--t2); font-size: 11px; }
+    .menu kbd { margin-left: 8px; color: var(--t2); }
     /* == dialogs == */
     #dialog-backdrop { position: fixed; inset: 0; z-index: 20; background: rgba(10, 12, 14, .45); display: flex; align-items: center; justify-content: center; }
     #dialog { background: var(--g2); color: var(--t); border: 1px solid var(--l); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); width: min(720px, 92vw); max-height: 88vh; overflow: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
     #dialog h2 { margin: 0; font: 600 15px var(--sans); }
+    #dialog h3 { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--l); font: 600 13px var(--sans); }
+    #dialog label.col, #dialog div.col { display: flex; flex-direction: column; gap: 6px; }
+    #dialog label.opt { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    #dialog textarea { width: 100%; resize: vertical; font: 500 12px/1.4 var(--mono); font-synthesis: none; }
     #dialog table { border-collapse: collapse; width: 100%; }
     #dialog td, #dialog th { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--l); vertical-align: top; }
     #dialog th { font-weight: 500; color: var(--t2); }
@@ -166,6 +222,19 @@
     #dialog h2 .version { font: 500 12px var(--mono); color: var(--t2); margin-left: 4px; }
     #dialog ul.links { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
     #dialog a { color: var(--pText); }
+    #dialog .rules { display: flex; flex-direction: column; gap: 6px; }
+    #dialog .rule, #dialog .rule-editor { border: 1px solid var(--l); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
+    #dialog .rule-editor { border-color: var(--p); }
+    #dialog .rule-main .rule-pattern { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #dialog .rule-main .rule-after { color: var(--t2); }
+    #dialog .rule-tools { gap: 4px; }
+    #dialog .rule-dry-out p, #dialog #rule-dry-result p { margin: 0; }
+    #dialog .dry-list { font-size: 11.5px; }
+    #dialog .rules-head strong { flex: 1; font-weight: 500; }
+    #dialog .crow { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 2px 4px; border-bottom: 1px solid var(--l); }
+    #dialog .crow .ctitle { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #dialog .crow .domain, #dialog .crow .cwhere { flex: none; max-width: 30%; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #dialog .crow .domain { color: var(--t2); }
     #toast { position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); z-index: 30; background: var(--t); color: var(--g); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
     #toast.on { opacity: 1; }
     /* == end == */
@@ -184,6 +253,8 @@
     <div class="menu-wrap">
       <button id="btn-more" type="button" class="icon" title="More: export, import, settings, help, about" aria-label="More: export, import, settings, help, about" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">⋯</button>
       <div id="more-menu" class="menu" role="menu" hidden>
+        <button id="btn-palette" type="button" role="menuitem">Command palette <kbd>Alt+K</kbd></button>
+        <button id="btn-panel" type="button" role="menuitem">Open in side panel</button>
         <button id="btn-export" type="button" role="menuitem">Export</button>
         <button id="btn-import" type="button" role="menuitem">Import</button>
         <button id="btn-settings" type="button" role="menuitem">Settings</button>
@@ -191,10 +262,23 @@
         <button id="btn-about" type="button" role="menuitem">About</button>
       </div>
     </div>
-    <input type="file" id="import-file" accept="application/json,.json" hidden />
+    <input type="file" id="import-file" accept="application/json,.json,.md,.markdown,.txt,text/markdown,text/plain" hidden />
   </header>
   <main id="main">
     <div id="grid"></div>
+    <section id="recent" aria-label="Recently closed" hidden>
+      <div class="rhead">
+        <button id="recent-toggle" type="button" class="icon rtoggle" aria-expanded="false" aria-controls="recent-list" title="Show recently closed tabs" aria-label="Show recently closed tabs"><span class="caret">▸</span> Recently closed <span id="recent-count" class="mono"></span></button>
+        <button id="recent-clear" type="button" class="small" title="Forget every recently closed tab" aria-label="Forget every recently closed tab">Clear</button>
+      </div>
+      <div id="recent-list" hidden></div>
+    </section>
+    <section id="shelves" aria-label="Shelves" hidden>
+      <div class="rhead">
+        <button id="shelves-toggle" type="button" class="icon rtoggle" aria-expanded="false" aria-controls="shelves-list" title="Show shelves" aria-label="Show shelves"><span class="caret">▸</span> Shelves <span id="shelves-count" class="mono"></span></button>
+      </div>
+      <div id="shelves-list" hidden></div>
+    </section>
     <div id="selbar" role="toolbar" aria-label="Selected tabs" hidden>
       <span id="selcount" class="mono"></span>
       <div class="menu-wrap up">
@@ -204,21 +288,41 @@
       <button id="sel-group" type="button">Group</button>
       <button id="sel-pin" type="button">Pin</button>
       <button id="sel-discard" type="button">Discard</button>
+      <div class="menu-wrap up">
+        <button id="shelf-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="shelf-menu" title="Save the selected tabs to a shelf, then close them">Move to shelf ▾</button>
+        <div id="shelf-menu" class="menu" role="menu" hidden></div>
+      </div>
       <button id="sel-close" type="button">Close</button>
       <button id="sel-clear" type="button" class="esc" title="Clear selection (Esc)" aria-label="Clear selection (Esc)"><kbd>Esc</kbd> to clear</button>
     </div>
   </main>
   <footer id="hints" aria-label="Keyboard shortcuts"></footer>
   <div id="dialog-backdrop" hidden><div id="dialog" role="dialog" aria-modal="true"></div></div>
+  <div id="palette-backdrop" hidden>
+    <div id="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+      <input type="text" id="palette-input" placeholder="Type an action, a tab or a saved tab (s: saved only, t: tabs, a: actions)" aria-label="Command palette: type an action, an open tab or a saved tab" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="palette-list" />
+      <div id="palette-list" role="listbox" aria-label="Actions and tabs"></div>
+      <div class="phint"><kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> open · <kbd>Shift+Enter</kbd> new window · <kbd>Esc</kbd> close</div>
+    </div>
+  </div>
   <div id="toast"></div>
+  <script src="../lib/settings.js"></script>
   <script src="../lib/session.js"></script>
   <script src="../lib/search.js"></script>
   <script src="../lib/dedupe.js"></script>
   <script src="../lib/snapshots.js"></script>
+  <script src="../lib/snapstore.js"></script>
+  <script src="../lib/discard-rule.js"></script>
+  <script src="../lib/recent.js"></script>
   <script src="../lib/exporters.js"></script>
+  <script src="../lib/diff.js"></script>
+  <script src="../lib/shelves.js"></script>
   <script src="../lib/restore-plan.js"></script>
   <script src="../lib/ui.js"></script>
   <script src="../lib/shortcuts.js"></script>
+  <script src="../lib/palette.js"></script>
+  <script src="../lib/saved-index.js"></script>
+  <script src="../lib/save-close.js"></script>
   <script src="app.js"></script>
   <script src="dialogs.js"></script>
 </body>
