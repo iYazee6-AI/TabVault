@@ -85,8 +85,8 @@ once the repository is public.
 - [ ] 1.4.0 (section 15) supersedes 1.3.0 the same way, and adds a
       permission prompt for existing users: none (`contextMenus` and
       `scripting` carry no warning, and `<all_urls>` is optional). Its local
-      package: `dist/tabvault-1.4.0.zip`, 554,114 bytes, SHA-256
-      `c8ff730297734f69b687b6d2d0a2835a27a058643b34e82be1e77870762be9c7`.
+      package: `dist/tabvault-1.4.0.zip`, 554,174 bytes, SHA-256
+      `67456c9ddd44d30809f0d112138cf467776360f56b619c5f7a277d13881ccdc7`.
       Since 1.4.0 `npm run pack` is reproducible (every entry carries the
       fixed time 2026-01-01 00:00 and the entries are sorted), so `npm run pack`
       on a Windows checkout of the `v1.4.0` tag (`core.autocrlf` true, the
@@ -514,7 +514,7 @@ users are not asked anything at the update. The dashboard asks for a
 justification for each: paste the three new rows of section 5, the reworded
 single purpose, and the reworded Website content row. Upload the package as
 in section 8 (`dist/tabvault-1.4.0.zip`, SHA-256
-`c8ff730297734f69b687b6d2d0a2835a27a058643b34e82be1e77870762be9c7`, reproducible from the `v1.4.0` tag as section 1 says), replace the fifth screenshot,
+`67456c9ddd44d30809f0d112138cf467776360f56b619c5f7a277d13881ccdc7`, reproducible from the `v1.4.0` tag as section 1 says), replace the fifth screenshot,
 `05-snapshots.png`, with `docs/store/screenshots/06-focus-mode.png` (the
 store takes at most five; the snapshot list is the one the description
 already explains best in words). Update the
