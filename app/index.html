@@ -143,6 +143,11 @@
     #recent .rtoggle .caret, #shelves .rtoggle .caret { display: inline-block; width: 12px; color: var(--t2); }
     #recent-count, #shelves-count { font-size: 11px; color: var(--t2); font-variant-numeric: tabular-nums; margin-left: 4px; }
     #recent button.small { padding: 2px 8px; font-size: 12px; }
+    /* == focus == */
+    #focus-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--p); border-radius: 8px; font: 500 12px var(--mono); font-synthesis: none; color: var(--t); }
+    #focus-bar[hidden] { display: none; }
+    #focus-bar span { flex: 1; min-width: 0; }
+    #focus-bar button.small { padding: 2px 8px; font-size: 12px; }
     #shelves-list { border-top: 1px solid var(--l); padding: 4px 0; max-height: 60vh; overflow: auto; }
     .shelf .bhead button.icon { padding: 0 4px; }
     .rrow .shelved { color: var(--pText); }
@@ -255,6 +260,7 @@
       <div id="more-menu" class="menu" role="menu" hidden>
         <button id="btn-palette" type="button" role="menuitem">Command palette <kbd>Alt+K</kbd></button>
         <button id="btn-panel" type="button" role="menuitem">Open in side panel</button>
+        <button id="btn-focus" type="button" role="menuitem">Focus this window <kbd>Alt+Shift+F</kbd></button>
         <button id="btn-export" type="button" role="menuitem">Export</button>
         <button id="btn-import" type="button" role="menuitem">Import</button>
         <button id="btn-settings" type="button" role="menuitem">Settings</button>
@@ -265,6 +271,7 @@
     <input type="file" id="import-file" accept="application/json,.json,.md,.markdown,.txt,text/markdown,text/plain" hidden />
   </header>
   <main id="main">
+    <div id="focus-bar" role="status" hidden><span id="focus-text"></span><button id="focus-lift" type="button" class="small">Lift the focus</button></div>
     <div id="grid"></div>
     <section id="recent" aria-label="Recently closed" hidden>
       <div class="rhead">
@@ -323,6 +330,7 @@
   <script src="../lib/palette.js"></script>
   <script src="../lib/saved-index.js"></script>
   <script src="../lib/save-close.js"></script>
+  <script src="../lib/focus.js"></script>
   <script src="app.js"></script>
   <script src="dialogs.js"></script>
 </body>

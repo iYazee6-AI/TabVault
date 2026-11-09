@@ -59,8 +59,8 @@ once the repository is public.
 - [ ] `PRIVACY.md` contact email filled in and the file is reachable at a
       public URL.
 - [ ] `manifest.json` `version` is the base you want to publish (currently
-      `1.3.0`). The Release workflow appends the run number, so the uploaded
-      package is `1.3.0.<run number>`; every later upload must be higher.
+      `1.4.0`). The Release workflow appends the run number, so the uploaded
+      package is `1.4.0.<run number>`; every later upload must be higher.
 - [ ] `manifest.json` `name` is `TabVault: Open-Source Tab Manager` (33 characters; Chrome
       allows 75, and this kit keeps the title at or under 45 so store cards
       and search do not cut it). The store title is read from this field, so
@@ -82,7 +82,14 @@ once the repository is public.
       paste the NEW IN 1.3 block from section 14 and keep the NEW IN 1.2
       bullets below it if you like). If 1.2.0 is already in review, wait for
       it or cancel it first: one package in review at a time.
-- [ ] If you upload the local package instead (section 2 allows it), check
+- [ ] 1.4.0 (section 15) supersedes 1.3.0 the same way, and adds a
+      permission prompt for existing users: none (`contextMenus` and
+      `scripting` carry no warning, and `<all_urls>` is optional). Its local
+      package: `dist/tabvault-1.4.0.zip`, 549,950 bytes, SHA-256
+      `1d71abd21d94318aad9de5814f1839248dc7c02e111ed9c0fb865fa1431e51d6`, built 2026-11-09 from `feat/focus-1.4`
+      before the merge; rebuild from the `v1.4.0` tag if the merge changed
+      anything in `manifest.json`, `background.js`, `app/`, `lib/` or `icons/`.
+- [ ] If you upload the 1.3.0 local package instead (section 2 allows it), check
       it is the one built with the `v1.3.0` tag: `dist/tabvault-1.3.0.zip`,
       525,817 bytes, SHA-256
       `2c755a7d0e0bd782662d27067a75754366fd72ab537ad562cf0648aa62342b17`
@@ -137,7 +144,7 @@ the `setup-trivy` tag it depended on).
 **Description** (paste as is):
 
 ```
-TabVault is an open-source tab manager. It puts every window and tab you have open into a single page, and keeps local snapshots of your session so a crash or a stray click does not cost you your tabs.
+TabVault is a source-available tab manager, free for personal and non-commercial use. It puts every window and tab you have open into a single page, and keeps local snapshots of your session so a crash or a stray click does not cost you your tabs.
 
 Free memory on your terms: pick the tabs you are not using and click Discard, or turn on Unload idle tabs in Settings and TabVault unloads tabs you have not used for the time you choose (15 minutes to 4 hours). Unloaded tabs stay in their windows and reload when you click them; the tab you are on, tabs playing sound, pinned tabs (unless you allow it) and protected groups are never unloaded. Write a rule per site to unload its tabs sooner, never touch them, or file them onto a shelf. Nothing is closed unless a rule you wrote says so: a shelving rule stays off until you have run its dry run and turned it on, and every tab it closes is saved to the shelf first. All of it is off until you turn it on.
 
@@ -152,6 +159,7 @@ WHAT YOU CAN DO
 • Press Alt+K for the command palette: type a few letters to run any action or jump to any tab, or to find a tab you saved in a snapshot, on a shelf or in the recently closed list, highlighted, and open one or all of them.
 • Shelves: named lists of saved tabs that are never rotated away. Move tabs to a shelf by hand, or let an idle rule file them there; reopen them one at a time or all at once, in their groups.
 • Open TabVault in Chrome's side panel for a one-column view beside the page you are reading.
+• Focus mode: press Alt+Shift+F (or right-click the toolbar icon and choose Focus this window) and every other window is veiled with a blur, so only the window you are working in stays sharp. The same keys, or the pill on any veiled page, lift it. It asks once for access to your pages to draw the veil; say no and it minimises your other windows instead.
 • The toolbar icon shows how many tabs you have open (or how many are unloaded, or nothing).
 • Reopen recently closed tabs, one at a time or a whole closed window at once.
 • Light and dark themes that follow Chrome, or pick one in Settings.
@@ -165,7 +173,7 @@ SNAPSHOTS, EXPORT AND RESTORE
 • Import a file or paste a list of links and restore only the windows you pick. Links that are not web pages (javascript:, data:, chrome: and the like) are skipped and counted. Restored tabs open unloaded by default: the first tab of each window loads, the rest load the moment you click them.
 
 WHAT IT NEVER DOES
-• It never reads the content of a page. TabVault asks for no access to websites and injects no scripts, so it sees a tab's title, address and favicon and nothing more.
+• It never reads the content of a page: it sees a tab's title, address and favicon and nothing more. Focus mode is the one feature that touches pages, and only after you allow it: it draws a blurred veil on top of the tabs in your other windows and reads nothing from them.
 • It sends nothing to any server of its own, contains no analytics or telemetry, and has no account. The only network activity is the browser fetching each tab's favicon from that tab's own site, which 1.0 did too. Everything it stores stays in your browser's local extension storage on your machine.
 • Export and import are manual file operations that you start.
 
@@ -174,7 +182,7 @@ GOOD TO KNOW
 • It shows the tabs you have open; it does not search history or bookmarks.
 • Incognito windows are only visible if you allow the extension in incognito at chrome://extensions.
 
-Open source, plain HTML and JavaScript, no build step and no dependencies, MIT licensed. Source: https://github.com/iYazee6-AI/TabVault
+Free for personal and non-commercial use under the PolyForm Noncommercial License 1.0.0; commercial use needs the author's written permission. Plain HTML and JavaScript, no build step and no dependencies; the source is public: https://github.com/iYazee6-AI/TabVault
 ```
 
 **Graphic assets**
@@ -223,12 +231,14 @@ output onto white; check byte 25 of each file is 2 after regenerating.
 **Single purpose** (paste):
 
 ```
-TabVault lists every browser window and tab in one page (or in the side panel) so the user can search, organise, unload and clean them up, files idle tabs onto local shelves by the user's rules, and keeps local snapshots of that session and a list of recently closed tabs so they can be exported, restored and reopened. All data stays in the browser's local extension storage.
+TabVault lists every browser window and tab in one page (or in the side panel) so the user can search, organise, unload and clean them up, files idle tabs onto local shelves by the user's rules, and keeps local snapshots of that session and a list of recently closed tabs so they can be exported, restored and reopened; on request it veils the user's other windows so one window stays in focus. All data stays in the browser's local extension storage.
 ```
 
 **Permission justifications** (one box per permission; these are every
-permission in `manifest.json` — there are no optional permissions and no host
-permissions)
+permission in `manifest.json`. Since 1.4 there is one optional host
+permission, `<all_urls>` in `optional_host_permissions`, requested at run
+time only when the user first turns on Focus mode, and no required host
+permission)
 
 | Permission | When it is requested | Why | Without it |
 |---|---|---|---|
@@ -238,14 +248,16 @@ permissions)
 | `unlimitedStorage` | At install. | A snapshot stores a full session, and the history is many snapshots; a user with hundreds of tabs exceeds the default extension storage quota, and a quota failure would silently lose a snapshot. This permission lifts that cap. It grants no additional access to anything — only more room in the extension's own local storage. | Snapshots would start failing to save once the history grew past the default quota. |
 | `alarms` | At install. | Snapshots are debounced: after tabs stop changing for N seconds (30 by default) one is taken. A Manifest V3 service worker is torn down while idle and cannot hold a timer, so the delay is measured with a single re-armed `chrome.alarms` alarm. A second alarm fires every 5 minutes: it refreshes the tab count on the toolbar icon and runs your idle rules: only when the user has turned on Unload idle tabs or written a rule, it unloads tabs idle past the user's threshold, and a shelving rule the user wrote, dry-ran and switched on saves the idle tabs of its site to a local shelf and then closes them; at most 25 tabs a run. | Automatic snapshots, idle-tab unloading and the idle rules would be impossible, and the icon count could go stale. |
 | `sidePanel` | At install. | Shows the same TabVault page (`app/index.html?panel=1`, a one-column layout) in Chrome's side panel when the user opens it from TabVault's menu, the command palette, or a keyboard shortcut they assign. The toolbar icon still opens the full page. It grants no access to any website. | TabVault could only be used as a full tab. |
-| Host permissions | none | The manifest declares no `host_permissions` and no `optional_host_permissions`, and the extension registers no content scripts and calls no scripting API. It never reads page content. | — |
+| `contextMenus` | At install. (No warning.) | Adds one item to the right-click menu of TabVault's own toolbar icon (`contexts: ["action"]`): "Focus this window", or "Lift the focus" while it is on. It adds nothing to the menu of any web page. | Focus mode would start only from the keyboard shortcut or the TabVault page. |
+| `scripting` | At install. (No warning; it reaches no page without a host permission.) | Focus mode calls `chrome.scripting.executeScript` with the packaged file `app/focus-veil.js` on the tabs of the windows the user is not focused on, to draw a blurred overlay with a "Click to lift" pill, and once more to remove it when the focus is lifted. The script reads nothing from the page and sends nothing but the lift request to the extension. | No veil: Focus mode could only minimise the other windows. |
+| `<all_urls>` (optional host permission) | Never at install. Requested with `chrome.permissions.request` only when the user turns on Focus mode the first time, after TabVault's own page explains it ("Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them"). The user can decline, or withdraw it later at chrome://extensions. | The veil must be drawn on whatever pages the user has open in the other windows, so the host cannot be narrowed to a list of sites. Used only to inject the veil and remove it; no page content is read, stored or sent. | Focus mode minimises the other windows instead of veiling them; everything else works as before. |
 
 **Remote code**
 
 | Field | Value |
 |---|---|
 | Are you using remote code? | `No, I am not using remote code` |
-| Justification (if asked) | `All JavaScript ships inside the package: background.js, app/ and lib/. There is no eval, no new Function, and no remotely hosted script or stylesheet. The extension sends nothing to any server of its own; the only network activity is the browser fetching each tab's favicon from that tab's own site.` |
+| Justification (if asked) | `All JavaScript ships inside the package: background.js, app/ and lib/. The one script injected into pages, Focus mode's veil, is the packaged file app/focus-veil.js. There is no eval, no new Function, and no remotely hosted script or stylesheet. The extension sends nothing to any server of its own; the only network activity is the browser fetching each tab's favicon from that tab's own site.` |
 
 **Data usage** — "What user data do you plan to collect from users now or in
 the future?" Tick:
@@ -260,7 +272,7 @@ the future?" Tick:
 | Location | No | |
 | Web history | Yes | The addresses and titles of the tabs the user has open, of the tabs in each stored snapshot, of the tabs saved on shelves, and of the last 200 tabs the user closed (the recently closed list, which can be turned off and cleared). Written only to local extension storage; never transmitted. |
 | User activity | No | No clicks, keystrokes or analytics are recorded. |
-| Website content | No | No host permissions and no content scripts: the content of pages is never readable. |
+| Website content | No | The optional host permission (Focus mode) is used only to draw a veil on top of pages; the veil script reads nothing from the page and stores and sends nothing. No content is collected. |
 
 Unload idle tabs (1.2) adds nothing to this table: each run reads the tab
 details the `tabs` permission already gives (last used time, active,
@@ -485,3 +497,48 @@ real Chrome with the package loaded unpacked:
    "shelved to" the shelf.
 3. Open a shelved item whose group is gone: the group is recreated in the
    current window with its title and colour.
+
+## 15. What's new in 1.4.0 (for the update)
+
+1.4.0 goes up after 1.3.0 has passed review (one package in review at a
+time). It adds two permissions, `contextMenus` and `scripting`, neither of
+which shows a warning, and one optional host permission, `<all_urls>`,
+which Chrome asks for only when the user first turns Focus mode on; existing
+users are not asked anything at the update. The dashboard asks for a
+justification for each: paste the three new rows of section 5, the reworded
+single purpose, and the reworded Website content row. Upload the package as
+in section 8 (`dist/tabvault-1.4.0.zip`, SHA-256
+`1d71abd21d94318aad9de5814f1839248dc7c02e111ed9c0fb865fa1431e51d6`), replace the fifth screenshot,
+`05-snapshots.png`, with `docs/store/screenshots/06-focus-mode.png` (the
+store takes at most five; the snapshot list is the one the description
+already explains best in words). Update the
+description from section 4 and paste this block at the top of it, above
+"TabVault is a source-available tab manager...", with one blank line after
+it (it replaces the NEW IN 1.3 block):
+
+```
+NEW IN 1.4
+• Focus mode: press Alt+Shift+F (or right-click the toolbar icon, Focus this window) and every other window is blurred and dimmed, with a "Click to lift" pill on top. The same keys lift it; in another window they move the focus there.
+• It asks once for access to your pages, only to draw the veil; TabVault still reads nothing from them. Say no and it minimises your other windows instead.
+• TabVault is now free for personal and non-commercial use under the PolyForm Noncommercial License 1.0.0.
+```
+
+The licence in the listing: the description's last paragraph and the NEW IN
+1.4 block say "free for personal and non-commercial use"; the title still
+reads "TabVault: Open-Source Tab Manager" (from `manifest.json` `name`,
+the owner's rename of 2026-11-02). PolyForm Noncommercial is source-available,
+not an OSI open-source licence, so the title is the owner's call before this
+upload (Wakeel's report names it).
+
+Before the upload, the real-install checks no automation covers, in real
+Chrome with the package loaded unpacked:
+
+1. `Alt+Shift+F` is bound at `chrome://extensions/shortcuts` (Chrome
+   leaves a suggested key unbound when another extension holds it).
+2. Right-click the TabVault icon: "Focus this window"; after it, the item
+   reads "Lift the focus" and the icon shows a dot.
+3. The first use: the TabVault page's question, then Chrome's own prompt;
+   decline it once (the other windows minimise, the lift brings them back),
+   then allow it from ⋯ → Focus this window.
+4. A PDF tab and a `chrome://settings` tab in another window: not veiled,
+   and the page's bar counts them.

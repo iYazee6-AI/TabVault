@@ -8,9 +8,10 @@
 // Run: npm run screenshots
 //
 // Output:
-//   docs/store/screenshots/01..05-*.png   1280x800 (all windows, command palette,
+//   docs/store/screenshots/01..06-*.png   1280x800 (all windows, command palette,
 //                                         idle rules with a dry run (1.3), the
-//                                         palette's saved search (1.3), snapshots)
+//                                         palette's saved search (1.3), snapshots,
+//                                         a page veiled by Focus mode (1.4))
 //   docs/store/promo-tile-440x280.png     440x280 (from docs/store/promo-tile.html)
 //
 // The example pages are served locally on port 8771 (e2e/server.js owns 8765;
@@ -147,6 +148,13 @@ function buildExtensionCopy() {
   for (const entry of ["manifest.json", "background.js", "app", "lib", "icons"]) {
     fs.cpSync(path.join(REPO, entry), path.join(EXT_DIR, entry), { recursive: true });
   }
+  // Focus mode's host permission is optional and asked for at run time; no one can click
+  // Chrome's prompt here, so the copy grants it at install (shot 06).
+  const mf = path.join(EXT_DIR, "manifest.json");
+  const m = JSON.parse(fs.readFileSync(mf, "utf8"));
+  m.host_permissions = m.optional_host_permissions || [];
+  delete m.optional_host_permissions;
+  fs.writeFileSync(mf, JSON.stringify(m, null, 2));
 }
 
 function sleep(ms) {
@@ -545,6 +553,22 @@ async function main() {
     await sleep(2200); // let the "Snapshot saved" toast fade
     await shot("05-snapshots.png");
     await app.click("#dialog-backdrop", { position: { x: 5, y: 5 } });
+
+    // 06 — Focus mode (1.4): TabVault's own window is focused, so the Research window's
+    // reading tab is veiled; the shot is that page, blurred, with the lift pill on top.
+    const focusOn = await sw((id) => self.runFocusCommand(id), (await app.evaluate(() => chrome.tabs.getCurrent())).windowId);
+    if (!focusOn || !focusOn.ok || focusOn.mode !== "veil") throw new Error("focus mode did not start: " + JSON.stringify(focusOn));
+    const reading = context.pages().find((pg) => pg.url() === U["/manifest-v3"]);
+    if (!reading) throw new Error("no page for " + U["/manifest-v3"]);
+    await reading.setViewportSize({ width: WIDTH, height: HEIGHT });
+    await reading.bringToFront();
+    await reading.waitForFunction(() => Boolean(document.getElementById("tabvault-focus-veil")), null, { timeout: 15000 });
+    await reading.mouse.move(5, 5);
+    await sleep(600);
+    const focusFile = path.join(SHOTS, "06-focus-mode.png");
+    fs.writeFileSync(focusFile, toRgbPng(await reading.screenshot()));
+    console.log("wrote " + focusFile);
+    await sw(() => self.liftFocus());
 
     // ---- promo tile --------------------------------------------------------
     const promo = await context.newPage();

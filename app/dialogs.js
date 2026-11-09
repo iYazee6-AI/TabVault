@@ -856,8 +856,49 @@
         el("li", {}, "Source: ", link(REPO_URL, REPO_URL.replace("https://", ""))),
         el("li", {}, link(REPO_URL + "/issues", "Report an issue")),
         el("li", {}, link(REPO_URL + "/blob/main/PRIVACY.md", "Privacy policy"))),
-      el("p", { class: "muted" }, "MIT licence. Type: IBM Plex Sans and Plex Mono (SIL Open Font License)."),
+      el("p", { class: "muted" }, "Free for personal and non-commercial use (PolyForm Noncommercial License 1.0.0); commercial use needs the author's written permission. Type: IBM Plex Sans and Plex Mono (SIL Open Font License 1.1)."),
       el("div", { class: "row" }, el("button", { type: "button", onclick: closeDialog }, "Close")));
+  };
+
+  // ---- focus mode (1.4) -----------------------------------------------------------------
+  // Asked once, before the first veil: the optional <all_urls> host permission. Chrome's own
+  // prompt follows the Allow click (permissions.request must run inside it, with nothing awaited
+  // first). Declined, or Minimise chosen: the other windows are minimised instead, and the
+  // shortcut remembers that choice (storage.local focusFallback).
+  App.dialogs.focus = (box, { windowId }) => {
+    const allow = el("button", { type: "button", class: "primary", id: "focus-allow" }, "Allow and focus");
+    const minimize = el("button", { type: "button", id: "focus-minimize" }, "Minimise the other windows instead");
+    const cancel = el("button", { type: "button", id: "focus-cancel", onclick: closeDialog }, "Cancel");
+    const note = el("p", { id: "focus-note", class: "muted" }, "Chrome asks you once. TabVault never reads, stores or sends anything from those pages; the veil is only drawn on top of them.");
+    const start = async (mode) => {
+      const r = await chrome.runtime.sendMessage({ type: "focusStart", windowId, mode }).catch((e) => ({ ok: false, error: e.message || String(e) }));
+      closeDialog();
+      if (!r || !r.ok) { toast("Focus mode failed: " + ((r && r.error) || "no answer")); return; }
+      if (mode === "minimize") toast(`Focus is on: ${r.minimized} other window${r.minimized === 1 ? "" : "s"} minimised (no veil without the permission)`);
+      else toast(`Focus is on: ${r.veiled} tab${r.veiled === 1 ? "" : "s"} veiled${r.skipped ? `, ${r.skipped} could not be` : ""}`);
+    };
+    allow.addEventListener("click", () => {
+      allow.disabled = true;
+      chrome.permissions.request({ origins: TV.FOCUS_ORIGINS }).then((granted) => {
+        if (granted) { start("veil"); return; }
+        allow.disabled = false;
+        note.textContent = "Chrome did not grant the permission, so Focus mode cannot draw the veil. It can minimise your other windows instead.";
+        note.className = "";
+        minimize.classList.add("primary");
+        minimize.focus();
+      }, (e) => { allow.disabled = false; note.textContent = "Chrome refused the request: " + (e.message || e); note.className = ""; });
+    });
+    minimize.addEventListener("click", async () => {
+      minimize.disabled = true;
+      await chrome.storage.local.set({ [TV.FOCUS_FALLBACK_KEY]: "minimize" }).catch(() => {});
+      start("minimize");
+    });
+    box.replaceChildren(
+      el("h2", {}, "Focus mode"),
+      el("p", { id: "focus-text-ask" }, "Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them."),
+      note,
+      el("div", { class: "row" }, allow, minimize, cancel));
+    allow.focus();
   };
 
   // ---- save and close -----------------------------------------------------------------

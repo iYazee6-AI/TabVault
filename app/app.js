@@ -32,6 +32,8 @@
     // "panel" when loaded as the side panel (?panel=1), else "page".
     layout: new URLSearchParams(location.search).get("panel") === "1" ? "panel" : "page",
     panelSeen: new Set(),
+    // Focus mode (1.4): the worker's state from storage.session, shown in #focus-bar.
+    focus: TV.FOCUS_OFF,
   };
 
   // ---- data ------------------------------------------------------------------
@@ -854,6 +856,7 @@
     { id: "import", label: "Import (file or pasted links)", run: () => openDialog("import") },
     { id: "settings", label: "Settings", run: () => openDialog("settings") },
     { id: "sidePanel", label: "Open side panel", run: () => openSidePanel(), when: () => canOpenPanel() },
+    { id: "focus", label: "Focus this window (veil the others) or lift the focus", keys: ["Alt+Shift+F"], run: () => focusThisWindow() },
     { id: "saveCloseAll", label: "Save and close all windows", run: () => confirmSaveClose(state.session.windows.map((w) => w.id)) },
     { id: "moveToShelf", label: "Move selected tabs to a shelf", run: () => (state.selected.size ? openDialog("moveToShelf", { tabIds: selection() }) : toast("Select the tabs to shelve first")) },
     { id: "shelves", label: "Show shelves", run: () => { state.shelvesOpen = true; renderShelves(); if (state.shelves.length) $("shelves").scrollIntoView({ block: "nearest" }); else toast("No shelves yet: add one with Move to shelf or an idle rule in Settings"); } },
@@ -870,6 +873,39 @@
     const target = state.currentWindowId !== null ? { windowId: state.currentWindowId } : null;
     if (!target) { toast("Could not find this window"); return; }
     chrome.sidePanel.open(target).catch((e) => toast("Could not open the side panel: " + (e.message || e)));
+  }
+
+  // ---- focus mode (1.4) -----------------------------------------------------------------
+  // The page's row toggles the focus for the window TabVault is in. Without the optional host
+  // permission it always asks first (app/dialogs.js focus), so the veil can still be chosen after
+  // the minimise fallback was; the shortcut and the toolbar menu use the remembered fallback.
+  async function focusThisWindow() {
+    const windowId = state.currentWindowId;
+    if (windowId === null) { toast("Could not find this window"); return; }
+    if (state.focus.on && state.focus.windowId === windowId) { liftFocusFromPage(); return; }
+    const granted = await chrome.permissions.contains({ origins: TV.FOCUS_ORIGINS }).catch(() => false);
+    if (!granted) { openDialog("focus", { windowId }); return; }
+    const r = await chrome.runtime.sendMessage({ type: "focusStart", windowId, mode: "veil" }).catch((e) => ({ ok: false, error: e.message }));
+    focusToast(r);
+  }
+  function liftFocusFromPage() {
+    chrome.runtime.sendMessage({ type: "focusLift" }).then(() => toast("Focus lifted"), (e) => toast("Could not lift the focus: " + (e.message || e)));
+  }
+  function focusToast(r) {
+    if (!r || !r.ok) { toast("Focus mode failed: " + ((r && r.error) || "no answer")); return; }
+    if (r.mode === "minimize") { toast(`Focus is on: ${r.minimized} other window${r.minimized === 1 ? "" : "s"} minimised`); return; }
+    toast(`Focus is on: ${r.veiled} tab${r.veiled === 1 ? "" : "s"} veiled${r.skipped ? `, ${r.skipped} could not be` : ""}`);
+  }
+  async function loadFocus() {
+    const got = await chrome.storage.session.get(TV.FOCUS_KEY).catch(() => ({}));
+    state.focus = got[TV.FOCUS_KEY] || TV.FOCUS_OFF;
+    renderFocus();
+  }
+  function renderFocus() {
+    const f = state.focus;
+    $("focus-bar").hidden = !f.on;
+    $("focus-text").textContent = TV.focusSummary(f).replace("Focus is on", f.windowId === state.currentWindowId ? "Focus is on this window" : "Focus is on another window");
+    $("btn-focus").firstChild.textContent = f.on && f.windowId === state.currentWindowId ? "Lift the focus " : "Focus this window ";
   }
 
   async function snapshotNow() {
@@ -1145,10 +1181,13 @@
     $("btn-settings").addEventListener("click", () => openDialog("settings"));
     $("btn-help").addEventListener("click", () => openDialog("help"));
     $("btn-about").addEventListener("click", () => openDialog("about"));
+    $("btn-focus").addEventListener("click", () => focusThisWindow());
+    $("focus-lift").addEventListener("click", () => liftFocusFromPage());
     $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("more-menu"); });
     $("more-menu").addEventListener("click", () => closeMenus());
     document.addEventListener("click", (e) => { if (!e.target.closest(".menu-wrap")) closeMenus(); });
     chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "session" && changes[TV.FOCUS_KEY]) { state.focus = changes[TV.FOCUS_KEY].newValue || TV.FOCUS_OFF; renderFocus(); }
       if (area !== "local") return;
       if (changes[TV.WINDOW_NAMES_KEY]) scheduleRefresh();
       if (changes[TV.RECENT_KEY]) loadRecent().catch(console.error);
@@ -1182,5 +1221,12 @@
     moveToShelf, getShelves: () => state.shelves,
   };
 
-  loadSettings().then(refresh).then(wire).then(loadRecent).then(loadShelves).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
+  // ?focus=<windowId>: the worker opened this page to ask for Focus mode's permission (first use
+  // of the shortcut or the toolbar menu without it).
+  function askFocusFromUrl() {
+    const id = Number(new URLSearchParams(location.search).get("focus"));
+    if (Number.isInteger(id) && id > 0) openDialog("focus", { windowId: id });
+  }
+
+  loadSettings().then(refresh).then(wire).then(loadRecent).then(loadShelves).then(loadFocus).then(askFocusFromUrl).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
 })();
