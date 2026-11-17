@@ -198,6 +198,12 @@
     .prow mark { background: var(--pSoft); color: var(--pText); border-radius: 2px; }
     .prow.on mark { background: transparent; text-decoration: underline; }
     .prow .polder { flex: none; font-size: 10.5px; color: var(--t2); }
+    .prow .pdel { flex: none; padding: 0 6px; visibility: hidden; }
+    .prow:hover .pdel, .prow.on .pdel, .prow .pdel:focus-visible { visibility: visible; }
+    .bm-dupes .bm-group { margin: 8px 0; }
+    .bm-dupes .bm-row, .bm-backups .bm-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+    .bm-dupes .bm-row .bm-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bm-dupes .bm-row .muted, .bm-backups .bm-row .muted { font-size: 11px; white-space: nowrap; }
     .phint { padding: 6px 12px; border-top: 1px solid var(--l); color: var(--t2); font-size: 11px; }
     .menu kbd { margin-left: 8px; color: var(--t2); }
     /* == dialogs == */
@@ -263,6 +269,7 @@
         <button id="btn-focus" type="button" role="menuitem">Focus this window <kbd>Alt+Shift+F</kbd></button>
         <button id="btn-export" type="button" role="menuitem">Export</button>
         <button id="btn-import" type="button" role="menuitem">Import</button>
+        <button id="btn-bookmarks" type="button" role="menuitem" hidden>Bookmarks</button>
         <button id="btn-settings" type="button" role="menuitem">Settings</button>
         <button id="btn-help" type="button" role="menuitem">Help</button>
         <button id="btn-about" type="button" role="menuitem">About</button>
@@ -295,6 +302,7 @@
       <button id="sel-group" type="button">Group</button>
       <button id="sel-pin" type="button">Pin</button>
       <button id="sel-discard" type="button">Discard</button>
+      <button id="sel-bookmark" type="button" title="Save the selected tabs as a bookmark folder" hidden>Bookmark</button>
       <div class="menu-wrap up">
         <button id="shelf-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="shelf-menu" title="Save the selected tabs to a shelf, then close them">Move to shelf ▾</button>
         <div id="shelf-menu" class="menu" role="menu" hidden></div>
@@ -331,7 +339,9 @@
   <script src="../lib/saved-index.js"></script>
   <script src="../lib/save-close.js"></script>
   <script src="../lib/focus.js"></script>
+  <script src="../lib/bookmarks.js"></script>
   <script src="app.js"></script>
   <script src="dialogs.js"></script>
+  <script src="bookmarks.js"></script>
 </body>
 </html>

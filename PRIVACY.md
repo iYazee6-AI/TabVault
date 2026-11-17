@@ -1,6 +1,6 @@
 # TabVault Privacy Policy
 
-Effective date: 2026-11-09
+Effective date: 2026-11-17
 
 TabVault is a browser extension that shows every window and tab you have open
 in one page, and keeps local snapshots of your session so you can get it back.
@@ -36,6 +36,15 @@ TabVault stores, on your device only:
   pinned tabs are spared) and your idle rules (for each: the site pattern you
   typed, the idle time, the action — unload, shelve to a named shelf, or
   never — whether it is on, and whether its dry run was shown).
+- **Bookmark backups and the Deleted list** (1.6, only when you turn
+  Bookmarks on in Settings) — when you click **Back up now**, and by itself
+  before TabVault changes more than 10 bookmarks at once, a copy of your
+  whole bookmark tree (every folder and bookmark: title, address, position
+  and the dates Chrome keeps) is stored in your browser's local extension
+  storage; the last 5 are kept (Settings sets how many), the older ones are
+  deleted. For each bookmark TabVault moves into the Deleted folder, it keeps
+  where it came from (its folder and position) so it can be put back. The
+  ids of the Deleted and TabVault folders are kept too.
 - **Window names** — any names you type for your windows. They are kept until
   the browser next starts and are also saved inside snapshots and exports.
 
@@ -60,8 +69,13 @@ whatever the pages you have open happen to be.
   If you chose the minimise fallback, that choice is kept in
   `chrome.storage.local`. You can withdraw the permission at any time at
   `chrome://extensions` → TabVault → Site access.
-- It never captures what you type, your cookies, your passwords, your
-  bookmarks, or your browsing history. Only tabs that are open right now, the
+- It never captures what you type, your cookies, your passwords, or your
+  browsing history, and it reads your bookmarks only while **Bookmarks** is on
+  (1.6): to search them, find duplicates, back them up and export them, all
+  in the page or the extension's own storage on your device. It changes them
+  only when you ask: saving tabs creates a folder, and removing a bookmark
+  moves it into the Deleted folder in Other bookmarks; TabVault never deletes
+  a bookmark. Only tabs that are open right now, the
   snapshots you have kept, the shelves, and the recently closed list above are
   recorded.
 - It has no account, no login, and no identifier for you.
@@ -78,8 +92,8 @@ whatever the pages you have open happen to be.
   so: a shelving rule stays off until you have run its dry run and turned it
   on. An unloaded tab keeps its address and title in its window.
 - **Saved-tab search** in the command palette builds its index of your
-  snapshots, shelves and recently closed tabs in the page's memory while the
-  page is open, and stores nothing.
+  snapshots, shelves and recently closed tabs (and, with Bookmarks on, your
+  bookmarks) in the page's memory while the page is open, and stores nothing.
 
 ## Where the data is kept
 
@@ -96,6 +110,9 @@ telemetry, and never transmits, syncs, sells or shares your data with anyone,
 including the developer. The only network activity is the browser fetching
 each tab's favicon from that tab's own site to show it in the list, which
 version 1.0 did too.
+
+**Back up now** and **Export as HTML** in the Bookmarks dialog (1.6) write a
+file of your bookmarks to your download location, the same way.
 
 If you use **Export**, a JSON or Markdown file containing the session,
 selection, snapshot or shelf you chose is written to the download location
@@ -138,9 +155,18 @@ pages are skipped.
   them. Nothing is closed unless a rule you wrote says so.
 - **sidePanel**: to show the same TabVault page in Chrome's side panel when
   you open it there. It grants no access to any website.
+- **bookmarks** (optional, 1.6): asked for only when you turn **Bookmarks** on
+  in Settings, and given back when you turn it off. With it TabVault reads
+  your bookmarks (to search them, list duplicates, back them up and export
+  them), creates a folder when you save tabs as bookmarks, and moves the
+  bookmarks you remove into the Deleted folder. It never deletes a bookmark
+  and sends nothing anywhere. Chrome shows it as "Read and change your
+  bookmarks".
 
-TabVault requests no access to websites (no host permissions) and no optional
-permissions.
+TabVault requests no access to websites at install (no required host
+permissions). Its two optional permissions, access to your pages for Focus
+mode and `bookmarks`, are asked for only when you turn on the feature that
+needs them, and can be withdrawn at `chrome://extensions`.
 
 ## Incognito
 

@@ -78,6 +78,8 @@ contact email is still the `<your contact email>` placeholder).
 - Settings written elsewhere (the worker's migration, another TabVault page) are taken over by the page on `storage.onChanged`, so a later save never writes back a stale copy.
 - Save and close always confirms in the page (focus on Cancel) before the `saveAndClose` message; the worker closes only the tabs the snapshot saved (`lib/save-close.js`).
 - The side panel is `app/index.html?panel=1` (`state.layout`, `data-layout="panel"`, CSS section `== panel ==`); `chrome.sidePanel.open` must be called inside the user gesture, never after an await. `contextMenus` (1.4) adds items only to the toolbar icon (`contexts: ["action"]`): since 1.5 "Open in side panel" and "Open full page", then Focus mode's. `settings.actionOpens` (1.5, `page` by default or `panel`) is applied by the worker's `applyActionBehavior` through `sidePanel.setPanelBehavior` and the action title; with `panel` Chrome opens the panel on the click and sends no `action.onClicked`.
+- Bookmarks (1.6): `bookmarks` is in `optional_permissions` only. The feature runs only while `settings.bookmarks` is on AND Chrome has granted the permission (page `state.bm.on`, worker `bookmarkContext`); off, no bookmark API is called and nothing bookmark-related is drawn. The Settings switch requests the permission inside its change event and, off, saves the setting and removes the permission. **TabVault never deletes a bookmark**: `chrome.bookmarks.remove` and `removeTree` are never called anywhere; every removal (one or many, page, worker or any later tool, the AI tools included) goes through `lib/bookmarks.js` `moveToDeleted` (a move into "Deleted" under Other bookmarks, found by `bmDeletedFolderId`, then the name, else made; the origin in `bmTrash` keyed by bookmark id). Get the API only through `TV.safeBookmarks(chrome.bookmarks)` (no remove, no removeTree); `test/bookmarks.test.js` fails on any call in the sources. Bookmark writes go through the worker's `bookmarkWrite` queue. Backups: `bmBackupIndex` plus `bmBackup:<id>:<n>` chunks of 500 flat nodes in tree order, written, read back, then listed; the last `bookmarkBackupsKeep` (5) kept; one is taken inside `moveToDeleted` and `saveTabsAsFolder` before a change to more than 10 bookmarks. Restore is not built yet. The e2e harness grants the permission at install (AH) and stubs remove and removeTree to count calls.
+- e2e on this PC: always `TABVAULT_HEADLESS=1` (the owner's word of 2026-11-17: no window may open on his screen).
 - `/` is Search; the palette is `Alt+K`, handled before the modifier bail-out in the keydown handler (matched on `e.code === "KeyK"`).
 
 - Pure logic lives in `lib/` with the UMD wrapper; everything that touches
@@ -98,7 +100,9 @@ MIT (`LICENSE`; `package.json` `"license": "MIT"`). The owner's word of
 `feat/focus-1.4` was reverted before 1.4.0. The IBM Plex fonts in
 `app/fonts/` keep the SIL OFL 1.1.
 
-## Known follow-ups (as of 2026-11-08)
+## Known follow-ups (as of 2026-11-17)
+
+- 1.6 real-install checks (no automation): Chrome's bookmarks prompt, its decline, and the permission removed when Bookmarks is turned off; the HTML export imported back by Chrome (listing section 17). Bookmark restore from a backup is the next step the owner may ask for.
 
 - 1.4 real-install checks (no automation): Alt+Shift+F bound and free at chrome://extensions/shortcuts; the toolbar icon's right-click item; Chrome's permission prompt after Allow, and its decline; a PDF and a chrome:// tab in another window counted, not veiled.
 - 1.3 real-install checks (no automation): Copy to clipboard from the Export dialog without `clipboardWrite`; a shelving rule at 15 minutes in real Chrome; opening a shelved item whose group is gone.

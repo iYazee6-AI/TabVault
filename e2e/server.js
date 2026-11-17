@@ -5,7 +5,8 @@ const fs = require("fs");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "..", "test-pages");
-const PORT = 8765;
+// TABVAULT_E2E_PORT moves the test-page server off 8765 when another run holds it.
+const PORT = Number(process.env.TABVAULT_E2E_PORT) || 8765;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",

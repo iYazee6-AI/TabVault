@@ -3,6 +3,31 @@
 TabVault's releases, newest first, written for the person who uses it. The
 decision log with the details is `docs/HISTORY.md`.
 
+## 1.6.0 — 2026-11-17
+
+- **Bookmarks, when you want them.** Settings, Bookmarks: turn it on and
+  Chrome asks once to let TabVault read and change your bookmarks. Off (the
+  default), TabVault never looks at them; turn it off again and the access is
+  given back.
+- **Find bookmarks in the palette.** Alt+K now also finds your bookmarks by
+  title or address, marked with a star and their folder; type `b:` first for
+  bookmarks only. Enter opens one, Shift+Enter in a new window. A folder opens
+  as a window of its pages (it asks first above 50).
+- **Save tabs as a bookmark folder.** The ☆ on a window card or a group, the
+  Bookmark button for the selected tabs or a shelf: name the folder and it
+  lands in Other bookmarks › TabVault.
+- **Delete never deletes.** Removing a bookmark from TabVault (the × beside it
+  in the palette, or Find duplicate bookmarks) moves it into a folder called
+  Deleted in Other bookmarks, made when missing, and TabVault remembers where
+  it was. Emptying Deleted is yours to do, in Chrome's bookmark manager.
+- **Back up your bookmarks.** Bookmarks dialog (⋯ → Bookmarks): Back up now
+  downloads every bookmark with its folders, order and dates, and TabVault
+  keeps the last 5 copies itself (Settings sets how many). A copy is also
+  taken by itself before any change to more than 10 bookmarks. Export as HTML
+  gives the standard file every browser imports. Restoring from a backup
+  comes in a later version.
+- Everything stays on your computer; nothing is sent anywhere.
+
 ## 1.5.0 — 2026-11-17
 
 - **The toolbar button can open the side panel.** Settings, "Toolbar button
