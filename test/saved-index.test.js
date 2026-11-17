@@ -51,6 +51,7 @@ test("Open all asks first above 20", () => {
 test("the prefixes s:, t: and a: narrow the palette's scope", () => {
   assert.deepEqual(parsePaletteQuery("s: quota"), { scope: "saved", text: "quota" });
   assert.deepEqual(parsePaletteQuery("T:inbox"), { scope: "tabs", text: "inbox" });
+  assert.deepEqual(parsePaletteQuery("b: recipes"), { scope: "bookmarks", text: "recipes" });
   assert.deepEqual(parsePaletteQuery("a: snap"), { scope: "actions", text: "snap" });
   assert.deepEqual(parsePaletteQuery("quota"), { scope: "all", text: "quota" });
   assert.deepEqual(parsePaletteQuery("x: y"), { scope: "all", text: "x: y" });

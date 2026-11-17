@@ -67,3 +67,13 @@ test("actionBehavior: the panel setting lets Chrome open the side panel on the c
   assert.deepEqual(actionBehavior({ actionOpens: "nonsense" }), { openPanelOnActionClick: false, title: "Open TabVault" });
   assert.deepEqual(actionBehavior(undefined), { openPanelOnActionClick: false, title: "Open TabVault" });
 });
+
+test("bookmarks (1.6): off by default and only true turns it on; five backups kept unless 1 to 50 is stored", () => {
+  assert.equal(DEFAULT_SETTINGS.bookmarks, false);
+  assert.equal(withDefaults({}).bookmarks, false, "a 1.5 store has no key");
+  assert.equal(withDefaults({ bookmarks: "yes" }).bookmarks, false);
+  assert.equal(withDefaults({ bookmarks: true }).bookmarks, true);
+  assert.equal(withDefaults({}).bookmarkBackupsKeep, 5);
+  assert.equal(withDefaults({ bookmarkBackupsKeep: 12 }).bookmarkBackupsKeep, 12);
+  for (const bad of [0, 51, 2.5, "7", null]) assert.equal(withDefaults({ bookmarkBackupsKeep: bad }).bookmarkBackupsKeep, 5, String(bad));
+});
