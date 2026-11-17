@@ -12,7 +12,7 @@ const BASE = "http://localhost:8765/test-pages";
 // extensions), so no window appears on the screen; the same switch as tools/screenshots.js.
 const HEADLESS = process.env.TABVAULT_HEADLESS === "1";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH"];
 // --only W,X (or TABVAULT_E2E_ONLY=W,X) runs just those scenarios. The shared fixtures and the
 // steps between scenarios still run, so a scenario alone sees the same setup as in the full run.
 const onlyArg = process.argv.indexOf("--only");
@@ -93,6 +93,10 @@ function buildExtensionCopy() {
   const m = JSON.parse(fs.readFileSync(mf, "utf8"));
   m.host_permissions = m.optional_host_permissions || [];
   delete m.optional_host_permissions;
+  // Bookmarks (1.6) are an optional permission too: granted at install the same way, so AH can
+  // reach chrome.bookmarks; the page still turns the feature on through its Settings switch.
+  m.permissions = [...(m.permissions || []), ...(m.optional_permissions || [])];
+  delete m.optional_permissions;
   fs.writeFileSync(mf, JSON.stringify(m, null, 2));
 }
 
@@ -2089,6 +2093,224 @@ async function main() {
         await (await worker()).evaluate(async () => {
           const { settings = {} } = await chrome.storage.local.get("settings");
           if (settings.actionOpens === "panel") { settings.actionOpens = "page"; await chrome.storage.local.set({ settings }); }
+        }).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // AH. Bookmarks (1.6): off by default (nothing shows); Settings turns it on through the
+    // optional permission (granted at install in the harness copy, as Chrome's prompt cannot be
+    // clicked here); the palette finds a bookmark (b: and plain) and opens it; a folder opens as a
+    // window; a window card saves as a folder in Other bookmarks > TabVault; Delete moves to
+    // Other bookmarks > Deleted with the origin stored; duplicates moved in bulk take a backup
+    // first; Back up now downloads the tree and lists it; the HTML export; turning it off hides
+    // everything. chrome.bookmarks.remove and removeTree are stubbed to count calls: zero.
+    // ---------------------------------------------------------------
+    if (want("AH")) {
+      const extraWindows = [];
+      const notes = [];
+      const bm = (fn, arg) => worker().then((w) => w.evaluate(fn, arg));
+      const bmOn = () => appPage.evaluate(() => window.TabVaultApp.bookmarksOn());
+      const openPaletteWith = async (text) => {
+        await appPage.bringToFront();
+        await blurAll();
+        await appPage.keyboard.press("Alt+K");
+        await appPage.waitForSelector("#palette-backdrop:not([hidden])", { timeout: 10000 });
+        await appPage.fill("#palette-input", text);
+      };
+      const closePaletteKeys = async () => {
+        if (await appPage.$eval("#palette-backdrop", (n) => !n.hidden).catch(() => false)) {
+          await appPage.keyboard.press("Escape");
+          await appPage.waitForSelector("#palette-backdrop[hidden]", { state: "attached" });
+        }
+      };
+      try {
+        await resetUi();
+        // Count every call to remove and removeTree, in the worker and in the page.
+        const stub = () => {
+          self.__bmForbidden = [];
+          if (!chrome.bookmarks) return false;
+          chrome.bookmarks.remove = (...a) => { self.__bmForbidden.push(["remove", a]); return Promise.reject(new Error("forbidden")); };
+          chrome.bookmarks.removeTree = (...a) => { self.__bmForbidden.push(["removeTree", a]); return Promise.reject(new Error("forbidden")); };
+          return true;
+        };
+        assert(await bm(stub), "the harness copy has no chrome.bookmarks in the worker");
+
+        // Off by default: nothing bookmark-related on the page.
+        const offUi = await appPage.evaluate(() => ({ on: window.TabVaultApp.bookmarksOn(), menu: document.getElementById("btn-bookmarks").hidden, cards: document.querySelectorAll("#grid .bm-save").length }));
+        assert(offUi.on === false && offUi.menu === true && offUi.cards === 0, `off at start: ${JSON.stringify(offUi)}`);
+
+        // Fixture bookmarks on the local test server.
+        const ids = await bm(async (base) => {
+          const r = await chrome.bookmarks.create({ parentId: "1", title: "AH Recipes" });
+          const soup = await chrome.bookmarks.create({ parentId: r.id, title: "AH Quokka soup", url: base + "/one.html?ah=quokka" });
+          await chrome.bookmarks.create({ parentId: r.id, title: "AH Quokka bread", url: base + "/two.html?ah=bread" });
+          await chrome.bookmarks.create({ parentId: r.id, title: "AH bookmarklet", url: "javascript:void(0)" });
+          const dup = await chrome.bookmarks.create({ parentId: "2", title: "AH Dupes" });
+          const dupIds = [];
+          for (let i = 0; i < 12; i++) dupIds.push((await chrome.bookmarks.create({ parentId: dup.id, title: "AH dup " + i, url: base + "/three.html?ah=dup#" + i })).id);
+          return { recipes: r.id, soup: soup.id, dupFolder: dup.id, dupIds };
+        }, BASE);
+
+        // On through Settings: the click asks Chrome for the permission.
+        await openMenuItem("#btn-settings");
+        await appPage.waitForSelector("#dialog #bm-on");
+        await appPage.click("#dialog #bm-on");
+        let viaClick = true;
+        try {
+          await waitFor(bmOn, { timeout: 5000 });
+        } catch {
+          viaClick = false;
+          const note = await appPage.$eval("#bm-note", (n) => n.textContent).catch(() => "");
+          notes.push(`the Settings click did not turn it on in this Chromium (${note.slice(0, 120)}); turned on through the stored setting instead`);
+          await bm(async () => { const { settings = {} } = await chrome.storage.local.get("settings"); settings.bookmarks = true; await chrome.storage.local.set({ settings }); });
+          await waitFor(bmOn, { timeout: 5000 });
+        }
+        await resetUi();
+        assert(await appPage.$eval("#btn-bookmarks", (n) => !n.hidden), "the Bookmarks menu item shows when on");
+        assert(await appPage.evaluate(stub), "the page has no chrome.bookmarks once on");
+
+        // Search: b: lists only bookmarks; a plain query shows them under Bookmarks.
+        await openPaletteWith("b: quokka");
+        const bRows = await waitFor(async () => {
+          const rows = await appPage.$$eval("#palette-list .prow", (rs) => rs.map((r) => [r.dataset.kind, r.textContent]));
+          return rows.length >= 2 ? rows : null;
+        }, { timeout: 8000 });
+        assert(bRows.every((r) => r[0] === "bookmark") && bRows.some((r) => /AH Quokka soup/.test(r[1])) && bRows.some((r) => /AH Quokka bread/.test(r[1])), `b: rows ${JSON.stringify(bRows)}`);
+        await appPage.fill("#palette-input", "quokka soup");
+        const sections = await waitFor(async () => {
+          const s = await appPage.$$eval("#palette-list .psection", (ns) => ns.map((n) => n.textContent));
+          return s.includes("Bookmarks") ? s : null;
+        }, { timeout: 8000 });
+        // Enter opens it (not open anywhere yet: a new tab).
+        await appPage.fill("#palette-input", "b: quokka soup");
+        await waitFor(async () => (await appPage.$eval("#palette-list .prow.on", (n) => n.dataset.kind).catch(() => null)) === "bookmark");
+        await appPage.keyboard.press("Enter");
+        const opened = await waitFor(async () => {
+          const ts = await bm((u) => chrome.tabs.query({}).then((all) => all.filter((t) => (t.url || t.pendingUrl || "").startsWith(u)).map((t) => t.id)), `${BASE}/one.html?ah=quokka`);
+          return ts.length ? ts : null;
+        }, { timeout: 8000 });
+        for (const id of opened) await bm((tid) => chrome.tabs.remove(tid), id).catch(() => {});
+
+        // A folder opens as a new window with its web pages (the bookmarklet skipped).
+        const before = new Set(await bm(() => chrome.windows.getAll().then((ws) => ws.map((w) => w.id))));
+        await openPaletteWith("b: AH Recipes");
+        await waitFor(async () => (await appPage.$eval("#palette-list .prow.on", (n) => n.dataset.kind).catch(() => null)) === "bmFolder");
+        await appPage.keyboard.press("Enter");
+        const folderWin = await waitFor(async () => {
+          const ws = await bm(() => chrome.windows.getAll({ populate: true }).then((all) => all.map((w) => ({ id: w.id, urls: w.tabs.map((t) => t.url || t.pendingUrl) }))));
+          const w = ws.find((x) => !before.has(x.id));
+          return w && w.urls.length === 2 ? w : null;
+        }, { timeout: 10000 });
+        extraWindows.push(folderWin.id);
+        assert(folderWin.urls[0].endsWith("one.html?ah=quokka") && folderWin.urls[1].endsWith("two.html?ah=bread"), `folder window ${JSON.stringify(folderWin.urls)}`);
+        await appPage.bringToFront();
+
+        // Save a window as a bookmark folder from its card.
+        const win = await bm((urls) => chrome.windows.create({ url: urls, focused: false }), [`${BASE}/one.html?ah=w1`, `${BASE}/two.html?ah=w2`]);
+        extraWindows.push(win.id);
+        await waitFor(async () => (await bm((id) => chrome.tabs.query({ windowId: id }), win.id)).every((t) => t.url && t.url.includes("ah=w")));
+        await appPage.evaluate(() => window.TabVaultApp.refresh());
+        const saveBtn = `#grid section.window[data-window="${win.id}"] .whead .bm-save`;
+        await appPage.waitForSelector(saveBtn, { timeout: 8000 });
+        await appPage.click(saveBtn);
+        await appPage.waitForSelector("#dialog #bm-save-name");
+        await appPage.fill("#dialog #bm-save-name", "AH Saved window");
+        await appPage.click("#dialog #bm-save-go");
+        const saved = await waitFor(async () => bm(async () => {
+          const [other] = await chrome.bookmarks.getSubTree("2");
+          const tv = other.children.find((n) => !n.url && n.title === "TabVault");
+          const f = tv && tv.children.find((n) => n.title === "AH Saved window");
+          return f ? f.children.map((n) => n.url) : null;
+        }), { timeout: 8000 });
+        assert(saved.length === 2 && saved[0].endsWith("one.html?ah=w1") && saved[1].endsWith("two.html?ah=w2"), `saved folder ${JSON.stringify(saved)}`);
+
+        // Delete from the palette is a move into Other bookmarks > Deleted.
+        await openPaletteWith("b: quokka soup");
+        await waitFor(async () => (await appPage.$eval("#palette-list .prow.on", (n) => n.dataset.bookmark).catch(() => null)) === ids.soup);
+        await appPage.hover("#palette-list .prow.on");
+        await appPage.click("#palette-list .prow.on .pdel");
+        const moved = await waitFor(async () => bm(async (id) => {
+          const [n] = await chrome.bookmarks.get(id);
+          const [parent] = await chrome.bookmarks.get(n.parentId);
+          const { bmTrash = {}, bmDeletedFolderId } = await chrome.storage.local.get(["bmTrash", "bmDeletedFolderId"]);
+          return parent.title === "Deleted" ? { title: n.title, url: n.url, parent: parent.id, grand: parent.parentId, stored: bmDeletedFolderId, rec: bmTrash[id] } : null;
+        }, ids.soup), { timeout: 8000 });
+        assert(moved.title === "AH Quokka soup" && moved.url.endsWith("one.html?ah=quokka"), `moved keeps title and address: ${JSON.stringify(moved)}`);
+        assert(moved.grand === "2" && moved.stored === moved.parent, `Deleted is under Other bookmarks and stored: ${JSON.stringify(moved)}`);
+        assert(moved.rec && moved.rec.parentId === ids.recipes && moved.rec.path.join("/") === "Bookmarks bar/AH Recipes", `origin record ${JSON.stringify(moved.rec)}`);
+        await waitFor(async () => !(await appPage.$('#palette-list .prow[data-bookmark="' + ids.soup + '"]')), { timeout: 8000 });
+        await closePaletteKeys();
+
+        // Duplicates: 12 bookmarks share an address (#hash ignored); all but the oldest moved, backup first.
+        await openMenuItem("#btn-bookmarks");
+        await appPage.waitForSelector("#dialog #bm-open-dupes");
+        await appPage.click("#dialog #bm-open-dupes");
+        await appPage.waitForSelector("#dialog #bm-dupes-tick");
+        const groupRows = await appPage.$$eval("#bm-dupes-list .bm-group .bm-row", (rs) => rs.length);
+        assert(groupRows >= 12, `duplicate rows ${groupRows}`);
+        const preTicked = await appPage.$$eval("#bm-dupes-list input:checked", (rs) => rs.length);
+        assert(preTicked === 0, `nothing pre-ticked, found ${preTicked}`);
+        await appPage.click("#dialog #bm-dupes-tick");
+        const goText = await appPage.$eval("#bm-dupes-go", (n) => n.textContent);
+        assert(goText === "Move 11 to Deleted", `button "${goText}"`);
+        await appPage.click("#dialog #bm-dupes-go");
+        const dupState = await waitFor(async () => bm(async ({ dupIds, folder }) => {
+          const nodes = await chrome.bookmarks.get(dupIds);
+          const away = nodes.filter((n) => n.parentId !== folder);
+          const { bmBackupIndex = [] } = await chrome.storage.local.get("bmBackupIndex");
+          return away.length === 11 ? { kept: nodes.filter((n) => n.parentId === folder).map((n) => n.title), backups: bmBackupIndex.map((m) => m.reason) } : null;
+        }, { dupIds: ids.dupIds, folder: ids.dupFolder }), { timeout: 10000 });
+        assert(dupState.kept.length === 1 && dupState.kept[0] === "AH dup 0", "the oldest stays: " + JSON.stringify(dupState));
+        assert(dupState.backups.includes("before-delete"), `a backup before the bulk move: ${JSON.stringify(dupState)}`);
+        await resetUi();
+
+        // Back up now: the download holds the tree; the dialog lists the kept backups and says restore is coming.
+        await openMenuItem("#btn-bookmarks");
+        await appPage.waitForSelector("#dialog #bm-backup-now");
+        const dl = appPage.waitForEvent("download");
+        await appPage.click("#dialog #bm-backup-now");
+        const download = await dl;
+        const file = path.join(DOWNLOAD_DIR, "ah-" + download.suggestedFilename());
+        await download.saveAs(file);
+        const backup = JSON.parse(fs.readFileSync(file, "utf8"));
+        assert(backup.format === "tabvault-bookmarks" && backup.schema === 1 && Array.isArray(backup.roots) && backup.counts.bookmarks >= 16, `backup file ${JSON.stringify({ ...backup, roots: backup.roots && backup.roots.length })}`);
+        const listed = await waitFor(async () => { const n = await appPage.$$eval("#bm-backups .bm-row", (rs) => rs.length); return n >= 2 ? n : null; }, { timeout: 8000 });
+        const restoreNote = await appPage.$eval("#bm-restore-note", (n) => n.textContent);
+        assert(/coming/.test(restoreNote), `restore note "${restoreNote}"`);
+        const dlHtml = appPage.waitForEvent("download");
+        await appPage.click("#dialog #bm-export-html");
+        const htmlDownload = await dlHtml;
+        const htmlFile = path.join(DOWNLOAD_DIR, "ah-" + htmlDownload.suggestedFilename());
+        await htmlDownload.saveAs(htmlFile);
+        const html = fs.readFileSync(htmlFile, "utf8");
+        assert(html.startsWith("<!DOCTYPE NETSCAPE-Bookmark-file-1>") && html.includes("AH Recipes"), "the HTML export");
+        await resetUi();
+
+        // The rule held: no call to remove or removeTree anywhere.
+        const forbidden = [...(await bm(() => self.__bmForbidden || [])), ...(await appPage.evaluate(() => self.__bmForbidden || []))];
+        assert(forbidden.length === 0, `remove/removeTree were called: ${JSON.stringify(forbidden)}`);
+
+        // Off again through Settings: nothing shows.
+        await openMenuItem("#btn-settings");
+        await appPage.waitForSelector("#dialog #bm-on");
+        await appPage.click("#dialog #bm-on");
+        await waitFor(async () => !(await bmOn()), { timeout: 5000 });
+        await resetUi();
+        const offAgain = await appPage.evaluate(() => ({ menu: document.getElementById("btn-bookmarks").hidden, cards: document.querySelectorAll("#grid .bm-save").length }));
+        assert(offAgain.menu && offAgain.cards === 0, `off again: ${JSON.stringify(offAgain)}`);
+
+        record("AH", "PASS", `off at start (no menu item, no card buttons); on ${viaClick ? "through the Settings click (permissions.request answered true for the permission the harness granted at install)" : "through the stored setting"}; b: rows ${bRows.length}, sections ${JSON.stringify(sections)}; Enter opened the bookmark; the folder opened as a window of 2 (the bookmarklet skipped); the window card saved "AH Saved window" with 2 bookmarks in Other bookmarks/TabVault; Delete moved the bookmark into Other bookmarks/Deleted with title, address and its origin path kept; 11 duplicates moved after a before-delete backup; Back up now downloaded ${backup.counts.bookmarks} bookmarks in ${backup.counts.folders} folders and ${listed} backups are listed with the restore-is-coming note; the HTML export downloaded; remove/removeTree calls: 0; off again hides everything.${notes.length ? " Notes: " + notes.join("; ") : ""} Not proven by machine: Chrome's own permission prompt.`);
+      } catch (e) {
+        record("AH", "FAIL", e.message);
+      } finally {
+        await closePaletteKeys().catch(() => {});
+        for (const id of extraWindows) await (await worker()).evaluate((wid) => chrome.windows.remove(wid), id).catch(() => {});
+        await (await worker()).evaluate(async () => {
+          const { settings = {} } = await chrome.storage.local.get("settings");
+          if (settings.bookmarks) { settings.bookmarks = false; await chrome.storage.local.set({ settings }); }
         }).catch(() => {});
         await appPage.bringToFront().catch(() => {});
         await resetUi().catch(() => {});
