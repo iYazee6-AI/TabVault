@@ -968,8 +968,7 @@
   // worker (bookmarkWrite queue, lib/bookmarks.js); the page reads through TV.safeBookmarks only.
   function bookmarkApi() { return TV.safeBookmarks(chrome.bookmarks); }
   async function updateBookmarksOn() {
-    let on = false;
-    if (state.settings.bookmarks === true && chrome.bookmarks) on = await chrome.permissions.contains({ permissions: [TV.BOOKMARKS_PERMISSION] }).catch(() => false);
+    const on = await TV.bookmarksActive({ setting: state.settings.bookmarks, api: chrome.bookmarks, permissions: chrome.permissions });
     const changed = on !== state.bm.on;
     state.bm.on = on;
     document.documentElement.dataset.bookmarks = String(on);
@@ -1018,7 +1017,7 @@
   }
   async function openBookmarkFolder(entry) {
     const sub = await bookmarkApi().getSubTree(entry.id);
-    const links = TV.folderLinks(sub);
+    const links = TV.folderLinks(sub).filter((l) => TV.isWebPage(l.url));
     if (!links.length) { toast("That folder has no web pages"); return; }
     const r = await window.TabVaultApp.restoreSession(TV.folderToSession(entry.title, links), [1], () => {});
     toast(`Opened ${r.tabs} bookmark${r.tabs === 1 ? "" : "s"} in a new window${r.errors.length ? `; ${r.errors.length} error${r.errors.length === 1 ? "" : "s"}` : ""}`);
@@ -1184,6 +1183,8 @@
 
   // A saved tab: focus it when the same URL is open, else open it here (or in a new window).
   async function openSaved(entry, newWindow) {
+    // Only web pages are ever opened (a bookmark could hold javascript: or data:).
+    if (!TV.isWebPage(entry.url)) { toast("Not opened: that address is not a web page"); return; }
     const ignoreHash = state.settings.ignoreHash !== false;
     const key = TV.normalizeUrl(entry.url, { ignoreHash });
     if (!newWindow) {
