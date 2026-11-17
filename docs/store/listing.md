@@ -32,8 +32,9 @@ once the repository is public.
 
 ## 1. Pre-submission checklist
 
-- [ ] `npm test` passes (123 tests).
-- [ ] `npm run e2e` passes (32 scenarios; scenarios I-b and Z are expected to
+- [ ] `npm test` passes (157 tests since 1.6).
+- [ ] `npm run e2e` passes (35 scenarios since 1.6, run with `TABVAULT_HEADLESS=1` so
+      no window opens; scenarios I-b and Z are expected to
       report LIMITED on this machine — `chrome.tabs.discard` crashes Playwright's
       bundled Chromium, see `e2e/README.md`. LIMITED is a pass for release
       purposes; FAIL or NOT RUN is not).
@@ -53,14 +54,15 @@ once the repository is public.
         setting; the active, playing and pinned tabs stay loaded.
       - Side panel (1.2): ⋯ → "Open in side panel" opens the one-column
         layout beside the page. The toolbar icon (1.5): see section 16.
+      - Bookmarks (1.6): the checks in section 17.
       - The three 1.3 checks in section 14: Copy to clipboard from the Export
         dialog, a shelving rule at 15 minutes, and a shelved item whose
         group is gone.
 - [ ] `PRIVACY.md` contact email filled in and the file is reachable at a
       public URL.
 - [ ] `manifest.json` `version` is the base you want to publish (currently
-      `1.5.0`). The Release workflow appends the run number, so the uploaded
-      package is `1.5.0.<run number>`; every later upload must be higher.
+      `1.6.0`). The Release workflow appends the run number, so the uploaded
+      package is `1.6.0.<run number>`; every later upload must be higher.
 - [ ] `manifest.json` `name` is `TabVault: Open-Source Tab Manager` (33 characters; Chrome
       allows 75, and this kit keeps the title at or under 45 so store cards
       and search do not cut it). The store title is read from this field, so
@@ -189,7 +191,7 @@ WHAT IT NEVER DOES
 
 GOOD TO KNOW
 • Chrome and Edge only: TabVault uses the Chromium tab groups API.
-• It shows the tabs you have open; it does not search history or bookmarks.
+• It shows the tabs you have open; it does not search your history, and it searches your bookmarks only when you turn Bookmarks on.
 • Incognito windows are only visible if you allow the extension in incognito at chrome://extensions. Focus mode never veils or minimises an incognito window.
 
 Open source, plain HTML and JavaScript, no build step and no dependencies, MIT licensed. Source: https://github.com/iYazee6-AI/TabVault
@@ -241,14 +243,15 @@ output onto white; check byte 25 of each file is 2 after regenerating.
 **Single purpose** (paste):
 
 ```
-TabVault lists every browser window and tab in one page (or in the side panel) so the user can search, organise, unload and clean them up, files idle tabs onto local shelves by the user's rules, and keeps local snapshots of that session and a list of recently closed tabs so they can be exported, restored and reopened; on request it veils the user's other windows so one window stays in focus. All data stays in the browser's local extension storage.
+TabVault lists every browser window and tab in one page (or in the side panel) so the user can search, organise, unload and clean them up, files idle tabs onto local shelves by the user's rules, and keeps local snapshots of that session and a list of recently closed tabs so they can be exported, restored and reopened; on request it veils the user's other windows so one window stays in focus, and, when the user turns it on, it searches, saves, de-duplicates and backs up the user's bookmarks. All data stays in the browser's local extension storage.
 ```
 
 **Permission justifications** (one box per permission; these are every
 permission in `manifest.json`. Since 1.4 there is one optional host
 permission, `<all_urls>` in `optional_host_permissions`, requested at run
 time only when the user first turns on Focus mode, and no required host
-permission)
+permission; since 1.6 one optional API permission, `bookmarks` in
+`optional_permissions`, requested only when the user turns Bookmarks on)
 
 | Permission | When it is requested | Why | Without it |
 |---|---|---|---|
@@ -260,6 +263,7 @@ permission)
 | `sidePanel` | At install. | Shows the same TabVault page (`app/index.html?panel=1`, a one-column layout) in Chrome's side panel when the user opens it from TabVault's menu, the command palette, the toolbar icon's right-click menu, a keyboard shortcut they assign, or (when the user picks it in Settings) a click on the toolbar icon. It grants no access to any website. | TabVault could only be used as a full tab. |
 | `contextMenus` | At install. (No warning.) | Adds three items to the right-click menu of TabVault's own toolbar icon (`contexts: ["action"]`): "Open in side panel", "Open full page", and "Focus this window" ("Lift the focus" while it is on). It adds nothing to the menu of any web page. | Focus mode would start only from the keyboard shortcut or the TabVault page. |
 | `scripting` | At install. (No warning; it reaches no page without a host permission.) | Focus mode calls `chrome.scripting.executeScript` with the packaged file `app/focus-veil.js` on the tabs of the windows the user is not focused on, to draw a blurred overlay with a "Click to lift" pill, and once more to remove it when the focus is lifted. The script reads nothing from the page and sends nothing but the lift request to the extension. | No veil: Focus mode could only minimise the other windows. |
+| `bookmarks` (optional permission, 1.6) | Never at install. Requested with `chrome.permissions.request` only when the user ticks Settings → Bookmarks, inside that click; unticking it calls `chrome.permissions.remove`. Chrome shows "Read and change your bookmarks" when it asks. | Reads the bookmark tree (`chrome.bookmarks.getTree`, `getSubTree`, `get`) to let the user search bookmarks in the command palette, open a bookmark folder as a window, list duplicate bookmarks and back the tree up (a JSON download plus the last 5 copies in local extension storage) or export the standard bookmarks HTML file; `create` makes a folder of the tabs the user chose to save (in Other bookmarks › TabVault); `move` puts a bookmark the user removes into a folder named "Deleted" in Other bookmarks. TabVault never calls `chrome.bookmarks.remove` or `removeTree`: nothing is ever deleted, and emptying "Deleted" is left to the user in Chrome's bookmark manager. Nothing is sent anywhere. | The Bookmarks features stay hidden; everything else works as before. |
 | `<all_urls>` (optional host permission) | Never at install. Requested with `chrome.permissions.request` only when the user turns on Focus mode the first time, after TabVault's own page explains it ("Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them"). The user can decline, or withdraw it later at chrome://extensions. | The veil must be drawn on whatever pages the user has open in the other windows, so the host cannot be narrowed to a list of sites. Used only to inject the veil and remove it; no page content is read, stored or sent. Incognito windows are never veiled, even when the extension is allowed in incognito. | Focus mode minimises the other windows instead of veiling them; everything else works as before. |
 
 **Remote code**
@@ -280,7 +284,7 @@ the future?" Tick:
 | Authentication information | No | It reads no page content, no cookies and no credentials. |
 | Personal communications | No | |
 | Location | No | |
-| Web history | Yes | The addresses and titles of the tabs the user has open, of the tabs in each stored snapshot, of the tabs saved on shelves, and of the last 200 tabs the user closed (the recently closed list, which can be turned off and cleared). Written only to local extension storage; never transmitted. |
+| Web history | Yes | The addresses and titles of the tabs the user has open, of the tabs in each stored snapshot, of the tabs saved on shelves, and of the last 200 tabs the user closed (the recently closed list, which can be turned off and cleared); since 1.6, only when the user turns Bookmarks on, the titles and addresses of the user's bookmarks, in the backups the user takes (and the automatic one before a change to more than 10 bookmarks). Written only to local extension storage; never transmitted. |
 | User activity | No | No clicks, keystrokes or analytics are recorded. |
 | Website content | No | The optional host permission (Focus mode) is used only to draw a veil on top of pages; the veil script reads nothing from the page and stores and sends nothing. No content is collected. |
 
@@ -582,3 +586,56 @@ Chrome with the package loaded unpacked:
    the tooltip reads "Open TabVault".
 3. Right-click the icon, in each setting: "Open in side panel" and "Open
    full page" both work, and "Focus this window" is still there.
+
+## 17. What's new in 1.6.0 (for the update)
+
+1.6.0 goes up after 1.5.0 has passed review (one package in review at a
+time). It adds one **optional** permission, `bookmarks` (in
+`optional_permissions`, never in `permissions`): nothing is asked at install
+or at the update, so existing users are not prompted and the extension is not
+disabled; Chrome asks "Read and change your bookmarks" only when the user
+ticks Settings → Bookmarks. `minimum_chrome_version` stays 123. In section 5,
+paste the `bookmarks` row (the dashboard asks a justification for an optional
+permission too), the reworded single purpose and the reworded Web history row.
+Upload the package as in section 8 (`dist/tabvault-1.6.0.zip`, see the
+size and SHA-256 below, reproducible from the `v1.6.0` tag on a Windows
+checkout as section 1 says). The screenshots stay. Paste this block at the top
+of the description, above "TabVault is an open-source tab manager...", with one
+blank line after it (it replaces the NEW IN 1.5 block), and the reworded GOOD
+TO KNOW line from section 4:
+
+```
+NEW IN 1.6
+• Bookmarks, when you turn them on in Settings: find them in the Alt+K palette (b: for bookmarks only), open a folder as a window, save a window, a group or your selected tabs as a bookmark folder, and find duplicate bookmarks.
+• TabVault never deletes a bookmark: removing one moves it into a "Deleted" folder that only you empty.
+• Back up all your bookmarks with their folders (a file you keep, plus the last copies kept locally), or export the standard HTML file any browser imports.
+```
+
+**Justification for the optional `bookmarks` permission** (paste if the
+dashboard asks for it in its own box):
+
+```
+Optional, requested only when the user turns on Settings > Bookmarks, inside that click; turning it off removes it. TabVault reads the bookmark tree to let the user search bookmarks in its command palette, open a bookmark folder as a window, find duplicate bookmarks, and back the tree up (a JSON file the user downloads, plus the last 5 copies in local extension storage) or export the standard bookmarks HTML file. It creates a folder when the user saves tabs as bookmarks, and moves a bookmark the user removes into a folder named "Deleted"; it never deletes a bookmark (chrome.bookmarks.remove and removeTree are never called). Nothing is sent anywhere.
+```
+
+Package (`npm run pack` on this branch, Windows checkout): see the line
+"1.6.0 package" at the end of this section.
+
+Before the upload, the real-install checks no automation covers, in real
+Chrome with the package loaded unpacked (the e2e harness grants the
+permission at install, because nobody can click Chrome's prompt there):
+
+1. Settings → Bookmarks: tick it. Chrome's prompt says "Read and change your
+   bookmarks"; Allow, and ⋯ → Bookmarks appears, with ☆ on the window cards.
+2. Tick it again after declining once: the box stays unticked with "Chrome
+   did not grant access to bookmarks", and nothing bookmark-related shows.
+3. Untick it: chrome://extensions → TabVault → Details no longer lists the
+   bookmarks permission, and ☆ and ⋯ → Bookmarks are gone.
+4. With a real bookmark bar: Alt+K, `b:` and a word finds bookmarks with their
+   folders; the × on one moves it into Other bookmarks › Deleted (open
+   Chrome's bookmark manager: the title and address unchanged). Delete the
+   Deleted folder there, then remove another bookmark from TabVault: Deleted
+   is made again.
+5. ⋯ → Bookmarks → Back up now downloads a JSON file; Export as HTML, then
+   Chrome's bookmark manager → ⋮ → Import bookmarks reads it back into an
+   "Imported" folder.

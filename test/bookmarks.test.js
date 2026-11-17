@@ -37,16 +37,18 @@ test("the rule: safeBookmarks hands out no remove and no removeTree", () => {
 
 test("the rule: no source file calls bookmarks.remove or removeTree", () => {
   const root = path.join(__dirname, "..");
-  const files = [];
+  // Everything the extension ships and runs (what tools/pack.js packs). The e2e harness is left
+  // out: it replaces remove and removeTree with counting stubs to prove they are never called.
+  const files = [path.join(root, "background.js")];
   const walk = (dir) => {
     for (const name of fs.readdirSync(dir)) {
-      if (["node_modules", ".git", "test", "dist", ".tmp", "docs"].includes(name)) continue;
       const p = path.join(dir, name);
       if (fs.statSync(p).isDirectory()) walk(p);
       else if (name.endsWith(".js") || name.endsWith(".html")) files.push(p);
     }
   };
-  walk(root);
+  walk(path.join(root, "app"));
+  walk(path.join(root, "lib"));
   assert.ok(files.some((f) => f.endsWith("bookmarks.js")));
   const bad = [];
   for (const f of files) {
