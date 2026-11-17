@@ -88,7 +88,7 @@ contact email is still the `<your contact email>` placeholder).
 - Focus mode (1.4): `lib/focus.js` decides, the worker injects `app/focus-veil.js` with `chrome.scripting` into every tab outside the focused window (`planVeil`), re-veils on `tabs.onUpdated` status complete and `onAttached`, and keeps the state in `storage.session` under `focus` through its `focusWrite` queue. The only host permission is `<all_urls>` in `optional_host_permissions`, requested by the page's focus dialog inside the Allow click; without it the other windows are minimised (`focusFallback: "minimize"` in `storage.local` once chosen; the page's row always asks again). Pages that refuse injection are counted (`skipped`), never retried in a loop. The e2e harness grants the permission by moving it to `host_permissions` in its copy, sets `self.focusPermissionOverride = false` for the declined path, and calls `self.runFocusCommand` for the shortcut (Playwright cannot press a browser-level command).
 - No required host permissions, no downloads permission; `alarms` debounces the change-driven snapshots and runs the 5-minute idle/badge alarm.
 - Never use alert/confirm/prompt; confirmations are inline.
-- Commit messages end with the attribution trailer used in sibling repos.
+- Commit messages carry no attribution trailer (owner, 2026-11-16).
 
 ## License
 
