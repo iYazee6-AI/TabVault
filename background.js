@@ -33,21 +33,54 @@ async function openPage() {
   await chrome.tabs.create({ url: PAGE_URL });
 }
 
-chrome.action.onClicked.addListener(() => { openPage().catch((e) => console.warn("TabVault open failed", e)); });
-// The toolbar click keeps opening the full page; the side panel (the same page with ?panel=1)
-// opens from the page's menu, the palette, or this command (bind it at chrome://extensions/shortcuts).
-// sidePanel.open must run inside the command's user gesture, so nothing is awaited before it.
+// sidePanel.open must run inside the user gesture (a click, a command, a menu item), so it is
+// called synchronously from the handler and nothing is awaited before it. False: no panel API or
+// no window to open it in.
+function openPanelIn(windowId) {
+  if (!chrome.sidePanel || typeof windowId !== "number") return false;
+  chrome.sidePanel.open({ windowId }).catch((e) => console.warn("TabVault side panel failed", e));
+  return true;
+}
+
+// ---- the toolbar button (1.5) ---------------------------------------------------
+// settings.actionOpens: "page" (the default) or "panel" (lib/settings.js actionBehavior). With
+// "panel", setPanelBehavior lets Chrome open the side panel itself inside the click's gesture, and
+// Chrome then sends no action.onClicked; with "page" the behaviour is off and onClicked opens the
+// page. Applied at every worker start (which covers install, update and browser startup), at
+// onInstalled and onStartup, and whenever the stored setting changes. actionMode keeps the last
+// applied setting so onClicked, should Chrome still send it, opens the panel without an await.
+let actionMode = "page";
+async function applyActionBehavior() {
+  const b = TV.actionBehavior(await getSettings());
+  actionMode = b.openPanelOnActionClick ? "panel" : "page";
+  if (chrome.sidePanel) await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: b.openPanelOnActionClick });
+  await chrome.action.setTitle({ title: b.title });
+  return b;
+}
+self.applyActionBehavior = applyActionBehavior;
+const applyAction = () => { applyActionBehavior().catch((e) => console.warn("TabVault toolbar setting failed", e)); };
+chrome.action.onClicked.addListener((tab) => {
+  if (actionMode === "panel" && openPanelIn(tab && tab.windowId)) return;
+  openPage().catch((e) => console.warn("TabVault open failed", e));
+});
+// The side panel (the same page with ?panel=1) also opens from the page's menu, the palette, the
+// toolbar button's right-click menu, or this command (bind it at chrome://extensions/shortcuts).
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === "open-tabvault") openPage().catch(() => {});
   if (command === "focus-window") runFocusCommand(tab && typeof tab.windowId === "number" ? tab.windowId : undefined).catch((e) => console.warn("TabVault focus failed", e));
-  if (command === "open-side-panel" && chrome.sidePanel && tab && typeof tab.windowId === "number") {
-    chrome.sidePanel.open({ windowId: tab.windowId }).catch((e) => console.warn("TabVault side panel failed", e));
-  }
+  if (command === "open-side-panel") openPanelIn(tab && tab.windowId);
 });
 if (chrome.sidePanel) {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
   chrome.sidePanel.setOptions({ path: "app/index.html?panel=1", enabled: true }).catch(() => {});
 }
+applyAction();
+chrome.runtime.onInstalled.addListener(applyAction);
+chrome.runtime.onStartup.addListener(applyAction);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.settings) return;
+  const was = TV.withDefaults(changes.settings.oldValue).actionOpens;
+  if (TV.withDefaults(changes.settings.newValue).actionOpens !== was) applyAction();
+});
 
 // ---- snapshots ------------------------------------------------------------
 // All writes to `snapshots` go through this queue so bursts of changes cannot interleave.
@@ -609,8 +642,15 @@ chrome.permissions.onRemoved.addListener(() => {
   }).catch(() => {});
 });
 
-function createFocusMenu() {
+// The toolbar button's right-click menu (1.5): open the side panel, open the full page, whatever
+// the toolbar setting says; then Focus mode's item (1.4).
+const MENU_PANEL = "tabvault-open-panel";
+const MENU_PAGE = "tabvault-open-page";
+function createActionMenu() {
   chrome.contextMenus.removeAll(() => {
+    const quiet = () => { void chrome.runtime.lastError; }; // a second create during a quick reload: the item is there already
+    chrome.contextMenus.create({ id: MENU_PANEL, title: "Open in side panel", contexts: ["action"] }, quiet);
+    chrome.contextMenus.create({ id: MENU_PAGE, title: "Open full page", contexts: ["action"] }, quiet);
     chrome.contextMenus.create({ id: FOCUS_MENU, title: "Focus this window", contexts: ["action"] }, () => {
       void chrome.runtime.lastError; // a second create during a quick reload: the item is there already
       getFocus().then((s) => { if (s.on) chrome.contextMenus.update(FOCUS_MENU, { title: "Lift the focus" }).catch(() => {}); }, () => {});
@@ -633,12 +673,29 @@ function focusSweep() {
   });
 }
 self.focusSweep = focusSweep;
-chrome.runtime.onInstalled.addListener(() => { createFocusMenu(); focusSweep().catch(() => {}); });
-chrome.runtime.onStartup.addListener(() => { createFocusMenu(); focusSweep().catch(() => {}); });
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== FOCUS_MENU) return;
-  runFocusCommand(tab && typeof tab.windowId === "number" ? tab.windowId : undefined).catch((e) => console.warn("TabVault focus failed", e));
-});
+chrome.runtime.onInstalled.addListener(() => { createActionMenu(); focusSweep().catch(() => {}); });
+chrome.runtime.onStartup.addListener(() => { createActionMenu(); focusSweep().catch(() => {}); });
+// sidePanel.open is called synchronously here (the menu click's gesture). The e2e harness calls it
+// as self.onActionMenu; the return value names what was done.
+function onActionMenu(info, tab) {
+  const windowId = tab && typeof tab.windowId === "number" ? tab.windowId : undefined;
+  if (info.menuItemId === MENU_PANEL) {
+    if (openPanelIn(windowId)) return "panel";
+    console.warn("TabVault side panel failed: no window");
+    return "none";
+  }
+  if (info.menuItemId === MENU_PAGE) {
+    openPage().catch((e) => console.warn("TabVault open failed", e));
+    return "page";
+  }
+  if (info.menuItemId === FOCUS_MENU) {
+    runFocusCommand(windowId).catch((e) => console.warn("TabVault focus failed", e));
+    return "focus";
+  }
+  return "none";
+}
+self.onActionMenu = onActionMenu;
+chrome.contextMenus.onClicked.addListener(onActionMenu);
 
 // ---- messages from the page ------------------------------------------------
 function safeRespond(sendResponse, payload) { try { sendResponse(payload); } catch { /* page closed */ } }
