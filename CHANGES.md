@@ -3,6 +3,17 @@
 TabVault's releases, newest first, written for the person who uses it. The
 decision log with the details is `docs/HISTORY.md`.
 
+## 1.5.0 — 2026-11-17
+
+- **The toolbar button can open the side panel.** Settings, "Toolbar button
+  opens": Full page (as before, and still the default) or Side panel. With
+  Side panel, one click on the TabVault icon opens TabVault beside the page
+  you are on.
+- **Both, whatever you pick.** Right-click the TabVault icon: "Open in side
+  panel" and "Open full page" sit above "Focus this window". Alt+Shift+T
+  still opens the full page.
+- No new permission and no question at the update.
+
 ## 1.4.1 — 2026-11-09
 
 - **The command palette opens again right after a command.** Running a

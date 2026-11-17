@@ -52,15 +52,15 @@ once the repository is public.
         `zz` within 5 minutes after, with the "last run" line under the
         setting; the active, playing and pinned tabs stay loaded.
       - Side panel (1.2): ⋯ → "Open in side panel" opens the one-column
-        layout beside the page; the toolbar icon still opens the full page.
+        layout beside the page. The toolbar icon (1.5): see section 16.
       - The three 1.3 checks in section 14: Copy to clipboard from the Export
         dialog, a shelving rule at 15 minutes, and a shelved item whose
         group is gone.
 - [ ] `PRIVACY.md` contact email filled in and the file is reachable at a
       public URL.
 - [ ] `manifest.json` `version` is the base you want to publish (currently
-      `1.4.1`). The Release workflow appends the run number, so the uploaded
-      package is `1.4.1.<run number>`; every later upload must be higher.
+      `1.5.0`). The Release workflow appends the run number, so the uploaded
+      package is `1.5.0.<run number>`; every later upload must be higher.
 - [ ] `manifest.json` `name` is `TabVault: Open-Source Tab Manager` (33 characters; Chrome
       allows 75, and this kit keeps the title at or under 45 so store cards
       and search do not cut it). The store title is read from this field, so
@@ -168,7 +168,7 @@ WHAT YOU CAN DO
 • Navigate entirely from the keyboard: j and k (or the arrows) to move, x to select, g to group, d for duplicates, Enter to go to a tab, Delete to close, ? for the full list. The shortcuts are always shown at the bottom of the page.
 • Press Alt+K for the command palette: type a few letters to run any action or jump to any tab, or to find a tab you saved in a snapshot, on a shelf or in the recently closed list, highlighted, and open one or all of them.
 • Shelves: named lists of saved tabs that are never rotated away. Move tabs to a shelf by hand, or let an idle rule file them there; reopen them one at a time or all at once, in their groups.
-• Open TabVault in Chrome's side panel for a one-column view beside the page you are reading.
+• Open TabVault in Chrome's side panel for a one-column view beside the page you are reading; a setting makes the toolbar icon open it in one click.
 • Focus mode: press Alt+Shift+F (or right-click the toolbar icon and choose Focus this window) and every other window is veiled with a blur, so only the window you are working in stays sharp. The same keys, or the pill on any veiled page, lift it. It asks once for access to your pages to draw the veil; say no and it minimises your other windows instead.
 • The toolbar icon shows how many tabs you have open (or how many are unloaded, or nothing).
 • Reopen recently closed tabs, one at a time or a whole closed window at once.
@@ -257,8 +257,8 @@ permission)
 | `storage` | At install. | `chrome.storage.local` holds the user's settings (including the idle rules), the snapshot history, the shelves (the tabs the user or a rule saved there, kept until removed) and the recently closed list (at most 200 tabs, off switch in Settings); `chrome.storage.session` holds short-lived values: when the current burst of tab changes started (so a busy browser cannot postpone a snapshot forever), when the browser session started, and the idle-tab rule's last run. This is the only place any data is kept. | No snapshots, no settings, no recently closed list; the extension becomes a read-only viewer. |
 | `unlimitedStorage` | At install. | A snapshot stores a full session, and the history is many snapshots; a user with hundreds of tabs exceeds the default extension storage quota, and a quota failure would silently lose a snapshot. This permission lifts that cap. It grants no additional access to anything — only more room in the extension's own local storage. | Snapshots would start failing to save once the history grew past the default quota. |
 | `alarms` | At install. | Snapshots are debounced: after tabs stop changing for N seconds (30 by default) one is taken. A Manifest V3 service worker is torn down while idle and cannot hold a timer, so the delay is measured with a single re-armed `chrome.alarms` alarm. A second alarm fires every 5 minutes: it refreshes the tab count on the toolbar icon and runs your idle rules: only when the user has turned on Unload idle tabs or written a rule, it unloads tabs idle past the user's threshold, and a shelving rule the user wrote, dry-ran and switched on saves the idle tabs of its site to a local shelf and then closes them; at most 25 tabs a run. | Automatic snapshots, idle-tab unloading and the idle rules would be impossible, and the icon count could go stale. |
-| `sidePanel` | At install. | Shows the same TabVault page (`app/index.html?panel=1`, a one-column layout) in Chrome's side panel when the user opens it from TabVault's menu, the command palette, or a keyboard shortcut they assign. The toolbar icon still opens the full page. It grants no access to any website. | TabVault could only be used as a full tab. |
-| `contextMenus` | At install. (No warning.) | Adds one item to the right-click menu of TabVault's own toolbar icon (`contexts: ["action"]`): "Focus this window", or "Lift the focus" while it is on. It adds nothing to the menu of any web page. | Focus mode would start only from the keyboard shortcut or the TabVault page. |
+| `sidePanel` | At install. | Shows the same TabVault page (`app/index.html?panel=1`, a one-column layout) in Chrome's side panel when the user opens it from TabVault's menu, the command palette, the toolbar icon's right-click menu, a keyboard shortcut they assign, or (when the user picks it in Settings) a click on the toolbar icon. It grants no access to any website. | TabVault could only be used as a full tab. |
+| `contextMenus` | At install. (No warning.) | Adds three items to the right-click menu of TabVault's own toolbar icon (`contexts: ["action"]`): "Open in side panel", "Open full page", and "Focus this window" ("Lift the focus" while it is on). It adds nothing to the menu of any web page. | Focus mode would start only from the keyboard shortcut or the TabVault page. |
 | `scripting` | At install. (No warning; it reaches no page without a host permission.) | Focus mode calls `chrome.scripting.executeScript` with the packaged file `app/focus-veil.js` on the tabs of the windows the user is not focused on, to draw a blurred overlay with a "Click to lift" pill, and once more to remove it when the focus is lifted. The script reads nothing from the page and sends nothing but the lift request to the extension. | No veil: Focus mode could only minimise the other windows. |
 | `<all_urls>` (optional host permission) | Never at install. Requested with `chrome.permissions.request` only when the user turns on Focus mode the first time, after TabVault's own page explains it ("Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them"). The user can decline, or withdraw it later at chrome://extensions. | The veil must be drawn on whatever pages the user has open in the other windows, so the host cannot be narrowed to a list of sites. Used only to inject the veil and remove it; no page content is read, stored or sent. Incognito windows are never veiled, even when the extension is allowed in incognito. | Focus mode minimises the other windows instead of veiling them; everything else works as before. |
 
@@ -553,3 +553,32 @@ Chrome with the package loaded unpacked:
    then allow it from ⋯ → Focus this window.
 4. A PDF tab and a `chrome://settings` tab in another window: not veiled,
    and the page's bar counts them.
+
+## 16. What's new in 1.5.0 (for the update)
+
+1.5.0 goes up after 1.4.x has passed review (one package in review at a
+time). No new permission, no warning, nothing asked of existing users;
+`minimum_chrome_version` stays 123. In section 5, paste the reworded
+`contextMenus` and `sidePanel` rows. Upload the package as in section 8
+(`dist/tabvault-1.5.0.zip`, 558,813 bytes, SHA-256
+`58b9abb122568cb662a6621aa6b91552fa1204f5254e916d01d059d6c2e2184c`, reproducible from the `v1.5.0` tag on a Windows checkout as
+section 1 says). The screenshots stay. Paste this block at the top of the
+description, above "TabVault is an open-source tab manager...", with one
+blank line after it (it replaces the NEW IN 1.4 block):
+
+```
+NEW IN 1.5
+• The toolbar icon can open TabVault in the side panel: Settings, "Toolbar button opens", Side panel. The full page stays the default.
+• Right-click the icon for "Open in side panel" or "Open full page", whatever you picked.
+```
+
+Before the upload, the real-install checks no automation covers, in real
+Chrome with the package loaded unpacked:
+
+1. Settings, Toolbar button opens, Side panel, Save: one click on the
+   TabVault icon opens the side panel in that window, and the icon's tooltip
+   reads "Open TabVault side panel".
+2. Back to Full page: the click opens (or brings forward) the full page, and
+   the tooltip reads "Open TabVault".
+3. Right-click the icon, in each setting: "Open in side panel" and "Open
+   full page" both work, and "Focus this window" is still there.
