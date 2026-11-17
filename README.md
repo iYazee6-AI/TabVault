@@ -1,6 +1,13 @@
 # TabVault: Open-Source Tab Manager
 
-<!-- TODO: add the Chrome Web Store badge and listing link here once the listing URL is known (not yet pasted by the owner; do not guess it). -->
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/tabvault-open-source-tab/igoihgannfpdkjlecbgpbnehgnpfjoea"><img src="icons/icon128.png" width="96" height="96" alt="TabVault"></a>
+</p>
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/tabvault-open-source-tab/igoihgannfpdkjlecbgpbnehgnpfjoea"><img src="https://img.shields.io/chrome-web-store/v/igoihgannfpdkjlecbgpbnehgnpfjoea?label=Chrome%20Web%20Store&logo=googlechrome&logoColor=white" alt="Get TabVault on the Chrome Web Store"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-blue" alt="MIT licence"></a>
+</p>
+<p align="center"><a href="https://chromewebstore.google.com/detail/tabvault-open-source-tab/igoihgannfpdkjlecbgpbnehgnpfjoea"><strong>Install from the Chrome Web Store</strong></a></p>
 
 TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that puts every window and tab into one page: search across all of them, select and move tabs between windows, group and rename, clean up duplicates, unload the tabs you select (or, when you turn it on, the tabs you have left idle) to free their memory, file idle tabs onto shelves by rules you write, reopen recently closed tabs, search everything you saved, and keep your session safe with automatic snapshots plus JSON and Markdown export/import. It's a from-scratch reimplementation inspired by [Tab Manager v2](https://github.com/xcv58/Tab-Manager-v2), written in plain JavaScript with no build step and no runtime dependencies. Licensed under the [MIT License](LICENSE).
 
