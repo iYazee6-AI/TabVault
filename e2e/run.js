@@ -8,6 +8,9 @@ const EXT_DIR = path.join(ROOT, "ext");
 const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
+// TABVAULT_HEADLESS=1 runs Chromium in the new headless mode (channel "chromium", which loads
+// extensions), so no window appears on the screen; the same switch as tools/screenshots.js.
+const HEADLESS = process.env.TABVAULT_HEADLESS === "1";
 
 const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG"];
 // --only W,X (or TABVAULT_E2E_ONLY=W,X) runs just those scenarios. The shared fixtures and the
@@ -146,9 +149,15 @@ async function main() {
       for (const f of fs.readdirSync(profileDir)) if (f.startsWith("History")) fs.rmSync(path.join(profileDir, f), { force: true });
     }
     context = await chromium.launchPersistentContext(USER_DATA_DIR, {
-      headless: false,
+      headless: HEADLESS,
+      ...(HEADLESS ? { channel: "chromium" } : {}),
       acceptDownloads: true,
-      args: [`--disable-extensions-except=${EXT_DIR}`, `--load-extension=${EXT_DIR}`],
+      args: [
+        `--disable-extensions-except=${EXT_DIR}`,
+        `--load-extension=${EXT_DIR}`,
+        // headless has a small virtual screen; windows.create bounds must fit it
+        ...(HEADLESS ? ["--screen-info={0,0 1920x1200}"] : []),
+      ],
     });
 
     const w = await worker();

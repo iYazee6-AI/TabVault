@@ -13,7 +13,7 @@ Notes
 - Fixture windows, tab groups, and read-back assertions go through a `worker()` helper (`(await worker()).evaluate(...)`) rather than a single captured service-worker handle: `worker()` re-acquires `context.serviceWorkers()[0]` (waiting for the `"serviceworker"` event if none is listed yet) every time it's called, so a respawned or newly-relaunched worker is picked up automatically instead of throwing against a stale handle. It also re-attaches the console/`pageerror` listeners (tracked in a `WeakSet` so each worker instance is only wired up once) so console errors are still captured after a relaunch.
 - Scenario K (the change-driven, alarm-based snapshot) waits a real 40 seconds for the 30-second-minimum alarm to fire. It runs last in the script (after L) so a failure in an earlier scenario surfaces quickly; the report still lists results in scenario order A–H, I-a, I-b, J–Z, AA–AE.
 - Screenshots (`main-page.png`, `snapshots-dialog.png`) and the JSON/markdown report land in `e2e/.tmp/`, which is git-ignored.
-- The harness runs headed (`headless: false`) — expect real browser windows to pop up while it runs.
+- The harness runs headed (`headless: false`) by default: real browser windows pop up while it runs. `TABVAULT_HEADLESS=1 npm run e2e` runs it in the new headless mode instead (channel `chromium`, which loads extensions, with `--screen-info={0,0 1920x1200}` so window bounds fit), as `tools/screenshots.js` does: nothing appears on the screen.
 
 ## Statuses: PASS, FAIL, LIMITED, NOT RUN
 
