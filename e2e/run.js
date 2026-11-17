@@ -2039,9 +2039,9 @@ async function main() {
 
         // Both right-click items exist (update rejects for an unknown id).
         const menus = await (await worker()).evaluate(async () => {
-          const out = {};
-          for (const id of ["tabvault-open-panel", "tabvault-open-page", "tabvault-focus"]) out[id] = await chrome.contextMenus.update(id, {}).then(() => true, () => false);
-          return out;
+          const out = [];
+          for (const id of ["tabvault-open-panel", "tabvault-open-page", "tabvault-focus"]) out.push([id, await chrome.contextMenus.update(id, {}).then(() => true, () => false)]);
+          return Object.fromEntries(out);
         });
         assert(Object.values(menus).every(Boolean), `menu items: ${JSON.stringify(menus)}`);
 
