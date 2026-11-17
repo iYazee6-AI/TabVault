@@ -98,18 +98,92 @@ test("the Deleted folder is found by its stored id (even renamed), then by name,
   never(fb);
 });
 
-test("a folder moves whole; its own children in the same call are not moved twice; top folders and Deleted itself are refused", async () => {
+test("a folder moves whole; its own children in the same call are not moved twice; what is already in Deleted is skipped", async () => {
   const { fb, work, a, c } = sample();
   const area = fakeArea();
-  const r = await B.moveToDeleted(fb.api, area, [work, a, c, "1", "2"]);
+  const r = await B.moveToDeleted(fb.api, area, [work, a, c]);
   never(fb);
   assert.equal(r.moved, 1);
   assert.equal(fb.parentOf(work), r.deletedFolderId);
   assert.equal(fb.parentOf(a), work, "a stays inside its folder");
-  assert.deepEqual(r.skipped.sort(), ["1", "2", a, c].sort());
-  const again = await B.moveToDeleted(fb.api, area, [r.deletedFolderId, work]);
-  assert.equal(again.moved, 0, "Deleted itself and what is already in it are skipped");
+  assert.deepEqual(r.skipped.sort(), [a, c].sort());
+  const again = await B.moveToDeleted(fb.api, area, [work]);
+  assert.equal(again.moved, 0, "what is already in Deleted is skipped");
   never(fb);
+});
+
+// ---- Naqid's review (fix first) -------------------------------------------------------------
+
+test("review 2: top folders, Deleted, the TabVault folder and any folder holding either are refused with a clear error, before anything moves", async () => {
+  const { fb, a } = sample();
+  const area = fakeArea();
+  const del = (await B.moveToDeleted(fb.api, area, [a])).deletedFolderId;
+  const saved = await B.saveTabsAsFolder(fb.api, area, { name: "S", tabs: [{ title: "x", url: "https://x.example.com/" }] });
+  const tv = fb.parentOf(saved.folderId);
+  const before = fb.calls.move.length;
+  for (const id of ["0", "1", "2", "3", del, tv]) {
+    await assert.rejects(() => B.moveToDeleted(fb.api, area, [id]), /cannot be moved to Deleted/, id);
+  }
+  // a user folder that came to hold the TabVault folder (moved there in Chrome) is refused too
+  const holder = fb.folder("1", "Holder");
+  await fb.api.move(tv, { parentId: holder });
+  await assert.rejects(() => B.moveToDeleted(fb.api, area, [holder]), /cannot be moved to Deleted/);
+  assert.equal(fb.calls.move.length, before + 1, "only the test's own move happened");
+  never(fb);
+});
+
+test("review 2: a stored TabVault folder that now sits inside Deleted is not reused; a fresh one is made", async () => {
+  const fb = fakeBookmarks();
+  const area = fakeArea();
+  const first = await B.saveTabsAsFolder(fb.api, area, { name: "A", tabs: [{ title: "x", url: "https://x.example.com/" }] });
+  const tv = fb.parentOf(first.folderId);
+  const del = (await B.ensureDeletedFolder(B.safeBookmarks(fb.api), area)).id;
+  await fb.api.move(tv, { parentId: del });
+  const second = await B.saveTabsAsFolder(fb.api, area, { name: "B", tabs: [{ title: "y", url: "https://y.example.com/" }] });
+  const tv2 = fb.parentOf(second.folderId);
+  assert.notEqual(tv2, tv);
+  assert.equal(fb.parentOf(tv2), "2");
+  never(fb);
+});
+
+test("review 3: the stored Deleted id counts only while it sits in Other bookmarks (renamed is fine); elsewhere it is found by name or made", async () => {
+  const { fb, a, b, c } = sample();
+  const area = fakeArea();
+  const del = (await B.moveToDeleted(fb.api, area, [a])).deletedFolderId;
+  await fb.api.update(del, { title: "Bin" });
+  assert.equal((await B.moveToDeleted(fb.api, area, [b])).deletedFolderId, del, "renamed, still in Other bookmarks");
+  await fb.api.move(del, { parentId: "1" });
+  const fresh = (await B.moveToDeleted(fb.api, area, [c])).deletedFolderId;
+  assert.notEqual(fresh, del);
+  assert.equal(fb.parentOf(fresh), "2");
+  assert.equal(fb.titleOf(fresh), "Deleted");
+  assert.equal(await B.deletedFolderId(area, await fb.api.getTree()), fresh);
+  never(fb);
+});
+
+test("review 4: a failure removing an old backup's chunks neither fails the backup nor stops a bulk move", async () => {
+  const fb = fakeBookmarks();
+  const f = fb.folder("1", "Lots");
+  const ids = Array.from({ length: 11 }, (_, i) => fb.link(f, `L${i}`, `https://l.example.com/${i}`));
+  const inner = fakeArea();
+  const area = { ...inner, remove: async () => { throw new Error("remove failed"); } };
+  await B.takeBackup(fb.api, area, { now: 1, keep: 1 });
+  const second = await B.takeBackup(fb.api, area, { now: 2, keep: 1 });
+  assert.deepEqual((await B.listBackups(area)).map((m) => m.id), [second.meta.id]);
+  const r = await B.moveToDeleted(fb.api, area, ids, { keep: 1 });
+  assert.equal(r.moved, 11);
+  assert.ok(r.backup);
+  never(fb);
+});
+
+test("review 1: the index holds only web pages; a javascript: or data: bookmark is never listed, so it cannot be opened from the palette", async () => {
+  const fb = fakeBookmarks();
+  fb.link("1", "Run me", "javascript:alert(1)");
+  fb.link("1", "Data me", "data:text/html,hi");
+  fb.link("1", "Real", "https://r.example.com/");
+  const index = B.buildBookmarkIndex(await fb.api.getTree());
+  assert.deepEqual(index.links.map((l) => l.title), ["Real"]);
+  assert.deepEqual(B.searchBookmarks(index, "me"), []);
 });
 
 test("more than 10 bookmarks moved take a backup first; a failed backup moves nothing", async () => {
@@ -322,4 +396,17 @@ test("isWebPage: http, https and file only", () => {
   assert.ok(B.isWebPage("https://x.example.com/"));
   assert.ok(B.isWebPage("file:///tmp/a.html"));
   for (const u of ["javascript:void(0)", "chrome://settings", "data:text/plain,hi", "about:blank", "", "not a url"]) assert.equal(B.isWebPage(u), false, u);
+});
+
+test("review 5: the feature is on only while the setting is on, chrome.bookmarks exists and the permission is still granted", async () => {
+  const api = {};
+  const granted = { contains: async (p) => p.permissions.includes("bookmarks") };
+  const withdrawn = { contains: async () => false };
+  const broken = { contains: async () => { throw new Error("no"); } };
+  assert.equal(await B.bookmarksActive({ setting: true, api, permissions: granted }), true);
+  assert.equal(await B.bookmarksActive({ setting: true, api, permissions: withdrawn }), false, "withdrawn at chrome://extensions");
+  assert.equal(await B.bookmarksActive({ setting: true, api, permissions: broken }), false);
+  assert.equal(await B.bookmarksActive({ setting: false, api, permissions: granted }), false);
+  assert.equal(await B.bookmarksActive({ setting: true, api: undefined, permissions: granted }), false);
+  assert.equal(await B.bookmarksActive({ setting: true, api }), false);
 });
