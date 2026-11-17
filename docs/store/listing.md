@@ -640,7 +640,7 @@ permission at install, because nobody can click Chrome's prompt there):
    Chrome's bookmark manager → ⋮ → Import bookmarks reads it back into an
    "Imported" folder.
 
-1.6.0 package: `dist/tabvault-1.6.0.zip`, 608,762 bytes, 36 files, SHA-256
-`bb5583c7b522ed9263699c2e0fe999d54d70d5ba675b9b50f35cda19b6cb5e83` (built twice from branch
+1.6.0 package: `dist/tabvault-1.6.0.zip`, 612,325 bytes, 36 files, SHA-256
+`8611782b5d7249bd39d57a08ce440c34f7c6b2d6601d544cc3fef5f7185b07ef` (built twice from branch
 `feat/bookmarks-1.6` on a Windows checkout, the same hash both times; rebuild from the `v1.6.0` tag
 once it is merged and tagged, and check the hash again before the upload).
