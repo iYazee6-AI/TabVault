@@ -7,7 +7,9 @@ const ROOT = path.join(__dirname, ".tmp");
 const EXT_DIR = path.join(ROOT, "ext");
 const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
-const BASE = "http://localhost:8765/test-pages";
+// TABVAULT_E2E_PORT: the port of e2e/server.js (8765 by default), for a second run beside another one.
+const PORT = Number(process.env.TABVAULT_E2E_PORT) || 8765;
+const BASE = `http://localhost:${PORT}/test-pages`;
 // TABVAULT_HEADLESS=1 runs Chromium in the new headless mode (channel "chromium", which loads
 // extensions), so no window appears on the screen; the same switch as tools/screenshots.js.
 const HEADLESS = process.env.TABVAULT_HEADLESS === "1";
@@ -1518,7 +1520,7 @@ async function main() {
     // is discarded. The AA fixture uses 127.0.0.1 (the same server) so a
     // rule for that host touches no other fixture tab.
     // ---------------------------------------------------------------
-    const ipBase = "http://127.0.0.1:8765/test-pages";
+    const ipBase = `http://127.0.0.1:${PORT}/test-pages`;
     const settingsNow = async () => (await (await worker()).evaluate(() => chrome.storage.local.get("settings"))).settings || {};
     async function patchSettings(patch) {
       await (await worker()).evaluate(async (p) => {
