@@ -242,7 +242,9 @@ function bookmarkWrite(fn) {
 async function bookmarkContext() {
   const settings = await getSettings();
   if (!settings.bookmarks) throw new Error("Bookmarks are off in TabVault's settings.");
-  if (!chrome.bookmarks) throw new Error("Chrome has not granted TabVault access to bookmarks.");
+  // The same check as the page: the permission can be withdrawn at chrome://extensions while the
+  // setting stays on.
+  if (!(await TV.bookmarksActive({ setting: settings.bookmarks, api: chrome.bookmarks, permissions: chrome.permissions }))) throw new Error("Chrome has not granted TabVault access to bookmarks.");
   return { api: TV.safeBookmarks(chrome.bookmarks), keep: settings.bookmarkBackupsKeep, version: chrome.runtime.getManifest().version };
 }
 function bookmarkMessage(msg) {
