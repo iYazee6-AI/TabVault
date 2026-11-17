@@ -598,6 +598,7 @@
       showLastRun();
     } }, "Run idle rules now");
     const recordClosed = el("input", { type: "checkbox", id: "record-closed", checked: s.recordClosed ? "" : null });
+    const actionOpens = el("select", { id: "action-opens", "aria-label": "Toolbar button opens" }, ...[["page", "Full page"], ["panel", "Side panel"]].map(([value, label]) => el("option", { value, selected: value === s.actionOpens ? "" : null }, label)));
     const rulesBox = el("div", { id: "rules", class: "rules" });
     const addRule = el("button", { type: "button", class: "small", id: "rule-add" }, "+ Add rule");
     const err = el("p", { class: "muted" });
@@ -611,6 +612,7 @@
       el("label", { class: "row" }, urls, " Show URLs under titles"),
       el("label", { class: "row" }, "Density ", density),
       el("label", { class: "row" }, lazy, " Load restored tabs only when opened (lazy)"),
+      el("label", { class: "row" }, "Toolbar button opens ", actionOpens, el("span", { class: "muted" }, " (right-click the button for the other one)")),
       el("label", { class: "row" }, "Icon badge ", badge),
       el("label", { class: "row" }, recordClosed, " Remember recently closed tabs (kept on this computer, last 200)"),
       el("h3", {}, "Idle tabs"),
@@ -626,7 +628,7 @@
         if (!Number.isInteger(d) || d < 30 || d > 600) { err.textContent = "Debounce must be a whole number between 30 and 600."; return; }
         if (!Number.isInteger(k) || k < 5 || k > 200) { err.textContent = "Keep must be a whole number between 5 and 200."; return; }
         const current = App.getSettings();
-        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked, badge: badge.value, recordClosed: recordClosed.checked,
+        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked, badge: badge.value, recordClosed: recordClosed.checked, actionOpens: actionOpens.value,
           autoDiscard: { ...current.autoDiscard, enabled: adOn.checked, minutes: Number(adMinutes.value), keepPinned: adPinned.checked } });
         toast("Settings saved"); closeDialog();
       } }, "Save"), el("button", { onclick: closeDialog }, "Cancel")));

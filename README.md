@@ -35,7 +35,7 @@ TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that pu
 - Recently closed tabs, kept locally (the last 200): reopen one in the current window, or a whole closed window at once; Clear and an off switch
 - Command palette (`Alt+K`): every action by name and every tab, ranked as you type
 - Save and close: a kept, named snapshot of a window, then its tabs close, always after a confirmation with the count
-- Side panel: the same page in one column in Chrome's side panel (⋯ → Open in side panel, the palette, or a shortcut you assign)
+- Side panel: the same page in one column in Chrome's side panel (⋯ → Open in side panel, the palette, right-click the toolbar icon → Open in side panel, or a shortcut you assign); since 1.5 the toolbar icon itself can open it (Settings → Toolbar button opens → Side panel)
 - Focus mode (1.4): one command from any page (`Alt+Shift+F`, or right-click the toolbar icon → Focus this window) keeps the window you are in sharp and veils every tab of every other window with a blur and a "Click to lift" pill; the same command lifts it (see [Focus mode](#focus-mode))
 
 ## Installing (load unpacked)
@@ -44,7 +44,7 @@ TabVault is an open-source tab manager for Chrome and Edge (Manifest V3) that pu
 2. Open `chrome://extensions` (or `edge://extensions` in Edge).
 3. Turn on **Developer mode** (top right).
 4. Click **Load unpacked** and select the repository's root folder (the one containing `manifest.json`).
-5. Click the TabVault icon in the toolbar, or press **Alt+Shift+T**, to open it.
+5. Click the TabVault icon in the toolbar, or press **Alt+Shift+T**, to open it. The icon opens the full page by default; Settings → **Toolbar button opens** → Side panel makes it open the side panel instead, and right-clicking the icon always offers **Open in side panel** and **Open full page**.
 
 To load the extension from a distributable zip instead, see [Publishing](#publishing) below and unzip it somewhere first — Chrome and Edge load unpacked extensions from a folder, not a zip file directly.
 
@@ -61,7 +61,7 @@ To load the extension from a distributable zip instead, see [Publishing](#publis
 - **Shelves** — select tabs and choose **Move to shelf ▾** (or write an idle rule that shelves); the Shelves section under Recently closed lists each shelf with its count and the rules that fill it; open a tab again (it stays on the shelf), open and remove it, remove it, open them all, export the shelf, or delete it (asked first with the count).
 - **Compare** — **Compare** on a snapshot (or "Compare latest snapshot with now" in the palette) lists what is missing, new and moved since; reopen the missing tabs in a new window or into their windows, or select the new ones.
 - **Save and close** — the ⤓ on a window card, `Shift+S` with a row of that window focused, or the palette ("Save and close this window", "Save and close all windows"). TabVault asks first ("Save 23 tabs and close them?"), keeps a named snapshot, then closes the tabs; if that would close the last window, one New Tab keeps it open.
-- **Side panel** — ⋯ → **Open in side panel** (or the palette, or the "Open TabVault in the side panel" shortcut you set at `chrome://extensions/shortcuts`). The panel shows its own window first and the others collapsed; the toolbar icon still opens the full page.
+- **Side panel** — ⋯ → **Open in side panel** (or the palette, or the "Open TabVault in the side panel" shortcut you set at `chrome://extensions/shortcuts`). The panel shows its own window first and the others collapsed. The toolbar icon opens the full page unless Settings → **Toolbar button opens** says Side panel (1.5); right-click the icon for **Open in side panel** or **Open full page** either way.
 - **Export** — ⋯ → **Export**: choose what (this session, the selected tabs, a snapshot, a shelf) and the format (JSON with every detail, or Markdown: `## Window`, `### Group`, `- [title](url)`), then **Download** or **Copy to clipboard**.
 - **Import** — ⋯ → **Import**: choose a file (a JSON export, or a `.md` or `.txt` list of links; up to 50 MB) or paste links (`## Name` starts a window, `### Name` a group, no headings means one window); the preview counts windows, tabs, groups and the links skipped because they are not web pages; choose which windows to restore and click **Restore selected windows** (above 100 tabs it asks again). Each window reopens with the same tabs, groups and pinned state; with the **Settings** → "Load restored tabs only when opened (lazy)" option on (the default), only the first tab in each window loads right away and the rest load the next time you click them.
 
@@ -179,6 +179,7 @@ A few things the automated tests can't (fully) cover, worth checking by hand in 
 - Restore with `file://` tabs in the exported/imported session (these need "Allow access to file URLs" in `chrome://extensions` to reopen correctly).
 - The 1.3 real-install checks: Copy to clipboard from the Export dialog (no `clipboardWrite`), a shelving rule at 15 minutes on a test site (dry run, unlock, shelved with the group and closed, the active tab kept), and opening a shelved item whose group is gone (recreated with its title and colour).
 - Unload idle tabs in real Chrome (turn it on at 15 minutes, wait, and confirm `zz` on the idle tabs and the "last run" line), and the side panel itself (⋯ → Open in side panel): Playwright can neither run `chrome.tabs.discard()` (below) nor drive the panel.
+- The toolbar button in real Chrome (1.5): with Settings → Toolbar button opens → Side panel, one click on the icon opens the side panel in that window (and Full page puts the old click back); right-click the icon → Open in side panel and Open full page both work, whatever the setting. Playwright can click neither the icon nor its menu (e2e AG calls the handlers).
 - Focus mode in real Chrome (1.4): `Alt+Shift+F` is free and bound at `chrome://extensions/shortcuts`; right-click the toolbar icon → Focus this window; Chrome's permission prompt appears after Allow, and declining it falls back to minimising; a PDF tab and a `chrome://` tab in another window are counted, not veiled.
 - Lazy restore (Settings → "Load restored tabs only when opened (lazy)") in real, non-automated Chrome, since `npm run e2e`'s `chrome.tabs.discard()` coverage is limited by a Playwright/Chromium environment defect (see `e2e/README.md`).
 

@@ -48,3 +48,22 @@ test("the 1.2 allowlist migrates once into never rules; a 1.3 store is left alon
   const savedByPageFirst = { idleRules: [], autoDiscard: { allowlist: ["z.example.com"] } };
   assert.deepEqual(migrateIdleRules(savedByPageFirst).settings.idleRules.map((r) => r.pattern), ["z.example.com"], "a page save before the worker ran does not lose the list");
 });
+
+const { ACTION_OPENS, actionBehavior } = require("../lib/settings.js");
+
+test("actionOpens (1.5): defaults to page; a store without the key or with a bad value stays page", () => {
+  assert.deepEqual(ACTION_OPENS, ["page", "panel"]);
+  assert.equal(DEFAULT_SETTINGS.actionOpens, "page");
+  assert.equal(withDefaults(undefined).actionOpens, "page");
+  assert.equal(withDefaults({ keepSnapshots: 9, badge: "off" }).actionOpens, "page", "a 1.4 store has no key");
+  assert.equal(withDefaults({ actionOpens: "popup" }).actionOpens, "page");
+  assert.equal(withDefaults({ actionOpens: 1 }).actionOpens, "page");
+  assert.equal(withDefaults({ actionOpens: "panel" }).actionOpens, "panel");
+});
+
+test("actionBehavior: the panel setting lets Chrome open the side panel on the click; page keeps the page", () => {
+  assert.deepEqual(actionBehavior(withDefaults({})), { openPanelOnActionClick: false, title: "Open TabVault" });
+  assert.deepEqual(actionBehavior(withDefaults({ actionOpens: "panel" })), { openPanelOnActionClick: true, title: "Open TabVault side panel" });
+  assert.deepEqual(actionBehavior({ actionOpens: "nonsense" }), { openPanelOnActionClick: false, title: "Open TabVault" });
+  assert.deepEqual(actionBehavior(undefined), { openPanelOnActionClick: false, title: "Open TabVault" });
+});

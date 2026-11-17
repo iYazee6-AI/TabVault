@@ -9,7 +9,7 @@ const USER_DATA_DIR = path.join(ROOT, "userdata");
 const DOWNLOAD_DIR = path.join(ROOT, "downloads");
 const BASE = "http://localhost:8765/test-pages";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG"];
 // --only W,X (or TABVAULT_E2E_ONLY=W,X) runs just those scenarios. The shared fixtures and the
 // steps between scenarios still run, so a scenario alone sees the same setup as in the full run.
 const onlyArg = process.argv.indexOf("--only");
@@ -2002,6 +2002,85 @@ async function main() {
         await (await worker()).evaluate(async () => { self.focusPermissionOverride = undefined; await self.liftFocus(); await chrome.storage.local.remove("focusFallback"); }).catch(() => {});
         if (winAF) await (await worker()).evaluate((id) => chrome.windows.remove(id), winAF.id).catch(() => {});
         for (const id of extraTabs) await (await worker()).evaluate((tid) => chrome.tabs.remove(tid), id).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // AG. The toolbar button (1.5): Settings, "Toolbar button opens" Side panel turns on Chrome's
+    // own open-on-click (chrome.sidePanel.getPanelBehavior) and the title; Full page turns both
+    // back. Playwright cannot click the toolbar button or its right-click menu, so the menu handler
+    // is called as self.onActionMenu: the panel item must call chrome.sidePanel.open synchronously
+    // with the tab's window (recorded by a stub, since a call outside a real gesture is refused),
+    // the page item brings the TabVault tab to the front. What Chrome does on a real click is not
+    // proven here (docs/HISTORY.md, 1.5).
+    // ---------------------------------------------------------------
+    if (want("AG")) {
+      const extraTabs = [];
+      const behavior = async () => (await worker()).evaluate(async () => ({ panel: (await chrome.sidePanel.getPanelBehavior()).openPanelOnActionClick, title: await chrome.action.getTitle({}) }));
+      const setOpens = async (value) => {
+        await openMenuItem("#btn-settings");
+        await appPage.waitForSelector("#dialog #action-opens");
+        await appPage.selectOption("#dialog #action-opens", value);
+        await appPage.click('#dialog button:has-text("Save")');
+      };
+      try {
+        await resetUi();
+        const start = await behavior();
+        assert(start.panel === false && start.title === "Open TabVault", `default: ${JSON.stringify(start)}`);
+        const storedStart = await (await worker()).evaluate(() => chrome.storage.local.get("settings").then((r) => (r.settings || {}).actionOpens));
+        assert(storedStart === undefined || storedStart === "page", `stored actionOpens at start = ${storedStart}`);
+
+        await setOpens("panel");
+        const on = await waitFor(async () => { const b = await behavior(); return b.panel === true && b.title === "Open TabVault side panel" ? b : null; }, { timeout: 5000 });
+        const storedOn = await (await worker()).evaluate(() => chrome.storage.local.get("settings").then((r) => r.settings.actionOpens));
+        assert(storedOn === "panel", `stored actionOpens = ${storedOn}`);
+
+        // Both right-click items exist (update rejects for an unknown id).
+        const menus = await (await worker()).evaluate(async () => {
+          const out = [];
+          for (const id of ["tabvault-open-panel", "tabvault-open-page", "tabvault-focus"]) out.push([id, await chrome.contextMenus.update(id, {}).then(() => true, () => false)]);
+          return Object.fromEntries(out);
+        });
+        assert(Object.values(menus).every(Boolean), `menu items: ${JSON.stringify(menus)}`);
+
+        const ownWindow = await appPage.evaluate(() => chrome.tabs.getCurrent().then((x) => x.windowId));
+        const panelCall = await (await worker()).evaluate((windowId) => {
+          const real = chrome.sidePanel.open;
+          const calls = [];
+          try {
+            chrome.sidePanel.open = (opts) => { calls.push(opts); return Promise.resolve(); };
+            const did = self.onActionMenu({ menuItemId: "tabvault-open-panel" }, { windowId });
+            const syncCalls = calls.slice(); // read before any await: the call must be synchronous
+            return { did, syncCalls, stubbed: chrome.sidePanel.open !== real };
+          } finally { chrome.sidePanel.open = real; }
+        }, ownWindow);
+        assert(panelCall.stubbed, "chrome.sidePanel.open could not be stubbed in the worker");
+        assert(panelCall.did === "panel" && panelCall.syncCalls.length === 1 && panelCall.syncCalls[0].windowId === ownWindow, `panel item: ${JSON.stringify(panelCall)}`);
+
+        // Another tab in TabVault's window takes the front; Open full page brings TabVault back.
+        const other = await (await worker()).evaluate(({ windowId, url }) => chrome.tabs.create({ windowId, url, active: true }).then((t) => t.id), { windowId: ownWindow, url: `${BASE}/three.html?ag=1` });
+        extraTabs.push(other);
+        const appTabId = await appPage.evaluate(() => chrome.tabs.getCurrent().then((x) => x.id));
+        const did = await (await worker()).evaluate(() => self.onActionMenu({ menuItemId: "tabvault-open-page" }, undefined));
+        assert(did === "page", `page item answered ${did}`);
+        await waitFor(async () => (await worker()).evaluate((id) => chrome.tabs.get(id).then((t) => t.active), appTabId), { timeout: 5000 });
+        const pageTabs = await (await worker()).evaluate(() => chrome.tabs.query({ url: chrome.runtime.getURL("app/index.html") + "*" }).then((ts) => ts.length));
+
+        await appPage.bringToFront().catch(() => {});
+        await setOpens("page");
+        const off = await waitFor(async () => { const b = await behavior(); return b.panel === false && b.title === "Open TabVault" ? b : null; }, { timeout: 5000 });
+
+        record("AG", "PASS", `default: open-on-click ${start.panel}, title "${start.title}"; Side panel saved: open-on-click ${on.panel}, title "${on.title}", stored "${storedOn}"; menu items ${Object.keys(menus).join(", ")} present; the panel item called sidePanel.open synchronously with window ${ownWindow}; the page item brought the TabVault tab back to the front (${pageTabs} TabVault tab, none added); Full page saved: open-on-click ${off.panel}, title "${off.title}". Not proven by machine: a real click on the toolbar button and its right-click menu.`);
+      } catch (e) {
+        record("AG", "FAIL", e.message);
+      } finally {
+        for (const id of extraTabs) await (await worker()).evaluate((tid) => chrome.tabs.remove(tid), id).catch(() => {});
+        await (await worker()).evaluate(async () => {
+          const { settings = {} } = await chrome.storage.local.get("settings");
+          if (settings.actionOpens === "panel") { settings.actionOpens = "page"; await chrome.storage.local.set({ settings }); }
+        }).catch(() => {});
         await appPage.bringToFront().catch(() => {});
         await resetUi().catch(() => {});
       }
