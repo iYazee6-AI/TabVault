@@ -6,6 +6,7 @@
   "homepage_url": "https://github.com/iYazee6-AI/TabVault",
   "description": "Every window and tab in one page or the side panel. Search, group, dedupe, unload idle tabs, reopen closed tabs, keep snapshots.",
   "permissions": ["tabs", "tabGroups", "storage", "unlimitedStorage", "alarms", "sidePanel", "contextMenus", "scripting"],
+  "optional_permissions": ["bookmarks"],
   "optional_host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
   "action": { "default_title": "Open TabVault" },

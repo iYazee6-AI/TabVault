@@ -34,6 +34,9 @@
     panelSeen: new Set(),
     // Focus mode (1.4): the worker's state from storage.session, shown in #focus-bar.
     focus: TV.FOCUS_OFF,
+    // Bookmarks (1.6): on only while the setting is on AND Chrome has granted the optional
+    // permission. The index (lib/bookmarks.js buildBookmarkIndex) lives in memory, like the saved one.
+    bm: { on: false, index: null, dirty: true, building: null, timer: null, listening: false },
   };
 
   // ---- data ------------------------------------------------------------------
@@ -47,6 +50,7 @@
     await chrome.storage.local.set({ settings: state.settings });
     applySettings();
     render();
+    await updateBookmarksOn();
   }
   function applySettings() {
     const root = document.documentElement;
@@ -180,6 +184,7 @@
       title,
       el("span", { class: "gcount mono", title: `${tabs.length} tabs` }, String(tabs.length)),
       iconButton("✎", "Rename group", () => renameGroup(g, title)),
+      state.bm.on ? iconButton("☆", "Save group as a bookmark folder", () => askSaveBookmarks(g.title || "Tab group", tabs), "bm-save") : null,
       iconButton("⊟", "Ungroup", () => chrome.tabs.ungroup(tabs.map((t) => t.id)).catch((e) => toast(`Could not ungroup: ${e.message || e}`))),
       iconButton(g.collapsed ? "▸" : "▾", g.collapsed ? "Expand group" : "Collapse group", () => chrome.tabGroups.update(g.id, { collapsed: !g.collapsed }).catch((e) => toast(`Could not collapse: ${e.message || e}`))));
     sec.append(head);
@@ -293,6 +298,7 @@
         el("span", { class: "count", title: `${w.tabs.length} tabs` }, String(w.tabs.length)),
         iconButton("✎", "Rename window", () => renameWindow(w, name)),
         iconButton("☑", "Select all in window", () => { for (const t of w.tabs) state.selected.add(t.id); render(); }),
+        state.bm.on ? iconButton("☆", "Save window as a bookmark folder", () => askSaveBookmarks(windowLabel(w), w.tabs), "bm-save") : null,
         iconButton("⤓", "Save and close window", () => confirmSaveClose([w.id])),
         iconButton("⤴", "Focus window", () => chrome.windows.update(w.id, { focused: true }).catch((e) => toast(`Could not focus: ${e.message || e}`))),
         iconButton("×", "Close window", () => { state.confirmClose = w.id; render(); }, "danger"));
@@ -530,6 +536,7 @@
           el("span", { class: "btitle" }, `${sh.name} · ${n} tab${n === 1 ? "" : "s"}${from.length ? ` · from rule ${from.join(", ")}` : ""}`),
           el("button", { type: "button", class: "s-open-all", disabled: n ? null : "", title: "Open every tab of this shelf in a new window", onclick: () => openShelfItems(sh, sh.items, { newWindow: true }).then(() => toast(`Opened ${n} tab${n === 1 ? "" : "s"}`), (e) => toast(`Could not open: ${e.message || e}`)) }, "Open all"),
           el("button", { type: "button", class: "s-export", onclick: () => openDialog("export", { what: "shelf", shelfId: sh.id }) }, "Export"),
+          state.bm.on ? el("button", { type: "button", class: "s-bookmark", disabled: n ? null : "", title: "Save this shelf as a bookmark folder", onclick: () => askSaveBookmarks(sh.name, sh.items) }, "Bookmark") : null,
           del),
         ...(expanded ? sh.items.slice().reverse().map((it) => shelfRow(sh, it)) : []));
     }));
@@ -564,6 +571,7 @@
       return;
     }
     $("selcount").textContent = `${n} selected`;
+    $("sel-bookmark").hidden = !state.bm.on;
     $("sel-pin").textContent = tabs.length && tabs.every((t) => t.pinned) ? "Unpin" : "Pin";
     $("sel-group").textContent = tabs.length && tabs.every((t) => t.groupId !== null) ? "Ungroup" : "Group";
   }
@@ -859,9 +867,13 @@
     { id: "focus", label: "Focus this window (veil the others) or lift the focus", keys: ["Alt+Shift+F"], run: () => focusThisWindow() },
     { id: "saveCloseAll", label: "Save and close all windows", run: () => confirmSaveClose(state.session.windows.map((w) => w.id)) },
     { id: "moveToShelf", label: "Move selected tabs to a shelf", run: () => (state.selected.size ? openDialog("moveToShelf", { tabIds: selection() }) : toast("Select the tabs to shelve first")) },
+    { id: "bmSaveSelected", label: "Save selected tabs as a bookmark folder", when: () => state.bm.on, run: () => (state.selected.size ? askSaveBookmarks(`Selected tabs ${new Date().toLocaleDateString()}`, selectedTabs()) : toast("Select the tabs to bookmark first")) },
+    { id: "bmBackup", label: "Back up bookmarks now (download and keep a copy)", when: () => state.bm.on, run: () => window.TabVaultApp.backupBookmarksNow() },
+    { id: "bmDupes", label: "Find duplicate bookmarks", when: () => state.bm.on, run: () => openDialog("bmDupes") },
+    { id: "bmDialog", label: "Bookmarks: backups and export", when: () => state.bm.on, run: () => openDialog("bookmarks") },
     { id: "shelves", label: "Show shelves", run: () => { state.shelvesOpen = true; renderShelves(); if (state.shelves.length) $("shelves").scrollIntoView({ block: "nearest" }); else toast("No shelves yet: add one with Move to shelf or an idle rule in Settings"); } },
   ];
-  const palette = { open: false, rows: [], index: 0, returnFocus: null, confirmAll: false };
+  const palette = { open: false, rows: [], index: 0, returnFocus: null, confirmAll: false, confirmFolder: -1 };
 
   // The side panel (Chrome 116+, the sidePanel permission). chrome.sidePanel.open must run inside
   // the click or key press, so it is called without awaiting anything first.
@@ -950,6 +962,73 @@
     saved.timer = setTimeout(() => ensureSaved().then(() => { if (palette.open) drawPalette(true); }), 1000);
   }
 
+  // ---- bookmarks (1.6) -------------------------------------------------------------------
+  // On only while the setting is on and Chrome has granted the optional permission; with it off
+  // nothing bookmark-related is drawn and chrome.bookmarks is never called. Writes go to the
+  // worker (bookmarkWrite queue, lib/bookmarks.js); the page reads through TV.safeBookmarks only.
+  function bookmarkApi() { return TV.safeBookmarks(chrome.bookmarks); }
+  async function updateBookmarksOn() {
+    let on = false;
+    if (state.settings.bookmarks === true && chrome.bookmarks) on = await chrome.permissions.contains({ permissions: [TV.BOOKMARKS_PERMISSION] }).catch(() => false);
+    const changed = on !== state.bm.on;
+    state.bm.on = on;
+    document.documentElement.dataset.bookmarks = String(on);
+    $("btn-bookmarks").hidden = !on;
+    if (on) listenBookmarks();
+    if (!changed) return;
+    state.bm.index = null;
+    state.bm.dirty = true;
+    render();
+    renderShelves();
+    if (palette.open) drawPalette(true);
+  }
+  function listenBookmarks() {
+    if (state.bm.listening || !chrome.bookmarks) return;
+    state.bm.listening = true;
+    const b = chrome.bookmarks;
+    for (const ev of [b.onCreated, b.onRemoved, b.onChanged, b.onMoved, b.onChildrenReordered, b.onImportEnded]) if (ev) ev.addListener(bookmarksChanged);
+  }
+  function bookmarksChanged() {
+    state.bm.dirty = true;
+    if (!state.bm.index) return;
+    clearTimeout(state.bm.timer);
+    state.bm.timer = setTimeout(() => ensureBookmarks().then(() => { if (palette.open) drawPalette(true); }), 500);
+  }
+  async function buildBookmarks() {
+    if (!state.bm.on) { state.bm.index = null; return; }
+    const tree = await bookmarkApi().getTree();
+    const deletedId = await TV.deletedFolderId(chrome.storage.local, tree);
+    state.bm.index = TV.buildBookmarkIndex(tree, { deletedId });
+    state.bm.dirty = false;
+  }
+  function ensureBookmarks() {
+    if (!state.bm.on) return Promise.resolve();
+    if (state.bm.index && !state.bm.dirty) return Promise.resolve();
+    if (!state.bm.building) state.bm.building = buildBookmarks().catch(console.error).finally(() => { state.bm.building = null; });
+    return state.bm.building;
+  }
+  // The one way the page removes bookmarks: the worker moves them into "Deleted".
+  async function moveBookmarksToDeleted(ids) {
+    const r = await chrome.runtime.sendMessage({ type: "bmMoveToDeleted", ids }).catch((e) => ({ ok: false, error: e.message }));
+    if (!r || !r.ok) { toast(`Could not move to Deleted: ${r && r.error}`); return r; }
+    state.bm.dirty = true;
+    const n = r.moved;
+    toast(`Moved ${n} bookmark${n === 1 ? "" : "s"} to Other bookmarks › Deleted${r.backup ? " (backed up first)" : ""}${r.failed.length ? `; ${r.failed.length} could not be moved` : ""}`);
+    return r;
+  }
+  async function openBookmarkFolder(entry) {
+    const sub = await bookmarkApi().getSubTree(entry.id);
+    const links = TV.folderLinks(sub);
+    if (!links.length) { toast("That folder has no web pages"); return; }
+    const r = await window.TabVaultApp.restoreSession(TV.folderToSession(entry.title, links), [1], () => {});
+    toast(`Opened ${r.tabs} bookmark${r.tabs === 1 ? "" : "s"} in a new window${r.errors.length ? `; ${r.errors.length} error${r.errors.length === 1 ? "" : "s"}` : ""}`);
+  }
+  // From a window card, a group, the selection or a shelf: asks the folder's name (app/bookmarks.js).
+  function askSaveBookmarks(name, tabs) {
+    if (!state.bm.on) return;
+    openDialog("bmSave", { name, tabs: (tabs || []).map((t) => ({ url: t.url || t.pendingUrl || "", title: t.title || "" })) });
+  }
+
   function paletteRows(query) {
     const { scope, text } = TV.parsePaletteQuery(query);
     const actions = scope === "all" || scope === "actions" ? TV.paletteActions(TV.SHORTCUTS, paletteCommands()) : [];
@@ -960,6 +1039,7 @@
       rows.push(...found);
       if (found.length >= 2) rows.push({ kind: "openAll", entries: found.map((r) => r.entry) });
     }
+    if ((scope === "all" || scope === "bookmarks") && state.bm.on && state.bm.index) rows.push(...TV.searchBookmarks(state.bm.index, text));
     return rows;
   }
   function openPalette() {
@@ -972,11 +1052,13 @@
     drawPalette();
     $("palette-input").focus();
     ensureSaved().then(() => { if (palette.open && $("palette-input").value.trim()) drawPalette(true); });
+    ensureBookmarks().then(() => { if (palette.open && state.bm.on && $("palette-input").value.trim()) drawPalette(true); });
   }
   function closePalette(refocus = true) {
     if (!palette.open) return;
     palette.open = false;
     palette.confirmAll = false;
+    palette.confirmFolder = -1;
     $("palette-backdrop").hidden = true;
     $("palette-list").replaceChildren();
     const back = palette.returnFocus;
@@ -995,6 +1077,7 @@
     palette.rows = paletteRows($("palette-input").value);
     palette.index = Math.min(before, Math.max(0, palette.rows.length - 1));
     palette.confirmAll = false;
+    palette.confirmFolder = -1;
     renderPaletteList();
   }
   // Title text with the query words in <mark>, built from text nodes (lib/palette.js ranges).
@@ -1015,20 +1098,22 @@
     const list = $("palette-list");
     if (!palette.rows.length) {
       const q = $("palette-input").value.trim();
-      list.replaceChildren(el("div", { class: "pempty" }, q && !saved.index ? "Searching saved tabs…" : "No action, tab or saved tab matches."));
+      list.replaceChildren(el("div", { class: "pempty" }, q && !saved.index ? "Searching saved tabs…" : state.bm.on ? "No action, tab, saved tab or bookmark matches." : "No action, tab or saved tab matches."));
       $("palette-input").removeAttribute("aria-activedescendant");
       return;
     }
     // With saved matches, the ranked actions and open tabs get a heading above them, then Saved.
-    const hasSaved = palette.rows.some((r) => r.kind === "saved");
+    const hasSaved = palette.rows.some((r) => r.kind === "saved" || r.kind === "bookmark" || r.kind === "bmFolder");
     const live = palette.rows.filter((r) => r.kind === "action" || r.kind === "tab");
     const liveLabel = live.some((r) => r.kind === "action") ? (live.some((r) => r.kind === "tab") ? "Actions and open tabs" : "Actions") : "Open tabs";
     const nodes = [];
     let shownTabs = false;
     let shownSaved = false;
+    let shownBookmarks = false;
     palette.rows.forEach((r, i) => {
       if ((r.kind === "tab" || r.kind === "action") && hasSaved && !shownTabs) { shownTabs = true; nodes.push(el("div", { class: "psection", role: "presentation" }, liveLabel)); }
       if (r.kind === "saved" && !shownSaved) { shownSaved = true; nodes.push(el("div", { class: "psection", role: "presentation" }, "Saved")); }
+      if ((r.kind === "bookmark" || r.kind === "bmFolder") && !shownBookmarks) { shownBookmarks = true; nodes.push(el("div", { class: "psection", role: "presentation" }, "Bookmarks")); }
       const on = i === palette.index;
       const attrs = { id: `palette-row-${i}`, class: `prow${on ? " on" : ""}`, role: "option", "aria-selected": String(on), dataset: { kind: r.kind, index: String(i) } };
       if (r.kind === "action") {
@@ -1059,6 +1144,31 @@
           markedText(e.title || e.url, "plabel"),
           el("span", { class: "pwin" }, e.where.label),
           e.count > 1 ? el("span", { class: "polder mono" }, `+${e.count - 1} older`) : null));
+        return;
+      }
+      if (r.kind === "bookmark") {
+        const e = r.entry;
+        const domain = TV.domainOf(e.url);
+        attrs.dataset.url = e.url;
+        attrs.dataset.bookmark = e.id;
+        attrs.title = e.url;
+        nodes.push(el("div", attrs,
+          el("span", { class: "pkind", "aria-hidden": "true", title: "Bookmark" }, "★"),
+          markedText(e.title || e.url, "plabel"),
+          el("span", { class: "pwin" }, e.path),
+          el("span", { class: "domain mono" }, domain),
+          el("button", { type: "button", class: "icon pdel", title: "Move to the Deleted bookmarks folder", "aria-label": `Move ${e.title || e.url} to the Deleted bookmarks folder`, dataset: { bookmark: e.id } }, "×")));
+        return;
+      }
+      if (r.kind === "bmFolder") {
+        const f = r.entry;
+        attrs.dataset.folder = f.id;
+        nodes.push(el("div", attrs,
+          el("span", { class: "pkind", "aria-hidden": "true", title: "Bookmark folder" }, "▤"),
+          palette.confirmFolder === i
+            ? el("span", { class: "plabel" }, `Open ${f.count} bookmarks? Press Enter again to open them`)
+            : markedText(`Open folder "${f.title}" as a window · ${f.count} link${f.count === 1 ? "" : "s"}`, "plabel"),
+          el("span", { class: "pwin" }, f.path)));
         return;
       }
       const n = r.entries.length;
@@ -1103,7 +1213,14 @@
       renderPaletteList();
       return;
     }
+    if (r.kind === "bmFolder" && TV.openFolderNeedsConfirm(r.entry.count) && palette.confirmFolder !== i) {
+      palette.confirmFolder = i;
+      renderPaletteList();
+      return;
+    }
     closePalette(false);
+    if (r.kind === "bookmark") { openSaved(r.entry, newWindow).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
+    if (r.kind === "bmFolder") { openBookmarkFolder(r.entry).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
     if (r.kind === "tab") { focusTab(r.tab.id, r.windowId).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
     if (r.kind === "saved") { openSaved(r.entry, newWindow).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
     if (r.kind === "openAll") { openAllSaved(r.entries).catch((e) => toast(`Could not open: ${e.message || e}`)); return; }
@@ -1123,12 +1240,19 @@
         e.preventDefault();
         if (!palette.rows.length) return;
         palette.index = (palette.index + (e.key === "ArrowDown" ? 1 : -1) + palette.rows.length) % palette.rows.length;
+        palette.confirmFolder = -1;
         renderPaletteList();
         return;
       }
       if (e.key === "Enter") { e.preventDefault(); runPaletteRow(palette.index, { newWindow: e.shiftKey }); }
     });
     $("palette-list").addEventListener("click", (e) => {
+      const del = e.target.closest(".pdel");
+      if (del) {
+        e.stopPropagation();
+        moveBookmarksToDeleted([del.dataset.bookmark]).then(() => ensureBookmarks()).then(() => { if (palette.open) drawPalette(true); $("palette-input").focus(); });
+        return;
+      }
       const row = e.target.closest(".prow");
       if (row) runPaletteRow(Number(row.dataset.index));
     });
@@ -1163,6 +1287,10 @@
     $("sel-group").addEventListener("click", () => groupOrUngroupSelection());
     $("sel-pin").addEventListener("click", () => togglePinSelection());
     $("sel-discard").addEventListener("click", () => forEachSelected((id) => chrome.tabs.discard(id)));
+    $("sel-bookmark").addEventListener("click", () => askSaveBookmarks(`Selected tabs ${new Date().toLocaleDateString()}`, selectedTabs()));
+    $("btn-bookmarks").addEventListener("click", () => openDialog("bookmarks"));
+    if (chrome.permissions.onAdded) chrome.permissions.onAdded.addListener(() => updateBookmarksOn().catch(console.error));
+    if (chrome.permissions.onRemoved) chrome.permissions.onRemoved.addListener(() => updateBookmarksOn().catch(console.error));
     $("shelf-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu("shelf-menu", fillShelfMenu); });
     $("shelf-menu").addEventListener("click", (e) => {
       const item = e.target.closest("button[data-shelf]");
@@ -1201,7 +1329,7 @@
       if (Object.keys(changes).some((k) => k === TV.SHELF_INDEX_KEY || k.startsWith("shelf:"))) scheduleShelves();
       // Settings written elsewhere (the worker's 1.3 migration, another TabVault page) are taken
       // over, so a later save here never writes back a stale copy.
-      if (changes.settings) { state.settings = TV.withDefaults(changes.settings.newValue); applySettings(); renderShelves(); }
+      if (changes.settings) { state.settings = TV.withDefaults(changes.settings.newValue); applySettings(); renderShelves(); updateBookmarksOn().catch(console.error); }
       if (Object.keys(changes).some((k) => k === TV.RECENT_KEY || k === TV.SNAP_INDEX_KEY || k.startsWith("snap:") || k === TV.SHELF_INDEX_KEY || k.startsWith("shelf:"))) savedChanged();
     });
     $("recent-toggle").addEventListener("click", () => { state.recentOpen = !state.recentOpen; renderRecent(); });
@@ -1226,6 +1354,7 @@
     getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel, openPalette,
     selectTabs: (ids) => { for (const id of ids) state.selected.add(id); render(); },
     moveToShelf, getShelves: () => state.shelves,
+    bookmarksOn: () => state.bm.on, bookmarkApi, moveBookmarksToDeleted, updateBookmarksOn,
   };
 
   // ?focus=<windowId>: the worker opened this page to ask for Focus mode's permission (first use
@@ -1235,5 +1364,5 @@
     if (Number.isInteger(id) && id > 0) openDialog("focus", { windowId: id });
   }
 
-  loadSettings().then(refresh).then(wire).then(loadRecent).then(loadShelves).then(loadFocus).then(askFocusFromUrl).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
+  loadSettings().then(refresh).then(wire).then(updateBookmarksOn).then(loadRecent).then(loadShelves).then(loadFocus).then(askFocusFromUrl).catch((e) => { console.error(e); $("grid").textContent = `TabVault could not start: ${e.message || e}`; });
 })();

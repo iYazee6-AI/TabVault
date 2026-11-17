@@ -1,4 +1,4 @@
-importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js", "lib/shelves.js", "lib/focus.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js", "lib/shelves.js", "lib/focus.js", "lib/bookmarks.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
@@ -229,6 +229,42 @@ function shelfWrite(fn) {
   shelfQueue = run.catch(() => {});
   return run;
 }
+// Bookmarks (1.6): every bookmark write (save as a folder, move to Deleted, a backup) goes through
+// this queue, through lib/bookmarks.js only, and only while the Bookmarks setting is on and Chrome
+// has granted the optional permission. lib/bookmarks.js never deletes a bookmark: a removal is a
+// move into the "Deleted" folder.
+let bookmarkQueue = Promise.resolve();
+function bookmarkWrite(fn) {
+  const run = bookmarkQueue.then(fn);
+  bookmarkQueue = run.catch(() => {});
+  return run;
+}
+async function bookmarkContext() {
+  const settings = await getSettings();
+  if (!settings.bookmarks) throw new Error("Bookmarks are off in TabVault's settings.");
+  if (!chrome.bookmarks) throw new Error("Chrome has not granted TabVault access to bookmarks.");
+  return { api: TV.safeBookmarks(chrome.bookmarks), keep: settings.bookmarkBackupsKeep, version: chrome.runtime.getManifest().version };
+}
+function bookmarkMessage(msg) {
+  return bookmarkWrite(async () => {
+    const { api, keep, version } = await bookmarkContext();
+    const area = chrome.storage.local;
+    if (msg.type === "bmMoveToDeleted") {
+      const ids = Array.isArray(msg.ids) ? msg.ids.map(String) : [];
+      return { ok: true, ...(await TV.moveToDeleted(api, area, ids, { keep, version })) };
+    }
+    if (msg.type === "bmSaveFolder") {
+      const tabs = (Array.isArray(msg.tabs) ? msg.tabs : []).map((t) => ({ url: String((t && t.url) || ""), title: String((t && t.title) || "") }));
+      return { ok: true, ...(await TV.saveTabsAsFolder(api, area, { name: msg.name, tabs, keep, version })) };
+    }
+    if (msg.type === "bmBackup") {
+      const { meta, nodes } = await TV.takeBackup(api, area, { reason: "manual", keep, version });
+      return { ok: true, meta, nodes };
+    }
+    return { ok: false, error: "unknown bookmarks message" };
+  });
+}
+
 // tab id -> { id, name } of the shelf it was just saved to: onRemoved tags its Recently closed entry.
 const shelvedTabs = new Map();
 
@@ -740,6 +776,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }).then(reply, fail);
       return true;
     case "saveAndClose": saveAndClose(msg).then(reply, fail); return true;
+    case "bmMoveToDeleted":
+    case "bmSaveFolder":
+    case "bmBackup":
+      bookmarkMessage(msg).then(reply, fail);
+      return true;
     case "focusToggle": runFocusCommand(msg.windowId).then(reply, fail); return true;
     case "focusStart": startFocus(msg.windowId, msg.mode === "minimize" ? "minimize" : "veil").then(reply, fail); return true;
     case "focusLift": liftFocus().then(reply, fail); return true;

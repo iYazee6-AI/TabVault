@@ -599,6 +599,24 @@
     } }, "Run idle rules now");
     const recordClosed = el("input", { type: "checkbox", id: "record-closed", checked: s.recordClosed ? "" : null });
     const actionOpens = el("select", { id: "action-opens", "aria-label": "Toolbar button opens" }, ...[["page", "Full page"], ["panel", "Side panel"]].map(([value, label]) => el("option", { value, selected: value === s.actionOpens ? "" : null }, label)));
+    // Bookmarks (1.6): the switch asks Chrome for the optional permission inside the click (nothing
+    // is awaited first) and saves at once; off gives the permission back. Not part of Save below.
+    const bmOn = el("input", { type: "checkbox", id: "bm-on", checked: App.bookmarksOn() ? "" : null });
+    const bmKeep = el("input", { type: "number", id: "bm-keep", min: "1", max: String(TV.BACKUPS_KEEP_MAX), value: String(s.bookmarkBackupsKeep) });
+    const bmNote = el("p", { class: "muted", id: "bm-note" }, "TabVault reads and changes your bookmarks only while this is on, on this computer. It never deletes one: Delete moves it to Other bookmarks › Deleted, which only you empty, in Chrome's bookmark manager.");
+    bmOn.addEventListener("change", () => {
+      if (bmOn.checked) {
+        chrome.permissions.request({ permissions: [TV.BOOKMARKS_PERMISSION] }).then(async (granted) => {
+          if (!granted) { bmOn.checked = false; bmNote.textContent = "Chrome did not grant access to bookmarks, so the feature stays off."; return; }
+          await App.saveSettings({ bookmarks: true });
+          toast("Bookmarks on");
+        }, (e) => { bmOn.checked = false; bmNote.textContent = `Chrome refused the request: ${e.message || e}`; });
+        return;
+      }
+      App.saveSettings({ bookmarks: false })
+        .then(() => chrome.permissions.remove({ permissions: [TV.BOOKMARKS_PERMISSION] }).catch(() => false))
+        .then(() => toast("Bookmarks off"), (e) => toast(`Could not turn bookmarks off: ${e.message || e}`));
+    });
     const rulesBox = el("div", { id: "rules", class: "rules" });
     const addRule = el("button", { type: "button", class: "small", id: "rule-add" }, "+ Add rule");
     const err = el("p", { class: "muted" });
@@ -615,6 +633,10 @@
       el("label", { class: "row" }, "Toolbar button opens ", actionOpens, el("span", { class: "muted" }, " (right-click the button for the other one)")),
       el("label", { class: "row" }, "Icon badge ", badge),
       el("label", { class: "row" }, recordClosed, " Remember recently closed tabs (kept on this computer, last 200)"),
+      el("h3", {}, "Bookmarks"),
+      el("label", { class: "row" }, bmOn, " Bookmarks: search them, save tabs as a folder, find duplicates, back them up"),
+      el("label", { class: "row" }, "Keep the last ", bmKeep, ` bookmark backups (1–${TV.BACKUPS_KEEP_MAX})`),
+      bmNote,
       el("h3", {}, "Idle tabs"),
       el("label", { class: "row" }, adOn, " Unload tabs not used for ", adMinutes, el("span", { class: "muted" }, " (tabs no rule below matches)")),
       el("label", { class: "row" }, adPinned, " Never unload pinned tabs"),
@@ -627,8 +649,10 @@
         const d = Number(debounce.value), k = Number(keep.value);
         if (!Number.isInteger(d) || d < 30 || d > 600) { err.textContent = "Debounce must be a whole number between 30 and 600."; return; }
         if (!Number.isInteger(k) || k < 5 || k > 200) { err.textContent = "Keep must be a whole number between 5 and 200."; return; }
+        const bk = Number(bmKeep.value);
+        if (!Number.isInteger(bk) || bk < 1 || bk > TV.BACKUPS_KEEP_MAX) { err.textContent = `Bookmark backups must be a whole number between 1 and ${TV.BACKUPS_KEEP_MAX}.`; return; }
         const current = App.getSettings();
-        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked, badge: badge.value, recordClosed: recordClosed.checked, actionOpens: actionOpens.value,
+        await App.saveSettings({ debounceSeconds: d, keepSnapshots: k, ignoreHash: hash.checked, theme: theme.value, showUrls: urls.checked, density: density.value, lazyRestore: lazy.checked, badge: badge.value, recordClosed: recordClosed.checked, actionOpens: actionOpens.value, bookmarkBackupsKeep: bk,
           autoDiscard: { ...current.autoDiscard, enabled: adOn.checked, minutes: Number(adMinutes.value), keepPinned: adPinned.checked } });
         toast("Settings saved"); closeDialog();
       } }, "Save"), el("button", { onclick: closeDialog }, "Cancel")));
@@ -926,4 +950,5 @@
   };
 
   App.restoreSession = restoreSession;
+  App.download = download;
 })();
