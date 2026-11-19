@@ -3,6 +3,38 @@
 TabVault's releases, newest first, written for the person who uses it. The
 decision log with the details is `docs/HISTORY.md`.
 
+## 1.7.0 — 2026-11-19 "Tidy"
+
+Three ways for the browser to tidy itself, and nothing is ever lost.
+
+- **Snooze a tab.** Select tabs and press Snooze (or the ⏾ on a group, or
+  the palette): later, in 3 hours; tomorrow morning; next week; or a date
+  and time you pick. The tabs close now and open again by themselves at
+  that time, in their window if it is still open (else in a new one), with
+  their group and pin. Until then they wait under **Snoozed**, below your
+  windows, with Wake now, Reschedule and Cancel. A snooze survives a
+  browser restart: if the time passed while Chrome was closed, the tab
+  opens the next time Chrome starts. Snoozed tabs show up in the Alt+K
+  search too.
+- **Group rules.** ⋯ → Group rules: "pages of github.com go into the group
+  Code, blue". New tabs, and tabs that go to a matching site, join that
+  group by themselves. A rule never moves a pinned tab or a tab already in
+  a group, and if you take a tab out of a group, TabVault leaves it alone
+  until it goes to another site. "Run rules on open tabs now" shows what
+  would move first, and Undo puts it all back. No rules, nothing happens.
+  The rules travel inside the JSON export, and Import offers to add them.
+- **Weekly tidy.** Once a week a quiet bar on the TabVault page says your
+  tidy is ready (no pop-up; a notification only if you turn it on). The
+  Tidy view lists tabs you have not visited for 14 days (you choose),
+  duplicates, groups with one tab, and snoozed tabs that came back and you
+  have not looked at. Tick what you are done with: **Close into the vault**
+  puts them on a shelf named "Tidy" and the date, and **Restore** brings
+  them back in one click; **Keep** leaves a page out of the tidy for 30
+  days. The last line says what you tidied this week.
+- One new permission, and only if you ask for it: turning on the tidy
+  notification makes Chrome ask once. Nothing else changes in what
+  TabVault may do; everything stays on your computer.
+
 ## 1.6.0 — 2026-11-17
 
 - **Bookmarks, when you want them.** Settings, Bookmarks: turn it on and

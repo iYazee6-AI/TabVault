@@ -1,6 +1,6 @@
 # TabVault Privacy Policy
 
-Effective date: 2026-11-17
+Effective date: 2026-11-19
 
 TabVault is a browser extension that shows every window and tab you have open
 in one page, and keeps local snapshots of your session so you can get it back.
@@ -36,6 +36,24 @@ TabVault stores, on your device only:
   pinned tabs are spared) and your idle rules (for each: the site pattern you
   typed, the idle time, the action — unload, shelve to a named shelf, or
   never — whether it is on, and whether its dry run was shown).
+- **Snoozed tabs** (1.7, only the tabs you snooze) — for each: its title,
+  address, favicon address, whether it was pinned, its group's name and
+  colour, the window it was in, when you snoozed it and when it should open
+  again. Kept in your browser's local extension storage until it opens again;
+  after that the entry keeps the new tab's number until you look at that tab,
+  for at most 7 days, so the weekly tidy can show the ones you have not
+  looked at. Cancel forgets a snooze.
+- **Group rules** (1.7, only the rules you write) — for each: the site you
+  typed, the optional title word, the group name and colour, and whether it
+  is on, inside your settings. While the browser is open, TabVault also
+  remembers which tabs you took out of a group and their site's host name
+  (in `chrome.storage.session`, which the browser clears when it closes), so
+  a rule leaves them alone.
+- **The weekly tidy** (1.7) — when the last tidy was and when the next one
+  became due; the addresses of the pages you chose to Keep (left out of the
+  tidy for 30 days); and for the last 20 tidies only counts (how many tabs
+  were closed, snoozed, kept or ungrouped). The tabs you close from the tidy
+  go onto a shelf, as described under Shelves.
 - **Bookmark backups and the Deleted list** (1.6, only when you turn
   Bookmarks on in Settings) — when you click **Back up now**, and by itself
   before TabVault changes more than 10 bookmarks at once, a copy of your
@@ -152,7 +170,14 @@ pages are skipped.
   rules: only if you turned on **Unload idle tabs** or wrote a rule, it
   unloads tabs idle past your threshold, and a shelving rule you dry-ran and
   turned on saves the idle tabs of its site to your shelf and then closes
-  them. Nothing is closed unless a rule you wrote says so.
+  them. Nothing is closed unless a rule you wrote says so. Since 1.7 alarms
+  also open your snoozed tabs again at the time you picked, and mark the
+  weekly tidy as ready.
+- **notifications** (optional, 1.7): asked for only when you turn on "Also
+  tell me with a notification" in the Tidy view, and given back when you turn
+  it off. With it TabVault shows one notification a week, "Your weekly tidy
+  is ready", which names no tab. Without it the tidy waits quietly as a bar on
+  the TabVault page.
 - **sidePanel**: to show the same TabVault page in Chrome's side panel when
   you open it there. It grants no access to any website.
 - **bookmarks** (optional, 1.6): asked for only when you turn **Bookmarks** on
@@ -164,9 +189,9 @@ pages are skipped.
   bookmarks".
 
 TabVault requests no access to websites at install (no required host
-permissions). Its two optional permissions, access to your pages for Focus
-mode and `bookmarks`, are asked for only when you turn on the feature that
-needs them, and can be withdrawn at `chrome://extensions`.
+permissions). Its optional permissions, access to your pages for Focus
+mode, `bookmarks` and `notifications`, are asked for only when you turn on
+the feature that needs them, and can be withdrawn at `chrome://extensions`.
 
 ## Incognito
 
