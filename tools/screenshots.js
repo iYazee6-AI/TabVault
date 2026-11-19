@@ -12,6 +12,7 @@
 //                                         idle rules with a dry run (1.3), the
 //                                         palette's saved search (1.3), snapshots,
 //                                         a page veiled by Focus mode (1.4))
+//   docs/store/screenshots/07..09-*.png   1280x800 (1.7: snooze, group rules, the weekly tidy)
 //   docs/store/promo-tile-440x280.png     440x280 (from docs/store/promo-tile.html)
 //
 // The example pages are served locally on port 8771 (e2e/server.js owns 8765;
@@ -570,6 +571,86 @@ async function main() {
     fs.writeFileSync(focusFile, toRgbPng(await reading.screenshot()));
     console.log("wrote " + focusFile);
     await sw(() => self.liftFocus());
+    await app.bringToFront();
+
+    // 07 — Snooze (1.7): two shop tabs snoozed until tomorrow morning and a recipe until next
+    // week, through the worker's own snoozeTabs (they really close); the Snoozed section open
+    // below the windows, and the snooze dialog for the "Japan" group on top.
+    const tabIdOf = (suffix) => sw((s) => chrome.tabs.query({}).then((ts) => (ts.find((t) => String(t.url || "").endsWith(s)) || {}).id), suffix);
+    const snoozeVia = (ids, choice) => app.evaluate(({ tabIds, c }) => chrome.runtime.sendMessage({ type: "snoozeTabs", tabIds, wakeAt: self.TabVault.wakeTimeFor(c, Date.now()) }), { tabIds: ids, c: choice });
+    const s1 = await snoozeVia([await tabIdOf("/desk-lamp"), await tabIdOf("/gift-ideas")], "tomorrow");
+    const s2 = await snoozeVia([await tabIdOf("/ramen-shortlist")], "nextWeek");
+    if (!s1.ok || !s2.ok || s1.snoozed !== 2 || s2.snoozed !== 1) throw new Error("snooze seeding failed: " + JSON.stringify([s1, s2]));
+    await app.waitForFunction(() => !document.getElementById("snoozed").hidden && document.getElementById("snoozed-count").textContent === "3");
+    await app.click("#snoozed-toggle");
+    await app.waitForFunction(() => document.querySelectorAll("#snoozed-list .zrow").length === 3);
+    const japan = await app.$$eval("#grid .group", (gs) => { const g = gs.find((x) => x.querySelector(".gtitle") && x.querySelector(".gtitle").textContent === "Japan"); return g ? g.dataset.group : null; });
+    if (!japan) throw new Error("no Japan group on the page");
+    // The group's own ⏾ button opens the dialog (a click would scroll the page back up to it).
+    await app.$eval(`#grid .group[data-group="${japan}"] .g-snooze`, (b) => b.click());
+    await app.waitForSelector('#dialog .snooze-choice[data-choice="tomorrow"]');
+    await app.$eval("#snoozed", (n) => n.scrollIntoView({ block: "end" }));
+    await app.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
+    await app.mouse.move(5, 5);
+    await app.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
+    await sleep(500);
+    await shot("07-snooze.png");
+    await app.click("#dialog-backdrop", { position: { x: 5, y: 5 } });
+    await app.waitForFunction(() => document.getElementById("dialog-backdrop").hidden);
+
+    // 08 — Group rules (1.7): three rules and the preview of "Run rules on open tabs now" (the
+    // ungrouped docs and recipe tabs would move); nothing is applied.
+    await app.evaluate(() => window.TabVaultApp.saveSettings({ groupRules: [
+      { id: "g-docs", site: "docs.example.com", titleWord: "", group: "Reading", color: "yellow", enabled: true },
+      { id: "g-recipes", site: "recipes.example.com", titleWord: "", group: "Cooking", color: "green", enabled: true },
+      { id: "g-tracker", site: "*.tracker.example.com", titleWord: "release", group: "Release 2.4", color: "blue", enabled: true },
+    ] }));
+    await app.click("#btn-more");
+    await app.click("#btn-group-rules");
+    await app.waitForSelector("#grules-run:not([disabled])");
+    await app.click("#grules-run");
+    await app.waitForFunction(() => document.querySelectorAll("#grules-preview .crow").length >= 2);
+    await app.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
+    await app.mouse.move(5, 5);
+    await sleep(400);
+    await shot("08-group-rules.png");
+    await app.click("#dialog-backdrop", { position: { x: 5, y: 5 } });
+    await app.waitForFunction(() => document.getElementById("dialog-backdrop").hidden);
+    // The rules stay off the rest of the run (a later navigation must not regroup the fixtures).
+    await app.evaluate(() => window.TabVaultApp.saveSettings({ groupRules: [] }));
+
+    // 09 — the weekly tidy (1.7): the bar on the page (a week since the last tidy, through the
+    // worker's own check), and the dialog: a woken snooze not looked at yet, the duplicates the
+    // fixture windows really hold, a group with one tab, and (with the tidy clock moved 20 days
+    // on for this shot only) the tabs not visited; two duplicate rows ticked.
+    const woke = await app.evaluate((id) => chrome.runtime.sendMessage({ type: "snoozeWake", ids: [id] }), (await sw(() => chrome.storage.local.get("snoozed").then((r) => r.snoozed.find((e) => e.url.endsWith("/ramen-shortlist")).id))));
+    if (!woke.ok || woke.woke !== 1) throw new Error("wake failed: " + JSON.stringify(woke));
+    await sw(async (id) => {
+      const gid = await chrome.tabs.group({ tabIds: [id], createProperties: { windowId: (await chrome.tabs.get(id)).windowId } });
+      await chrome.tabGroups.update(gid, { title: "Later", color: "orange" });
+    }, await tabIdOf("/focus"));
+    await sw(async () => {
+      const DAY = 24 * 3600000;
+      await chrome.storage.local.set({ tidyState: { lastAt: Date.now() - 8 * DAY }, tidyLog: [{ at: Date.now() - 6 * DAY, closed: 9, snoozed: 2, kept: 3, ungrouped: 1 }] });
+      return self.tidyCheck();
+    });
+    await app.waitForFunction(() => !document.getElementById("tidy-bar").hidden);
+    await app.evaluate((ms) => { window.tidyClockOffset = ms; }, 20 * 24 * 3600000);
+    await app.evaluate(() => window.scrollTo(0, 0));
+    await app.click("#tidy-open");
+    await app.waitForSelector('#dialog .tidy-sec[data-section="duplicates"] .crow');
+    // Each tick redraws the dialog, so the rows are looked up again every time.
+    for (const n of [0, 1]) {
+      await app.locator('#dialog .tidy-sec[data-section="duplicates"] .crow input').nth(n).click();
+      await sleep(150);
+    }
+    await app.evaluate(() => { if (document.activeElement) document.activeElement.blur(); document.getElementById("dialog").scrollTop = 0; });
+    await app.mouse.move(5, 5);
+    await app.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
+    await sleep(400);
+    await shot("09-tidy.png");
+    await app.click("#dialog-backdrop", { position: { x: 5, y: 5 } });
+    await app.evaluate(() => { window.tidyClockOffset = 0; });
 
     // ---- promo tile --------------------------------------------------------
     const promo = await context.newPage();

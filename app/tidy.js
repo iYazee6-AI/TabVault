@@ -48,7 +48,7 @@
     box.replaceChildren(
       el("h2", {}, reschedule ? `Reschedule ${what}` : `Snooze ${what}`),
       el("p", { class: "muted" }, reschedule ? "Pick a new time to open it again." : "It closes now and opens again by itself at the time you pick: in its window if that is still open, else in a new one, with its group and pin. Until then it waits under Snoozed, below your windows."),
-      el("div", { class: "snooze-choices" }, choice("later", "Later today"), choice("tomorrow", "Tomorrow morning"), choice("nextWeek", "Next week")),
+      el("div", { class: "snooze-choices" }, choice("later", "Later, in 3 hours"), choice("tomorrow", "Tomorrow morning"), choice("nextWeek", "Next week")),
       el("div", { class: "row" }, el("label", { class: "opt" }, "Pick a date and time ", pick),
         el("button", { type: "button", id: "snooze-pick-go", onclick: () => go(new Date(pick.value).getTime()) }, reschedule ? "Wake then" : "Snooze until then")),
       err,
@@ -345,7 +345,7 @@
     function draw() {
       const settings = App.getSettings();
       const total = SECTIONS.reduce((a, s) => a + sections[s.key].length, 0);
-      box.replaceChildren(
+      box.replaceChildren(...[
         el("h2", {}, "Tidy"),
         el("p", { class: "muted" }, total
           ? "Nothing here closes by itself. Tick what you are done with: Close into the vault keeps each page on a shelf, one click from coming back."
@@ -358,7 +358,8 @@
         ...settingsBlock(settings),
         el("div", { class: "row" },
           el("button", { type: "button", class: "primary", id: "tidy-done", onclick: async () => { await send({ type: "tidyDone" }); closeDialog(); toast("Tidy done; the next one is in a week"); } }, "Done for this week"),
-          el("button", { type: "button", onclick: closeDialog }, "Close")));
+          el("button", { type: "button", onclick: closeDialog }, "Close")),
+      ].filter(Boolean)); // replaceChildren would write a null as the text "null"
     }
 
     await load();
