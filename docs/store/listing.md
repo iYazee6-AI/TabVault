@@ -170,6 +170,9 @@ WHAT YOU CAN DO
 • Navigate entirely from the keyboard: j and k (or the arrows) to move, x to select, g to group, d for duplicates, Enter to go to a tab, Delete to close, ? for the full list. The shortcuts are always shown at the bottom of the page.
 • Press Alt+K for the command palette: type a few letters to run any action or jump to any tab, or to find a tab you saved in a snapshot, on a shelf or in the recently closed list, highlighted, and open one or all of them.
 • Shelves: named lists of saved tabs that are never rotated away. Move tabs to a shelf by hand, or let an idle rule file them there; reopen them one at a time or all at once, in their groups.
+• Snooze: close the tabs you picked, or a whole group, and have them open again later in 3 hours, tomorrow morning, next week or at a time you choose, in their window with their group and pin. A snooze survives a browser restart.
+• Group rules: "pages of this site go into this group". New tabs join their group by themselves; a pinned tab, a tab already in a group, or a tab you took out of a group is never moved. Preview, apply and undo on the tabs already open.
+• Weekly tidy: once a week a quiet bar (a notification only if you ask for one) offers tabs you have not visited for two weeks, duplicates, groups with one tab and snoozed tabs you have not looked at. Close them into the vault, snooze or keep them; one click restores what you closed.
 • Open TabVault in Chrome's side panel for a one-column view beside the page you are reading; a setting makes the toolbar icon open it in one click.
 • Focus mode: press Alt+Shift+F (or right-click the toolbar icon and choose Focus this window) and every other window is veiled with a blur, so only the window you are working in stays sharp. The same keys, or the pill on any veiled page, lift it. It asks once for access to your pages to draw the veil; say no and it minimises your other windows instead.
 • The toolbar icon shows how many tabs you have open (or how many are unloaded, or nothing).
@@ -202,7 +205,10 @@ Open source, plain HTML and JavaScript, no build step and no dependencies, MIT l
 | Field | File | Size |
 |---|---|---|
 | Store icon | `icons/icon128.png` | 128×128 |
-| Screenshots (upload in this order) | `docs/store/screenshots/01-all-windows.png` — the whole session: three named window cards (Research, Work, Personal), three colour-coded tab groups, a pinned tab, the header counter, the shortcut strip, and the Recently closed section opened below (a single tab, a closed window of three with Reopen all) | 1280×800 |
+| Screenshots for 1.7 (upload these five, in this order: 01, 07, 08, 09, 02; the dashboard takes at most five) | `docs/store/screenshots/07-snooze.png` — the snooze dialog for the "Japan" group (Later, in 3 hours; Tomorrow morning; Next week; a picked date) over the page, with the Snoozed section below listing three snoozed tabs and their wake times | 1280×800 |
+| | `docs/store/screenshots/08-group-rules.png` — the Group rules dialog: three rules (docs → Reading, recipes → Cooking, the tracker with a title word → Release 2.4) and the preview of Run rules on open tabs now: 4 tabs that would move, with Move 4 tabs and Cancel | 1280×800 |
+| | `docs/store/screenshots/09-tidy.png` — the weekly tidy: the bar on the page, the Tidy view with a snoozed tab that came back unseen, two duplicates ticked with Close 2 into the vault, and tabs not visited for 14 days | 1280×800 |
+| Screenshots (every one kept, from earlier versions) | `docs/store/screenshots/01-all-windows.png` — the whole session: three named window cards (Research, Work, Personal), three colour-coded tab groups, a pinned tab, the header counter, the shortcut strip, and the Recently closed section opened below (a single tab, a closed window of three with Reopen all) | 1280×800 |
 | | `docs/store/screenshots/02-command-palette.png` — the Alt+K palette after typing "s": actions with their keys first, then matching tabs with their window and site | 1280×800 |
 | | `docs/store/screenshots/03-idle-rules.png` — Settings, Idle tabs: the global unload setting, the rules (a never rule, an unload rule, a shelving rule) and a shelving rule's dry run open in the editor, listing the tabs it would shelve now, with its On switch unlocked | 1280×800 |
 | | `docs/store/screenshots/04-saved-search.png` — the Alt+K palette searching "quota": the open tab first, then the Saved section with matches from a snapshot (with "+N older"), a shelf and the recently closed list, the words highlighted, and "Open all saved matches in a new window" | 1280×800 |
@@ -243,7 +249,7 @@ output onto white; check byte 25 of each file is 2 after regenerating.
 **Single purpose** (paste):
 
 ```
-TabVault lists every browser window and tab in one page (or in the side panel) so the user can search, organise, unload and clean them up, files idle tabs onto local shelves by the user's rules, and keeps local snapshots of that session and a list of recently closed tabs so they can be exported, restored and reopened; on request it veils the user's other windows so one window stays in focus, and, when the user turns it on, it searches, saves, de-duplicates and backs up the user's bookmarks. All data stays in the browser's local extension storage.
+TabVault lists every browser window and tab in one page (or in the side panel) so the user can search, organise, unload and clean them up, files idle tabs onto local shelves by the user's rules, puts tabs away until a time the user picks (snooze), groups new tabs by the user's site rules, offers a weekly review of stale and duplicate tabs, and keeps local snapshots of that session and a list of recently closed tabs so they can be exported, restored and reopened; on request it veils the user's other windows so one window stays in focus, and, when the user turns it on, it searches, saves, de-duplicates and backs up the user's bookmarks. All data stays in the browser's local extension storage.
 ```
 
 **Permission justifications** (one box per permission; these are every
@@ -251,19 +257,22 @@ permission in `manifest.json`. Since 1.4 there is one optional host
 permission, `<all_urls>` in `optional_host_permissions`, requested at run
 time only when the user first turns on Focus mode, and no required host
 permission; since 1.6 one optional API permission, `bookmarks` in
-`optional_permissions`, requested only when the user turns Bookmarks on)
+`optional_permissions`, requested only when the user turns Bookmarks on;
+since 1.7 a second, `notifications`, requested only when the user turns on
+the weekly tidy's notification)
 
 | Permission | When it is requested | Why | Without it |
 |---|---|---|---|
-| `tabs` | At install, for the life of the extension. | Reads the title, URL, favicon, pinned/muted state, position and group of every tab via `chrome.windows.getAll({populate:true})` so the page can list them, and calls `chrome.tabs.move`, `group`, `ungroup`, `update`, `discard`, `create` and `remove` when the user moves, groups, pins, unloads, opens or closes tabs — plus the same calls when restoring a snapshot or an imported file, and closes tabs a rule you wrote shelves, after saving them (only a shelving rule the user wrote, dry-ran and switched on; every such tab is written to a local shelf and read back before `chrome.tabs.remove`). | The extension has nothing to show and nothing to restore. |
-| `tabGroups` | At install. | Reads native tab groups (`chrome.tabGroups.query`) so they appear inline under their window, and calls `chrome.tabGroups.update` to rename, recolour and collapse them, including when recreating them during a restore. | Groups would be invisible in the listing and lost on restore. |
-| `storage` | At install. | `chrome.storage.local` holds the user's settings (including the idle rules), the snapshot history, the shelves (the tabs the user or a rule saved there, kept until removed) and the recently closed list (at most 200 tabs, off switch in Settings); `chrome.storage.session` holds short-lived values: when the current burst of tab changes started (so a busy browser cannot postpone a snapshot forever), when the browser session started, and the idle-tab rule's last run. This is the only place any data is kept. | No snapshots, no settings, no recently closed list; the extension becomes a read-only viewer. |
+| `tabs` | At install, for the life of the extension. | Reads the title, URL, favicon, pinned/muted state, position and group of every tab via `chrome.windows.getAll({populate:true})` so the page can list them, and calls `chrome.tabs.move`, `group`, `ungroup`, `update`, `discard`, `create` and `remove` when the user moves, groups, pins, unloads, opens or closes tabs — plus the same calls when restoring a snapshot or an imported file, and closes tabs a rule you wrote shelves, after saving them (only a shelving rule the user wrote, dry-ran and switched on; every such tab is written to a local shelf and read back before `chrome.tabs.remove`). Since 1.7: closes the tabs the user snoozes after saving them locally and opens them again with `chrome.tabs.create` or `chrome.windows.create` at the time the user picked; puts a tab that navigates to a site the user wrote a group rule for into that group (`chrome.tabs.group`), only a tab in no group and not pinned; closes the tabs the user ticks in the weekly tidy after saving them to a shelf. | The extension has nothing to show and nothing to restore. |
+| `tabGroups` | At install. | Reads native tab groups (`chrome.tabGroups.query`) so they appear inline under their window, and calls `chrome.tabGroups.update` to rename, recolour and collapse them, including when recreating them during a restore, when a snoozed tab comes back, and when a group rule the user wrote makes its group (1.7). | Groups would be invisible in the listing and lost on restore. |
+| `storage` | At install. | `chrome.storage.local` holds the user's settings (including the idle rules), the snapshot history, the shelves (the tabs the user or a rule saved there, kept until removed) and the recently closed list (at most 200 tabs, off switch in Settings); `chrome.storage.session` holds short-lived values: when the current burst of tab changes started (so a busy browser cannot postpone a snapshot forever), when the browser session started, and the idle-tab rule's last run. Since 1.7 `chrome.storage.local` also holds the snoozed tabs (title, address, group, window, wake time), the group rules inside the settings, and the weekly tidy's dates, kept pages and counts; `chrome.storage.session` holds the tabs the user took out of a group, so a rule leaves them alone. This is the only place any data is kept. | No snapshots, no settings, no recently closed list; the extension becomes a read-only viewer. |
 | `unlimitedStorage` | At install. | A snapshot stores a full session, and the history is many snapshots; a user with hundreds of tabs exceeds the default extension storage quota, and a quota failure would silently lose a snapshot. This permission lifts that cap. It grants no additional access to anything — only more room in the extension's own local storage. | Snapshots would start failing to save once the history grew past the default quota. |
-| `alarms` | At install. | Snapshots are debounced: after tabs stop changing for N seconds (30 by default) one is taken. A Manifest V3 service worker is torn down while idle and cannot hold a timer, so the delay is measured with a single re-armed `chrome.alarms` alarm. A second alarm fires every 5 minutes: it refreshes the tab count on the toolbar icon and runs your idle rules: only when the user has turned on Unload idle tabs or written a rule, it unloads tabs idle past the user's threshold, and a shelving rule the user wrote, dry-ran and switched on saves the idle tabs of its site to a local shelf and then closes them; at most 25 tabs a run. | Automatic snapshots, idle-tab unloading and the idle rules would be impossible, and the icon count could go stale. |
+| `alarms` | At install. | Snapshots are debounced: after tabs stop changing for N seconds (30 by default) one is taken. A Manifest V3 service worker is torn down while idle and cannot hold a timer, so the delay is measured with a single re-armed `chrome.alarms` alarm. A second alarm fires every 5 minutes: it refreshes the tab count on the toolbar icon and runs your idle rules: only when the user has turned on Unload idle tabs or written a rule, it unloads tabs idle past the user's threshold, and a shelving rule the user wrote, dry-ran and switched on saves the idle tabs of its site to a local shelf and then closes them; at most 25 tabs a run. Since 1.7 a third alarm opens the user's snoozed tabs again at the time they picked (the 5-minute alarm also catches a wake missed while the browser was closed), and the 5-minute alarm marks the weekly tidy as ready a week after the last one. | Automatic snapshots, idle-tab unloading, the idle rules, snoozed tabs coming back and the weekly reminder would be impossible, and the icon count could go stale. |
 | `sidePanel` | At install. | Shows the same TabVault page (`app/index.html?panel=1`, a one-column layout) in Chrome's side panel when the user opens it from TabVault's menu, the command palette, the toolbar icon's right-click menu, a keyboard shortcut they assign, or (when the user picks it in Settings) a click on the toolbar icon. It grants no access to any website. | TabVault could only be used as a full tab. |
 | `contextMenus` | At install. (No warning.) | Adds three items to the right-click menu of TabVault's own toolbar icon (`contexts: ["action"]`): "Open in side panel", "Open full page", and "Focus this window" ("Lift the focus" while it is on). It adds nothing to the menu of any web page. | Focus mode would start only from the keyboard shortcut or the TabVault page. |
 | `scripting` | At install. (No warning; it reaches no page without a host permission.) | Focus mode calls `chrome.scripting.executeScript` with the packaged file `app/focus-veil.js` on the tabs of the windows the user is not focused on, to draw a blurred overlay with a "Click to lift" pill, and once more to remove it when the focus is lifted. The script reads nothing from the page and sends nothing but the lift request to the extension. | No veil: Focus mode could only minimise the other windows. |
 | `bookmarks` (optional permission, 1.6) | Never at install. Requested with `chrome.permissions.request` only when the user ticks Settings → Bookmarks, inside that click; unticking it calls `chrome.permissions.remove`. Chrome shows "Read and change your bookmarks" when it asks. | Reads the bookmark tree (`chrome.bookmarks.getTree`, `getSubTree`, `get`) to let the user search bookmarks in the command palette, open a bookmark folder as a window, list duplicate bookmarks and back the tree up (a JSON download plus the last 5 copies in local extension storage) or export the standard bookmarks HTML file; `create` makes a folder of the tabs the user chose to save (in Other bookmarks › TabVault); `move` puts a bookmark the user removes into a folder named "Deleted" in Other bookmarks. TabVault never calls `chrome.bookmarks.remove` or `removeTree`: nothing is ever deleted, and emptying "Deleted" is left to the user in Chrome's bookmark manager. Nothing is sent anywhere. | The Bookmarks features stay hidden; everything else works as before. |
+| `notifications` (optional permission, 1.7) | Never at install. Requested with `chrome.permissions.request` only when the user ticks "Also tell me with a notification" in TabVault's Tidy view, inside that click; unticking it calls `chrome.permissions.remove`. Chrome shows "Display notifications" when it asks. | Shows one notification when the weekly tidy becomes ready (at most once a week): the title "TabVault" and "Your weekly tidy is ready. Click to look at it." It names no tab, no title and no address; a click opens TabVault's Tidy view. Nothing is sent anywhere. | The tidy waits quietly as a bar on the TabVault page; everything else works as before. |
 | `<all_urls>` (optional host permission) | Never at install. Requested with `chrome.permissions.request` only when the user turns on Focus mode the first time, after TabVault's own page explains it ("Focus mode draws a veil over your other windows, which needs permission to touch those pages; TabVault still reads nothing from them"). The user can decline, or withdraw it later at chrome://extensions. | The veil must be drawn on whatever pages the user has open in the other windows, so the host cannot be narrowed to a list of sites. Used only to inject the veil and remove it; no page content is read, stored or sent. Incognito windows are never veiled, even when the extension is allowed in incognito. | Focus mode minimises the other windows instead of veiling them; everything else works as before. |
 
 **Remote code**
@@ -284,7 +293,7 @@ the future?" Tick:
 | Authentication information | No | It reads no page content, no cookies and no credentials. |
 | Personal communications | No | |
 | Location | No | |
-| Web history | Yes | The addresses and titles of the tabs the user has open, of the tabs in each stored snapshot, of the tabs saved on shelves, and of the last 200 tabs the user closed (the recently closed list, which can be turned off and cleared); since 1.6, only when the user turns Bookmarks on, the titles and addresses of the user's bookmarks, in the backups the user takes (and the automatic one before a change to more than 10 bookmarks). Written only to local extension storage; never transmitted. |
+| Web history | Yes | The addresses and titles of the tabs the user has open, of the tabs in each stored snapshot, of the tabs saved on shelves, and of the last 200 tabs the user closed (the recently closed list, which can be turned off and cleared); since 1.6, only when the user turns Bookmarks on, the titles and addresses of the user's bookmarks, in the backups the user takes (and the automatic one before a change to more than 10 bookmarks); since 1.7, the title and address of each tab the user snoozes (until it opens again) and of the pages the user keeps out of the weekly tidy. Written only to local extension storage; never transmitted. |
 | User activity | No | No clicks, keystrokes or analytics are recorded. |
 | Website content | No | The optional host permission (Focus mode) is used only to draw a veil on top of pages; the veil script reads nothing from the page and stores and sends nothing. No content is collected. |
 
@@ -644,3 +653,59 @@ permission at install, because nobody can click Chrome's prompt there):
 `8611782b5d7249bd39d57a08ce440c34f7c6b2d6601d544cc3fef5f7185b07ef` (built twice from branch
 `feat/bookmarks-1.6` on a Windows checkout, the same hash both times; rebuild from the `v1.6.0` tag
 once it is merged and tagged, and check the hash again before the upload).
+
+## 18. What's new in 1.7.0 "Tidy" (for the update)
+
+The store shows 1.4.1.4 (read 2026-11-19); 1.5.0 and 1.6.0 were never
+uploaded. 1.7.0 holds both of them, so upload only the 1.7.0 package (one
+review round instead of three; `docs/store/upload-next.md` is the one-page
+version for the owner). Compared with the live 1.4.1, the manifest gains two
+**optional** permissions, `bookmarks` (1.6) and `notifications` (1.7), and no
+required one: nothing is asked at install or at the update, so existing users
+are not prompted and the extension is not disabled. `minimum_chrome_version`
+stays 123. In section 5, paste the reworded single purpose, the `tabs`,
+`tabGroups`, `storage` and `alarms` rows, the `bookmarks` and `notifications`
+rows (the dashboard asks a justification for an optional permission too) and
+the reworded Web history row. In section 4, paste the whole description (it
+has the three new bullets) and replace the screenshots with the five named
+there. Paste this block at the top of the description, above "TabVault is an
+open-source tab manager...", with one blank line after it (it replaces any
+earlier NEW IN block):
+
+```
+NEW IN 1.7
+• Snooze tabs or a whole group until later, tomorrow morning, next week or a time you pick; they come back by themselves, in their window and group.
+• Group rules put new tabs into the right group by site, and never move a tab you took out of a group.
+• A calm weekly tidy: stale tabs, duplicates and lonely groups, closed into the vault and back in one click.
+ALSO SINCE THE LAST UPDATE
+• The toolbar button can open the side panel (Settings).
+• Bookmarks, when you turn them on: search, save tabs as a folder, find duplicates, back up; a delete only moves a bookmark to a "Deleted" folder.
+```
+
+**Justification for the optional `notifications` permission** (paste if the
+dashboard asks for it in its own box):
+
+```
+Optional, requested only when the user turns on "Also tell me with a notification" in TabVault's weekly Tidy view, inside that click; turning it off removes it. TabVault then shows at most one notification a week, "Your weekly tidy is ready. Click to look at it.", which names no tab, title or address; clicking it opens TabVault's Tidy view. Without the permission the tidy waits as a bar on TabVault's own page. Nothing is sent anywhere.
+```
+
+Before the upload, the real-install checks no automation covers, in real
+Chrome with the package loaded unpacked (`docs/store/upload-next.md` has the
+same list to tick):
+
+1. Snooze a tab with a picked time two minutes ahead and quit Chrome; start it
+   again after that time: the tab opens again and Snoozed is empty.
+2. Write a group rule for a site and open a page of it: it joins the group.
+   Drag that tab out of the group in Chrome's tab strip: it stays out, also
+   after another page of the same site; it goes back only after it visited
+   another site.
+3. Tidy view: tick "Also tell me with a notification": Chrome asks "Display
+   notifications"; Allow. Untick it: chrome://extensions, TabVault, Details no
+   longer lists notifications.
+4. The checks of sections 16 and 17 (the toolbar button in each setting, the
+   bookmarks prompt), since 1.5.0 and 1.6.0 never ran in a store build.
+
+1.7.0 package: `dist/tabvault-1.7.0.zip`, 686,719 bytes, 40 files, SHA-256
+`45675f77d1b1561328f25fc6cf63a67e7d6e09659180db1424c594270b3c4f21` (built twice from branch
+`feat/tidy-1.7` on a Windows checkout, the same hash both times; rebuild from the `v1.7.0` tag
+once it is reviewed and tagged, and check the hash again before the upload).
