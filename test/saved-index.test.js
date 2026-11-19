@@ -68,3 +68,16 @@ test("highlight ranges: several words, overlaps merged, case-insensitive, offset
   assert.deepEqual(r, [[1, 7], [18, 24]]);
   assert.equal(title.slice(r[0][0], r[0][1]), "script", "the ranges cut the raw text; the page builds text nodes from them");
 });
+
+test("snoozed tabs (1.7) are in the index with their wake time; woken ones are not", () => {
+  const index = buildSavedIndex({
+    snoozed: [
+      { id: "z1", url: "https://later.example.com/read", title: "Read me later", snoozedAt: 400, wakeAt: 9000 },
+      { id: "z2", url: "https://woke.example.com/", title: "Already back", snoozedAt: 50, wakeAt: 60, wokeAt: 70, tabId: 3 },
+    ],
+  }, { ignoreHash: true, fmt });
+  assert.equal(index.length, 1);
+  assert.deepEqual(index[0].where, { kind: "snooze", id: "z1", label: "snoozed until D9000" });
+  assert.equal(index[0].at, 400);
+  assert.equal(searchSaved(index, "read")[0].entry.where.kind, "snooze");
+});
