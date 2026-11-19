@@ -1,6 +1,6 @@
 # TabVault Privacy Policy
 
-Effective date: 2026-11-19
+Effective date: 2026-11-20
 
 TabVault is a browser extension that shows every window and tab you have open
 in one page, and keeps local snapshots of your session so you can get it back.
@@ -197,11 +197,14 @@ the feature that needs them, and can be withdrawn at `chrome://extensions`.
 
 TabVault can only see incognito windows if you explicitly allow it to run in
 incognito at `chrome://extensions`. If you do not, incognito windows are
-skipped entirely. If you do, incognito tabs are treated like any other tab:
-listed in the page and included in snapshots that are stored locally. One
-exception: Focus mode never touches an incognito window, even when TabVault
-is allowed there: no veil is drawn on an incognito page and the minimise
-fallback never minimises an incognito window.
+skipped entirely. If you do, incognito tabs are listed in the page and
+included in snapshots that are stored locally, like any other tab, with
+these exceptions, even when TabVault is allowed there: Focus mode never
+touches an incognito window (no veil is drawn on an incognito page and the
+minimise fallback never minimises an incognito window); snooze and the
+weekly tidy skip incognito tabs entirely, so nothing of one is stored in the
+snoozed list or in anything the tidy keeps or closes into the vault; and
+group rules and idle rules never move, unload or close an incognito tab.
 
 ## Children
 
