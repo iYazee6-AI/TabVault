@@ -14,7 +14,7 @@ const BASE = `http://localhost:${PORT}/test-pages`;
 // extensions), so no window appears on the screen; the same switch as tools/screenshots.js.
 const HEADLESS = process.env.TABVAULT_HEADLESS === "1";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "TA", "TC", "TD", "TB"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "TA", "TC", "TD", "TE", "TF", "TG", "TB"];
 // --only W,X (or TABVAULT_E2E_ONLY=W,X) runs just those scenarios. The shared fixtures and the
 // steps between scenarios still run, so a scenario alone sees the same setup as in the full run.
 const onlyArg = process.argv.indexOf("--only");
@@ -2605,6 +2605,181 @@ async function main() {
       } finally {
         await appPage.evaluate(() => { window.tidyClockOffset = 0; }).catch(() => {});
         for (const id of extra) await ev((tid) => chrome.tabs.remove(tid), id).catch(() => {});
+        if (winId !== null) await ev((id) => chrome.windows.remove(id), winId).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // TE. Snooze wakes are marked first (review fix of 1.7.0): an entry left "waking" by a wake
+    // that was cut short is marked woken when its tab is open (no second copy), and is opened once
+    // (one failed try counted) when it is not; a wake whose "waking" mark cannot be written opens
+    // nothing and leaves the entry sleeping.
+    // ---------------------------------------------------------------
+    if (want("TE")) {
+      let winId = null;
+      const extra = [];
+      try {
+        await resetUi();
+        const tabs = await makeWindow([`${BASE}/one.html?te=open`]);
+        winId = tabs[0].windowId;
+        const openUrl = tabs[0].url;
+        const lostUrl = `${BASE}/two.html?te=lost`;
+        const sleepUrl = `${BASE}/three.html?te=sleep`;
+        const past = Date.now() - 60000;
+        const base = { title: "TE", favIconUrl: "", pinned: false, group: null, windowId: null, index: 0, snoozedAt: past - 60000, run: null, wakeAt: past, attempts: 0, error: "" };
+        const count = (url) => ev((u) => chrome.tabs.query({}).then((ts) => ts.filter((t) => (t.url || t.pendingUrl) === u).length), url);
+        await ev((list) => chrome.storage.local.set({ snoozed: list }), [
+          { ...base, id: "zte_open", url: openUrl, waking: past },
+          { ...base, id: "zte_lost", url: lostUrl, waking: past },
+        ]);
+        const r1 = await ev(() => self.wakeDueSnoozes());
+        await waitFor(async () => (await count(lostUrl)) === 1, { timeout: 10000 });
+        (await ev(() => chrome.tabs.query({}))).filter((t) => (t.url || t.pendingUrl) === lostUrl).forEach((t) => extra.push(t.id));
+        assert((await count(openUrl)) === 1, `the open entry's page is open ${await count(openUrl)} times`);
+        const list1 = await snoozedList();
+        const eOpen = list1.find((e) => e.id === "zte_open");
+        const eLost = list1.find((e) => e.id === "zte_lost");
+        assert(eOpen && eOpen.wokeAt && eOpen.tabId === tabs[0].id && !("waking" in eOpen), `open entry: ${JSON.stringify(eOpen)}`);
+        assert(eLost && eLost.wokeAt && eLost.attempts === 1 && !("waking" in eLost), `lost entry: ${JSON.stringify(eLost)}`);
+        assert(r1.ok && r1.woke === 1, `first pass: ${JSON.stringify(r1)}`);
+        const r1b = await ev(() => self.wakeDueSnoozes());
+        assert(r1b.woke === 0 && (await count(lostUrl)) === 1 && (await count(openUrl)) === 1, `a second pass opened again: ${JSON.stringify(r1b)}`);
+
+        // The mark cannot be written: nothing opens, the entry stays sleeping.
+        await ev((list) => chrome.storage.local.set({ snoozed: list }), [{ ...base, id: "zte_sleep", url: sleepUrl }]);
+        await ev(() => {
+          self.__realSet = chrome.storage.local.set;
+          chrome.storage.local.set = function (items) {
+            if (items && Array.isArray(items.snoozed) && items.snoozed.some((e) => e && e.waking)) return Promise.reject(new Error("QUOTA_BYTES quota exceeded (test)"));
+            return self.__realSet.call(chrome.storage.local, items);
+          };
+        });
+        const r2 = await ev(() => self.wakeDueSnoozes().then((x) => ({ ok: true, x }), (e) => ({ ok: false, error: String(e.message || e) })));
+        await ev(() => { chrome.storage.local.set = self.__realSet; delete self.__realSet; });
+        await new Promise((res) => setTimeout(res, 800));
+        assert(!r2.ok && /quota/i.test(r2.error), `the failed mark write: ${JSON.stringify(r2)}`);
+        assert((await count(sleepUrl)) === 0, "a tab opened although its waking mark was not written");
+        const eSleep = (await snoozedList()).find((e) => e.id === "zte_sleep");
+        assert(eSleep && !eSleep.wokeAt && !("waking" in eSleep), `sleeping entry: ${JSON.stringify(eSleep)}`);
+        // With the store back, the next pass wakes it once.
+        await ev(() => self.wakeDueSnoozes());
+        await waitFor(async () => (await count(sleepUrl)) === 1, { timeout: 10000 });
+        (await ev(() => chrome.tabs.query({}))).filter((t) => (t.url || t.pendingUrl) === sleepUrl).forEach((t) => extra.push(t.id));
+        record("TE", "PASS", `an entry left "waking" with its page open was marked woken with that tab (${tabs[0].id}) and nothing opened again; one left "waking" with no tab counted one failed try and opened once (attempts 1); a second pass opened nothing; a wake whose mark write failed ("${r2.error}") opened nothing and left the entry sleeping, and the next pass woke it once.`);
+      } catch (e) {
+        record("TE", "FAIL", e.message);
+      } finally {
+        await ev(() => { if (self.__realSet) { chrome.storage.local.set = self.__realSet; delete self.__realSet; } }).catch(() => {});
+        await ev(() => chrome.storage.local.set({ snoozed: [] })).catch(() => {});
+        for (const id of extra) await ev((tid) => chrome.tabs.remove(tid), id).catch(() => {});
+        if (winId !== null) await ev((id) => chrome.windows.remove(id), winId).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // TF. Cancel tells the truth (review fix of 1.7.0): with "record closed tabs" off, Cancel on a
+    // snoozed tab says it is the only copy and offers Wake instead (which opens it); with recording
+    // on, it asks "Forget it?" and the toast says the page is still in Recently closed.
+    // ---------------------------------------------------------------
+    if (want("TF")) {
+      let winId = null;
+      const extra = [];
+      const setRecord = (on) => ev(async (v) => {
+        const { settings = {} } = await chrome.storage.local.get("settings");
+        await chrome.storage.local.set({ settings: { ...settings, recordClosed: v } });
+      }, on);
+      const rowOf = (id) => `#snoozed-list [data-snooze="${id}"]`;
+      async function showRow(id) {
+        await waitFor(() => appPage.$eval("#snoozed", (n) => !n.hidden), { timeout: 5000 });
+        if ((await appPage.$eval("#snoozed-toggle", (n) => n.getAttribute("aria-expanded"))) !== "true") await appPage.click("#snoozed-toggle");
+        await appPage.waitForSelector(rowOf(id));
+      }
+      try {
+        await resetUi();
+        const tabs = await makeWindow([`${BASE}/one.html?tf=keep`, `${BASE}/two.html?tf=only`, `${BASE}/three.html?tf=copy`]);
+        winId = tabs[0].windowId;
+        const snooze = (id) => appPage.evaluate((t) => chrome.runtime.sendMessage({ type: "snoozeTabs", tabIds: [t], wakeAt: Date.now() + 3600000 }), id);
+        await setRecord(false);
+        const r1 = await snooze(tabs[1].id);
+        assert(r1 && r1.ok && r1.snoozed === 1, `snooze: ${JSON.stringify(r1)}`);
+        const only = await waitFor(async () => (await snoozedList()).find((e) => String(e.url).includes("tf=only")) || null, { timeout: 5000 });
+        await appPage.bringToFront();
+        await showRow(only.id);
+        await appPage.click(`${rowOf(only.id)} .z-cancel`);
+        await appPage.waitForSelector(`${rowOf(only.id)} .z-only`, { timeout: 5000 });
+        const onlyText = await appPage.$eval(rowOf(only.id), (n) => n.textContent);
+        assert(/only copy/i.test(onlyText) && /Wake instead/.test(onlyText), `row: ${onlyText}`);
+        const forgetText = await appPage.$eval(`${rowOf(only.id)} .z-cancel`, (n) => `${n.textContent} | ${n.title}`);
+        assert(!/Recently closed/i.test(forgetText), `the forget button still promises Recently closed: ${forgetText}`);
+        await appPage.click(`${rowOf(only.id)} .z-wake-instead`);
+        const woke = await waitFor(async () => (await ev(() => chrome.tabs.query({}))).find((t) => String(t.url || t.pendingUrl).includes("tf=only")) || null, { timeout: 10000 });
+        extra.push(woke.id);
+
+        await setRecord(true);
+        const r2 = await snooze(tabs[2].id);
+        assert(r2 && r2.ok && r2.snoozed === 1, `snooze 2: ${JSON.stringify(r2)}`);
+        const copy = await waitFor(async () => (await snoozedList()).find((e) => String(e.url).includes("tf=copy") && !e.wokeAt) || null, { timeout: 5000 });
+        await waitFor(async () => (await ev(() => chrome.storage.local.get("recentlyClosed").then((x) => x.recentlyClosed || []))).some((e) => String(e.url).includes("tf=copy")), { timeout: 5000 });
+        await showRow(copy.id);
+        await appPage.click(`${rowOf(copy.id)} .z-cancel`);
+        await waitFor(async () => (await appPage.$eval(`${rowOf(copy.id)} .z-cancel`, (n) => n.textContent)) === "Forget it?", { timeout: 5000 });
+        assert(!(await appPage.$(`${rowOf(copy.id)} .z-only`)), "the only-copy line shows although Recently closed has the page");
+        await appPage.click(`${rowOf(copy.id)} .z-cancel`);
+        await waitFor(async () => !(await snoozedList()).some((e) => e.id === copy.id), { timeout: 5000 });
+        record("TF", "PASS", `recording off: Cancel showed "${onlyText.replace(/\s+/g, " ").trim().slice(0, 120)}", the forget button promised nothing ("${forgetText}"), and Wake instead opened the tab (${woke.id}); recording on (the page in Recently closed): Cancel asked "Forget it?" with no only-copy line, and the second click forgot the snooze.`);
+      } catch (e) {
+        record("TF", "FAIL", e.message);
+      } finally {
+        await setRecord(true).catch(() => {});
+        await ev(() => chrome.storage.local.set({ snoozed: [] })).catch(() => {});
+        for (const id of extra) await ev((tid) => chrome.tabs.remove(tid), id).catch(() => {});
+        if (winId !== null) await ev((id) => chrome.windows.remove(id), winId).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // TG. One snooze per tab (review fix of 1.7.0): two snooze requests for the same tab at once
+    // (a double click) make one entry; a tab Chrome does not close (tabs.remove refused, as during
+    // a tab drag) is not snoozed: its entry is taken back and the reply says so.
+    // ---------------------------------------------------------------
+    if (want("TG")) {
+      let winId = null;
+      try {
+        await resetUi();
+        const tabs = await makeWindow([`${BASE}/one.html?tg=keep`, `${BASE}/two.html?tg=twice`, `${BASE}/three.html?tg=stuck`]);
+        winId = tabs[0].windowId;
+        const wakeAt = Date.now() + 3600000;
+        const [a, b] = await appPage.evaluate(({ id, at }) => Promise.all([
+          chrome.runtime.sendMessage({ type: "snoozeTabs", tabIds: [id], wakeAt: at }),
+          chrome.runtime.sendMessage({ type: "snoozeTabs", tabIds: [id], wakeAt: at }),
+        ]), { id: tabs[1].id, at: wakeAt });
+        assert(a.ok && b.ok && a.snoozed + b.snoozed === 1, `replies: ${JSON.stringify([a, b])}`);
+        await waitFor(async () => !(await tabsOf(winId)).some((t) => t.id === tabs[1].id), { timeout: 5000 });
+        const twice = (await snoozedList()).filter((e) => String(e.url).includes("tg=twice"));
+        assert(twice.length === 1, `entries for the tab: ${twice.length}`);
+
+        await ev(() => {
+          self.__realRemove = chrome.tabs.remove;
+          chrome.tabs.remove = () => Promise.reject(new Error("Tabs cannot be edited right now (user may be dragging a tab)."));
+        });
+        const c = await appPage.evaluate(({ id, at }) => chrome.runtime.sendMessage({ type: "snoozeTabs", tabIds: [id], wakeAt: at }), { id: tabs[2].id, at: wakeAt });
+        await ev(() => { chrome.tabs.remove = self.__realRemove; delete self.__realRemove; });
+        assert(c.ok && c.snoozed === 0 && c.notClosed === 1, `reply: ${JSON.stringify(c)}`);
+        assert((await tabsOf(winId)).some((t) => t.id === tabs[2].id), "the stuck tab is gone");
+        const stuck = (await snoozedList()).filter((e) => String(e.url).includes("tg=stuck"));
+        assert(stuck.length === 0, `the stuck tab kept an entry: ${JSON.stringify(stuck)}`);
+        record("TG", "PASS", `two snooze requests at once for one tab: replies ${a.snoozed} and ${b.snoozed}, one entry, the tab closed once; with tabs.remove refused the tab stayed open, the reply said notClosed ${c.notClosed}, snoozed ${c.snoozed}, and no entry was left to wake it.`);
+      } catch (e) {
+        record("TG", "FAIL", e.message);
+      } finally {
+        await ev(() => { if (self.__realRemove) { chrome.tabs.remove = self.__realRemove; delete self.__realRemove; } }).catch(() => {});
+        await ev(() => chrome.storage.local.set({ snoozed: [] })).catch(() => {});
         if (winId !== null) await ev((id) => chrome.windows.remove(id), winId).catch(() => {});
         await appPage.bringToFront().catch(() => {});
         await resetUi().catch(() => {});
