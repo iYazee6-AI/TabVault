@@ -195,7 +195,7 @@ WHAT IT NEVER DOES
 GOOD TO KNOW
 • Chrome and Edge only: TabVault uses the Chromium tab groups API.
 • It shows the tabs you have open; it does not search your history, and it searches your bookmarks only when you turn Bookmarks on.
-• Incognito windows are only visible if you allow the extension in incognito at chrome://extensions. Focus mode never veils or minimises an incognito window.
+• Incognito windows are only visible if you allow the extension in incognito at chrome://extensions. Focus mode never veils or minimises an incognito window, and TabVault never snoozes, groups by a rule or tidies away an incognito tab.
 
 Open source, plain HTML and JavaScript, no build step and no dependencies, MIT licensed. Source: https://github.com/iYazee6-AI/TabVault
 ```
@@ -705,7 +705,7 @@ same list to tick):
 4. The checks of sections 16 and 17 (the toolbar button in each setting, the
    bookmarks prompt), since 1.5.0 and 1.6.0 never ran in a store build.
 
-1.7.0 package: `dist/tabvault-1.7.0.zip`, 686,719 bytes, 40 files, SHA-256
-`45675f77d1b1561328f25fc6cf63a67e7d6e09659180db1424c594270b3c4f21` (built twice from branch
+1.7.0 package: `dist/tabvault-1.7.0.zip`, 696,138 bytes, 40 files, SHA-256
+`d482a7f28a83092b9148cd2acfc56fcf628c384200e951d51bbf51c6fb9a0b42` (rebuilt after the review fixes of 2026-11-20, built twice from branch
 `feat/tidy-1.7` on a Windows checkout, the same hash both times; rebuild from the `v1.7.0` tag
 once it is reviewed and tagged, and check the hash again before the upload).
