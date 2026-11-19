@@ -105,3 +105,31 @@ test("a notification goes out once per due tidy, only when switched on and allow
 test("the tidy shelf is named by the local date", () => {
   assert.equal(T.tidyShelfName(NOW), "Tidy 2026-11-19");
 });
+
+test("incognito tabs are never listed by the tidy, in any section (nothing of them is stored)", () => {
+  const s = {
+    schema: 1,
+    windows: [
+      { id: 1, type: "normal", incognito: false, tabs: [tab(1, "https://a.com/", { lastAccessed: NOW - 30 * DAY }), tab(2, "https://dup.com/", { lastAccessed: NOW - DAY })], groups: [] },
+      { id: 2, type: "normal", incognito: true, tabs: [
+        tab(3, "https://dup.com/", { lastAccessed: NOW - DAY }),
+        tab(4, "https://secret.com/", { lastAccessed: NOW - 30 * DAY }),
+        tab(5, "https://solo.com/", { groupId: 9 }),
+        tab(6, "https://woke.com/"),
+      ], groups: [{ id: 9, title: "Hidden", color: "red" }] },
+      // A tab that says it is incognito, whatever its window says.
+      { id: 3, type: "normal", tabs: [tab(7, "https://b.com/", { lastAccessed: NOW - 30 * DAY, incognito: true })], groups: [] },
+    ],
+  };
+  const r = T.tidySections(s, { now: NOW, idleDays: 14, woken: [{ id: "z1", wokeAt: NOW - DAY, tabId: 6 }] });
+  const all = [...r.woken, ...r.duplicates, ...r.stale, ...r.lonely].map((x) => x.tabId);
+  assert.deepEqual(all, [1]);
+  assert.deepEqual(r.duplicates, []); // the normal copy has no other copy outside incognito
+});
+
+test("the close path refuses incognito tabs as a second guard", () => {
+  const tabs = [{ id: 1, url: "https://a.com/" }, { id: 2, url: "https://b.com/", incognito: true }, { id: 3, url: "https://c.com/" }];
+  const windows = [{ id: 10, incognito: false }, { id: 11, incognito: true }];
+  tabs[0].windowId = 10; tabs[1].windowId = 10; tabs[2].windowId = 11;
+  assert.deepEqual(T.tidyClosable([1, 2, 3, 4], tabs, windows), { ids: [1], refused: 2, missing: 1 });
+});
