@@ -39,7 +39,13 @@
       if (reschedule) { toast(`Wakes ${whenText(wakeAt)}`); return; }
       App.forgetSelected(tabIds);
       if (fromTidy && r.snoozed) await send({ type: "tidyLog", counts: { snoozed: r.snoozed } });
-      toast(r.snoozed ? `Snoozed ${plural(r.snoozed, "tab")} until ${whenText(wakeAt)}${r.skipped ? `; ${r.skipped} not snoozed (not a web page, or private)` : ""}` : "Nothing snoozed: only web pages in normal windows can be snoozed");
+      // notClosed: Chrome kept those tabs open (it refuses while a tab is dragged), so their
+      // snooze was taken back; already: a second request for tabs a first one is snoozing.
+      const notClosed = r.notClosed ? `${plural(r.notClosed, "tab")} could not close and ${r.notClosed === 1 ? "was" : "were"} not snoozed; try again` : "";
+      if (r.snoozed) toast(`Snoozed ${plural(r.snoozed, "tab")} until ${whenText(wakeAt)}${r.skipped ? `; ${r.skipped} not snoozed (not a web page, or private)` : ""}${notClosed ? `; ${notClosed}` : ""}`);
+      else if (notClosed) toast(`Not snoozed: ${notClosed}`);
+      else if (r.already) toast("Already snoozed");
+      else toast("Nothing snoozed: only web pages in normal windows can be snoozed");
       if (fromTidy) openDialog("tidy");
     };
     const choice = (id, title) => el("button", { type: "button", class: "snooze-choice", dataset: { choice: id }, onclick: () => go(TV.wakeTimeFor(id, Date.now())) },
@@ -66,15 +72,32 @@
     if (!r || !r.ok) { toast(`Could not wake: ${r && r.error}`); return; }
     toast(r.failed ? `Woke ${r.woke}; ${r.failed} could not open (${r.error})` : `Woke ${plural(r.woke, "tab")}`);
   }
+  // Cancel promises a copy in Recently closed only when one is really there: recording may be off,
+  // or more than RECENT_CAP closes since may have pushed it out (TV.inRecentlyClosed).
+  async function hasRecentCopy(e) {
+    const got = await chrome.storage.local.get(TV.RECENT_KEY).catch(() => ({}));
+    return TV.inRecentlyClosed(e, got[TV.RECENT_KEY]);
+  }
   async function cancel(e) {
-    if (st.confirmCancel !== e.id) { st.confirmCancel = e.id; renderSnoozed(); return; }
+    const kept = await hasRecentCopy(e);
+    const c = st.confirmCancel;
+    // First click, or the copy came or went since the question was asked: ask (again) with the truth.
+    if (!c || c.id !== e.id || c.kept !== kept) { st.confirmCancel = { id: e.id, kept }; renderSnoozed(); return; }
     st.confirmCancel = null;
     const r = await send({ type: "snoozeCancel", ids: [e.id] });
-    toast(r && r.ok ? "Snooze cancelled; the page is still in Recently closed" : `Could not cancel: ${r && r.error}`);
+    if (!r || !r.ok) { toast(`Could not cancel: ${r && r.error}`); return; }
+    toast(kept ? "Snooze cancelled; the page is still in Recently closed" : "Snooze cancelled; the page is gone");
+  }
+  function wakeInstead(e) {
+    st.confirmCancel = null;
+    renderSnoozed();
+    return wake([e.id]);
   }
   function snoozeRow(e) {
     const domain = TV.domainOf(e.url);
-    const confirming = st.confirmCancel === e.id;
+    const c = st.confirmCancel && st.confirmCancel.id === e.id ? st.confirmCancel : null;
+    const confirming = Boolean(c);
+    const onlyCopy = c && !c.kept;
     return el("div", { class: "rrow zrow", title: e.url, dataset: { snooze: e.id } },
       App.favicon({ id: `snooze-${e.id}`, favIconUrl: e.favIconUrl }, domain),
       el("span", { class: "rtitle" }, e.title || e.url),
@@ -86,7 +109,9 @@
         : el("span", { class: "when wake mono", title: new Date(e.wakeAt).toLocaleString() }, whenText(e.wakeAt)),
       el("button", { type: "button", class: "z-wake", title: "Open it now", onclick: () => wake([e.id]) }, "Wake now"),
       el("button", { type: "button", class: "z-resched", title: "Pick another time", onclick: () => openDialog("snooze", { reschedule: [e.id], label: `"${(e.title || e.url).slice(0, 40)}"` }) }, "Reschedule"),
-      el("button", { type: "button", class: confirming ? "z-cancel danger" : "z-cancel", title: "Forget this snooze without opening the tab (it stays in Recently closed)", onclick: () => cancel(e) }, confirming ? "Forget it?" : "Cancel"));
+      onlyCopy ? el("span", { class: "z-only", title: "Recently closed does not have this page (recording is off, or it was pushed out). Forgetting the snooze loses it." }, "This is the only copy") : null,
+      onlyCopy ? el("button", { type: "button", class: "z-wake-instead primary", title: "Open it now instead", onclick: () => wakeInstead(e) }, "Wake instead") : null,
+      el("button", { type: "button", class: confirming ? "z-cancel danger" : "z-cancel", title: c && c.kept ? "Forget this snooze without opening the tab (it stays in Recently closed)" : "Forget this snooze without opening the tab", onclick: () => cancel(e) }, onlyCopy ? "Forget it" : confirming ? "Forget it?" : "Cancel"));
   }
   function renderSnoozed() {
     const list = TV.sleeping(st.snoozed).slice().sort((a, b) => a.wakeAt - b.wakeAt);
@@ -252,6 +277,7 @@
       closed = { shelfId: r.shelfId, shelfName: r.shelfName, urls: new Set(items.map((x) => x.url)), since, count: r.shelved };
       picked[key].clear();
       if (r.failed) toast(`${r.failed} could not be saved and stay open`);
+      else if (r.refused) toast(`${plural(r.refused, "private (incognito) tab")} left open: the tidy never stores those`);
       await again();
     }
     async function keep(key) {
