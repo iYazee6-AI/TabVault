@@ -781,26 +781,40 @@ async function armSnoozeAlarm(list) {
   await chrome.alarms.create(SNOOZE_ALARM, { when });
 }
 
+// The whole snooze runs inside the snooze queue: a second request for the same tabs (a double
+// click) starts only after the first one closed them, and skips any tab id already being snoozed
+// or just snoozed (snoozedTabs), so one tab never makes two entries.
 async function snoozeTabs({ tabIds, wakeAt }) {
-  const ids = (Array.isArray(tabIds) ? tabIds : []).map(Number).filter(Number.isInteger);
-  if (!ids.length) return { ok: false, error: "no tab chosen" };
+  const asked = (Array.isArray(tabIds) ? tabIds : []).map(Number).filter(Number.isInteger);
+  if (!asked.length) return { ok: false, error: "no tab chosen" };
   const at = Number(wakeAt);
   const err = TV.wakeError(at, snoozeNow());
   if (err) return { ok: false, error: err };
-  const tabs = (await Promise.all(ids.map((id) => chrome.tabs.get(id).catch(() => null)))).filter(Boolean);
-  const groups = chrome.tabGroups ? await chrome.tabGroups.query({}) : [];
-  const made = TV.snoozeEntries(tabs, new Map(groups.map((g) => [g.id, g])), { wakeAt: at, now: Date.now(), ownPrefix: OWN_PREFIX, run: await browserRun() });
-  const skipped = made.skipped + (ids.length - tabs.length);
-  if (!made.entries.length) return { ok: true, snoozed: 0, skipped };
-  // Written and read back first: a failed write closes nothing.
-  await snoozeWrite(async () => {
+  return snoozeWrite(async () => {
+    const ids = TV.freshSnoozeIds(asked, new Set(snoozedTabs.keys()));
+    const already = new Set(asked).size - ids.length;
+    const tabs = (await Promise.all(ids.map((id) => chrome.tabs.get(id).catch(() => null)))).filter(Boolean);
+    const groups = chrome.tabGroups ? await chrome.tabGroups.query({}) : [];
+    const made = TV.snoozeEntries(tabs, new Map(groups.map((g) => [g.id, g])), { wakeAt: at, now: Date.now(), ownPrefix: OWN_PREFIX, run: await browserRun() });
+    const skipped = made.skipped + (ids.length - tabs.length);
+    if (!made.entries.length) return { ok: true, snoozed: 0, skipped, already };
+    // Written and read back first: a failed write closes nothing.
     const list = await TV.appendSnoozes(chrome.storage.local, made.entries);
     await armSnoozeAlarm(list);
+    made.tabIds.forEach((id) => snoozedTabs.set(id, { wakeAt: at }));
+    setTimeout(() => { for (const id of made.tabIds) snoozedTabs.delete(id); }, 10000);
+    await closeShelved(made.tabIds);
+    // A tab Chrome did not close (it refuses edits while a tab is dragged) is still open: its
+    // entry is taken out again (read back), so it never comes back as a second copy.
+    const stillOpen = new Set((await Promise.all(made.tabIds.map((id) => chrome.tabs.get(id).then(() => id, () => null)))).filter((x) => x !== null));
+    if (!stillOpen.size) return { ok: true, snoozed: made.entries.length, skipped, already, wakeAt: at };
+    const drop = made.entries.filter((_, i) => stillOpen.has(made.tabIds[i])).map((e) => e.id);
+    for (const id of stillOpen) snoozedTabs.delete(id);
+    const back = await TV.writeSnoozes(chrome.storage.local, TV.removeEntries(await TV.readSnoozes(chrome.storage.local), drop));
+    rememberWoken(back);
+    await armSnoozeAlarm(back);
+    return { ok: true, snoozed: made.entries.length - drop.length, skipped, already, notClosed: drop.length, wakeAt: at };
   });
-  made.tabIds.forEach((id) => snoozedTabs.set(id, { wakeAt: at }));
-  setTimeout(() => { for (const id of made.tabIds) snoozedTabs.delete(id); }, 10000);
-  await closeShelved(made.tabIds);
-  return { ok: true, snoozed: made.entries.length, skipped, wakeAt: at };
 }
 
 // Opens one bucket of the wake plan: into its window, or (windowId null) into one new window.
@@ -857,29 +871,38 @@ function wakeDue({ ids = null, now = snoozeNow() } = {}) {
     const area = chrome.storage.local;
     const stored = await TV.readSnoozes(area);
     let list = TV.pruneWoken(stored, now);
+    // A wake cut short last time (its entries still "waking"): woken when its tab is open,
+    // else one failed try, so it is opened again only under the retry cap, never twice.
+    let dirty = list.length !== stored.length;
+    if (list.some((e) => typeof e.waking === "number")) {
+      const open = await chrome.tabs.query({}).catch(() => []);
+      const r = TV.resolveWaking(list, open, Date.now());
+      list = r.list;
+      dirty = dirty || r.changed;
+    }
     const want = Array.isArray(ids) ? new Set(ids.map(String)) : null;
     const pick = want ? TV.sleeping(list).filter((e) => want.has(e.id)) : TV.dueEntries(list, now);
     if (pick.length) {
       const windows = await chrome.windows.getAll({ windowTypes: ["normal"] }).catch(() => []);
       const live = new Set(windows.filter((w) => !w.incognito).map((w) => w.id));
-      const woke = [];
-      const failed = [];
-      let error = "";
       const run = await browserRun();
-      for (const bucket of TV.wakePlan(pick, live, run)) {
-        const r = await openSnoozeBucket(bucket);
-        woke.push(...r.woke);
-        failed.push(...r.failed);
-        if (r.error) error = r.error;
-      }
-      list = TV.markWoken(list, woke, Date.now());
-      if (failed.length) list = TV.markFailed(list, failed, error, Date.now());
-      await TV.writeSnoozes(area, list);
-      rememberWoken(list);
-      await armSnoozeAlarm(list);
-      return { ok: true, woke: woke.length, failed: failed.length, error };
+      // Each entry is written as "waking" and read back before its tab opens (wakeEntries); an
+      // entry whose mark could not be written is not opened.
+      const r = await TV.wakeEntries(area, list, pick, async (go) => {
+        const out = { woke: [], failed: [], error: "" };
+        for (const bucket of TV.wakePlan(go, live, run)) {
+          const b = await openSnoozeBucket(bucket);
+          out.woke.push(...b.woke);
+          out.failed.push(...b.failed);
+          if (b.error) out.error = b.error;
+        }
+        return out;
+      }, Date.now());
+      rememberWoken(r.list);
+      await armSnoozeAlarm(r.list);
+      return { ok: true, woke: r.woke.length, failed: r.failed.length, error: r.error };
     }
-    if (list.length !== stored.length) await TV.writeSnoozes(area, list);
+    if (dirty) list = await TV.writeSnoozes(area, list);
     rememberWoken(list);
     await armSnoozeAlarm(list);
     return { ok: true, woke: 0, failed: 0 };
@@ -904,7 +927,8 @@ function snoozeReschedule({ ids, wakeAt }) {
   if (err) return Promise.resolve({ ok: false, error: err });
   return snoozeEdit((list) => TV.reschedule(list, (Array.isArray(ids) ? ids : []).map(String), at));
 }
-// Cancel forgets the snooze without opening the tab (it is still in Recently closed).
+// Cancel forgets the snooze without opening the tab. The page asks first, and says plainly when
+// Recently closed has no copy of the page (recording off, or pushed past its cap).
 function snoozeCancel({ ids }) {
   return snoozeEdit((list) => TV.removeEntries(list, (Array.isArray(ids) ? ids : []).map(String)));
 }
@@ -1080,7 +1104,13 @@ function tidyLogAdd(counts) {
 }
 // Close into the vault: the shelf "Tidy <date>" (found by name, else made), then the shelving
 // path (written, read back, then closed).
+// The tidy never lists an incognito tab (lib/tidy.js); this refuses one anyway (second guard).
 async function tidyClose({ tabIds }) {
+  const asked = (Array.isArray(tabIds) ? tabIds : []).map(Number).filter(Number.isInteger);
+  const [tabs, windows] = await Promise.all([chrome.tabs.query({}), chrome.windows.getAll({})]);
+  const pick = TV.tidyClosable(asked, tabs, windows);
+  if (!pick.ids.length) return { ok: false, error: pick.refused ? "Private (incognito) tabs are never closed into the vault." : "no tab chosen", refused: pick.refused };
+  tabIds = pick.ids;
   const name = TV.tidyShelfName(Date.now());
   const shelf = await shelfWrite(async () => {
     const found = (await TV.listShelves(chrome.storage.local)).find((s) => s.name === name);
@@ -1088,7 +1118,7 @@ async function tidyClose({ tabIds }) {
   });
   const r = await shelveTabs({ tabIds, shelfId: shelf.id });
   if (r.ok && r.shelved) await tidyLogAdd({ closed: r.shelved });
-  return { ...r, shelfId: shelf.id, shelfName: shelf.name };
+  return { ...r, shelfId: shelf.id, shelfName: shelf.name, refused: pick.refused };
 }
 // Keep: the pages stay out of the tidy for 30 days; a woken snooze among them counts as seen.
 async function tidyKeep({ urls, entryIds }) {
