@@ -2213,7 +2213,8 @@ async function main() {
         // Save a window as a bookmark folder from its card.
         const win = await bm((urls) => chrome.windows.create({ url: urls, focused: false }), [`${BASE}/one.html?ah=w1`, `${BASE}/two.html?ah=w2`]);
         extraWindows.push(win.id);
-        await waitFor(async () => (await bm((id) => chrome.tabs.query({ windowId: id }), win.id)).every((t) => t.url && t.url.includes("ah=w")));
+        // Both tabs, each with its address: windows.create can report the window before its second tab.
+        await waitFor(async () => { const ts = await bm((id) => chrome.tabs.query({ windowId: id }), win.id); return ts.length === 2 && ts.every((t) => t.url && t.url.includes("ah=w")); });
         await appPage.evaluate(() => window.TabVaultApp.refresh());
         const saveBtn = `#grid section.window[data-window="${win.id}"] .whead .bm-save`;
         await appPage.waitForSelector(saveBtn, { timeout: 8000 });
@@ -2225,7 +2226,7 @@ async function main() {
           const [other] = await chrome.bookmarks.getSubTree("2");
           const tv = other.children.find((n) => !n.url && n.title === "TabVault");
           const f = tv && tv.children.find((n) => n.title === "AH Saved window");
-          return f ? f.children.map((n) => n.url) : null;
+          return f && f.children.length >= 2 ? f.children.map((n) => n.url) : null;
         }), { timeout: 8000 });
         assert(saved.length === 2 && saved[0].endsWith("one.html?ah=w1") && saved[1].endsWith("two.html?ah=w2"), `saved folder ${JSON.stringify(saved)}`);
 
@@ -2576,14 +2577,15 @@ async function main() {
         await appPage.click("#tidy-restore");
         const restored = await waitFor(async () => (await tabsOf(appWindow)).find((t) => t.url === dupUrl) || null, { timeout: 10000 });
         extra.push(restored.id);
-        const left = await ev(async (url) => {
+        // Restore opens the tab first, then takes it off the shelf: wait for the second step.
+        const onShelf = () => ev(async ({ url, name }) => {
           const index = (await chrome.storage.local.get("shelfIndex")).shelfIndex || [];
-          const s = index.find((x) => x.name.startsWith("Tidy "));
+          const s = index.find((x) => x.name === name);
           const keys = Array.from({ length: s.chunks }, (_, n) => `shelf:${s.id}:${n}`);
           const got = await chrome.storage.local.get(keys);
           return keys.flatMap((k) => got[k] || []).filter((i) => i.url === url).length;
-        }, dupUrl);
-        assert(left === 0, `still on the shelf after Restore: ${left}`);
+        }, { url: dupUrl, name: shelf.name });
+        await waitFor(async () => (await onShelf()) === 0, { timeout: 5000 }).catch(async () => { throw new Error(`still on the shelf after Restore: ${await onShelf()}`); });
 
         await appPage.waitForSelector(`#dialog .tidy-sec[data-section="lonely"] .crow[data-tab="${solo.id}"]`);
         await appPage.click(`#dialog .tidy-sec[data-section="lonely"] .crow[data-tab="${solo.id}"] input`);
