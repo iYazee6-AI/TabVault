@@ -55,7 +55,7 @@ const tabs = [
 
 test("snoozeEntries keeps the url, title, pinned state, group and window; skips the rest", () => {
   const now = at(2026, 11, 19, 12);
-  const { entries, skipped } = S.snoozeEntries(tabs, groups, { wakeAt: now + HOUR, now, ownPrefix: own });
+  const { entries, skipped } = S.snoozeEntries(tabs, groups, { wakeAt: now + HOUR, now, ownPrefix: own, run: 42 });
   assert.equal(entries.length, 3);
   assert.equal(skipped, 3);
   assert.deepEqual(S.snoozeEntries(tabs, groups, { wakeAt: now + HOUR, now, ownPrefix: own }).tabIds, [1, 2, 6]);
@@ -66,6 +66,7 @@ test("snoozeEntries keeps the url, title, pinned state, group and window; skips 
   assert.equal(a.windowId, 10);
   assert.equal(a.wakeAt, now + HOUR);
   assert.equal(a.snoozedAt, now);
+  assert.equal(a.run, 42);
   assert.deepEqual(b.group, { title: "Work", color: "blue" });
   assert.equal(f.url, "file:///C:/notes.txt");
   assert.ok(entries.every((e) => typeof e.id === "string" && e.id && !e.wokeAt && e.attempts === 0));
@@ -93,9 +94,12 @@ test("the wake plan puts entries back in their live windows, the rest in one new
     entry("d", { windowId: 98 }),
     entry("e", { windowId: 11 }),
   ];
-  const plan = S.wakePlan(list, new Set([10, 11]));
+  const plan = S.wakePlan(list.map((e) => ({ ...e, run: 7 })), new Set([10, 11]), 7);
   assert.deepEqual(plan.map((b) => [b.windowId, b.entries.map((e) => e.id)]), [[10, ["c", "a"]], [11, ["e"]], [null, ["b", "d"]]]);
   assert.deepEqual(S.wakePlan([], new Set([10])), []);
+  // Another browser run: the same window id is a stranger now, so a new window.
+  assert.deepEqual(S.wakePlan([entry("a", { windowId: 10, run: 6 })], new Set([10]), 7).map((b) => b.windowId), [null]);
+  assert.deepEqual(S.wakePlan([entry("a", { windowId: 10 })], new Set([10]), null).map((b) => b.windowId), [null]);
 });
 
 test("woken entries keep the new tab id; failures count tries and keep the entry", () => {

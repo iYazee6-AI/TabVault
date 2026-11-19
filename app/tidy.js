@@ -226,11 +226,12 @@
     let weekLine = "";
     let closed = null; // { shelfId, shelfName, urls, since, count }
 
+    // window.tidyClockOffset: the e2e harness moves the tidy clock with it; nothing else sets it.
     async function load() {
       const settings = App.getSettings();
       const got = await chrome.storage.local.get([TV.TIDY_KEPT_KEY, TV.TIDY_LOG_KEY, TV.SNOOZE_KEY]).catch(() => ({}));
       sections = TV.tidySections(App.getSession(), {
-        now: Date.now(), idleDays: settings.tidy.idleDays, ignoreHash: settings.ignoreHash !== false,
+        now: Date.now() + (Number(window.tidyClockOffset) || 0), idleDays: settings.tidy.idleDays, ignoreHash: settings.ignoreHash !== false,
         kept: got[TV.TIDY_KEPT_KEY] || {}, woken: TV.woken(got[TV.SNOOZE_KEY] || []), ownPrefix: OWN_PREFIX,
       });
       weekLine = TV.weekLine(got[TV.TIDY_LOG_KEY] || [], Date.now());

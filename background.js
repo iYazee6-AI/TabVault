@@ -767,6 +767,12 @@ const wakingTabs = new Set();
 // Tab ids of woken entries, so tabs.onActivated reads storage only when it matters.
 let wokenTabIds = new Set();
 function rememberWoken(list) { wokenTabIds = new Set(TV.woken(list).map((e) => e.tabId)); }
+// This browser run (the recently-closed marker in storage.session, cleared with the browser):
+// an entry goes back into its window only within the run it was snoozed in. null when unknown.
+async function browserRun() {
+  const r = await chrome.storage.session.get(SESSION_START_KEY).catch(() => ({}));
+  return r[SESSION_START_KEY] === undefined ? null : r[SESSION_START_KEY];
+}
 
 async function armSnoozeAlarm(list) {
   const next = TV.nextWakeAt(list);
@@ -783,7 +789,7 @@ async function snoozeTabs({ tabIds, wakeAt }) {
   if (err) return { ok: false, error: err };
   const tabs = (await Promise.all(ids.map((id) => chrome.tabs.get(id).catch(() => null)))).filter(Boolean);
   const groups = chrome.tabGroups ? await chrome.tabGroups.query({}) : [];
-  const made = TV.snoozeEntries(tabs, new Map(groups.map((g) => [g.id, g])), { wakeAt: at, now: Date.now(), ownPrefix: OWN_PREFIX });
+  const made = TV.snoozeEntries(tabs, new Map(groups.map((g) => [g.id, g])), { wakeAt: at, now: Date.now(), ownPrefix: OWN_PREFIX, run: await browserRun() });
   const skipped = made.skipped + (ids.length - tabs.length);
   if (!made.entries.length) return { ok: true, snoozed: 0, skipped };
   // Written and read back first: a failed write closes nothing.
@@ -859,7 +865,8 @@ function wakeDue({ ids = null, now = snoozeNow() } = {}) {
       const woke = [];
       const failed = [];
       let error = "";
-      for (const bucket of TV.wakePlan(pick, live)) {
+      const run = await browserRun();
+      for (const bucket of TV.wakePlan(pick, live, run)) {
         const r = await openSnoozeBucket(bucket);
         woke.push(...r.woke);
         failed.push(...r.failed);

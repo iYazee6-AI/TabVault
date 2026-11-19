@@ -14,7 +14,7 @@ const BASE = `http://localhost:${PORT}/test-pages`;
 // extensions), so no window appears on the screen; the same switch as tools/screenshots.js.
 const HEADLESS = process.env.TABVAULT_HEADLESS === "1";
 
-const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH"];
+const ORDER = ["A", "B", "C", "D", "E", "F", "G", "H", "I-a", "I-b", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "TA", "TC", "TD", "TB"];
 // --only W,X (or TABVAULT_E2E_ONLY=W,X) runs just those scenarios. The shared fixtures and the
 // steps between scenarios still run, so a scenario alone sees the same setup as in the full run.
 const onlyArg = process.argv.indexOf("--only");
@@ -2315,6 +2315,335 @@ async function main() {
           if (settings.bookmarks) { settings.bookmarks = false; await chrome.storage.local.set({ settings }); }
         }).catch(() => {});
         await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // 1.7 "Tidy" scenarios. Their ids start with T so they never meet the AI branch's AI, AJ, AK.
+    // ---------------------------------------------------------------
+    const ev = (fn, arg) => worker().then((w) => w.evaluate(fn, arg));
+    const tabsOf = (windowId) => ev((id) => chrome.tabs.query({ windowId: id }), windowId);
+    const snoozedList = () => ev(() => chrome.storage.local.get("snoozed").then((r) => r.snoozed || []));
+    async function makeWindow(urls) {
+      const w = await ev((u) => chrome.windows.create({ url: u, focused: false }), urls);
+      await waitFor(async () => {
+        const ts = await tabsOf(w.id);
+        return ts.length === urls.length && ts.every((t) => t.url && t.url !== "about:blank" && t.status === "complete");
+      }, { timeout: 10000 });
+      return (await tabsOf(w.id)).sort((a, b) => a.index - b.index);
+    }
+
+    // ---------------------------------------------------------------
+    // TA. Snooze (1.7): a grouped tab and a pinned tab of one window, snoozed from the selection
+    // bar's dialog ("Later today"), close at once; the list keeps both with their group, pin and
+    // window, Recently closed tags them; the Snoozed section lists them; Wake now on each brings
+    // them back into the same window, the group made again with its name and colour, the pin kept.
+    // ---------------------------------------------------------------
+    if (want("TA")) {
+      let winId = null;
+      let step = "setup";
+      try {
+        await resetUi();
+        const tabs = await makeWindow([`${BASE}/one.html?ta=keep`, `${BASE}/two.html?ta=grouped`, `${BASE}/three.html?ta=pinned`]);
+        winId = tabs[0].windowId;
+        const [, grouped, pinned] = tabs;
+        await ev(async ({ g, p, w }) => {
+          const gid = await chrome.tabs.group({ tabIds: [g], createProperties: { windowId: w } });
+          await chrome.tabGroups.update(gid, { title: "TA Grp", color: "green" });
+          await chrome.tabs.update(p, { pinned: true });
+        }, { g: grouped.id, p: pinned.id, w: winId });
+        await appPage.bringToFront();
+        await appPage.waitForSelector(`#grid .tab[data-tab="${pinned.id}"]`, { timeout: 10000 });
+        await appPage.evaluate((ids) => window.TabVaultApp.selectTabs(ids), [grouped.id, pinned.id]);
+        await appPage.click("#sel-snooze");
+        await appPage.waitForSelector('#dialog .snooze-choice[data-choice="later"]');
+        const before = Date.now();
+        await appPage.click('#dialog .snooze-choice[data-choice="later"]');
+        step = "the two tabs close";
+        await waitFor(async () => (await tabsOf(winId)).length === 1, { timeout: 10000 });
+        const list = await snoozedList();
+        const mine = list.filter((e) => String(e.url).includes("ta="));
+        assert(mine.length === 2, `snoozed entries: ${JSON.stringify(list.map((e) => e.url))}`);
+        const g = mine.find((e) => e.url.includes("grouped"));
+        const p = mine.find((e) => e.url.includes("pinned"));
+        assert(g.group && g.group.title === "TA Grp" && g.group.color === "green" && !g.pinned, `grouped entry: ${JSON.stringify(g)}`);
+        assert(p.pinned === true && p.windowId === winId, `pinned entry: ${JSON.stringify(p)}`);
+        const ahead = (g.wakeAt - before) / 3600000;
+        assert(ahead > 2.9 && ahead < 3.1, `wake in ${ahead} hours`);
+        step = "Recently closed tags both";
+        const recent = await waitFor(async () => {
+          const r = await ev(() => chrome.storage.local.get("recentlyClosed").then((x) => x.recentlyClosed || []));
+          const tagged = r.filter((e) => String(e.url).includes("ta=") && e.snooze && e.snooze.wakeAt === g.wakeAt);
+          return tagged.length === 2 ? tagged : null;
+        }, { timeout: 5000 });
+
+        step = "the Snoozed section shows";
+        await waitFor(() => appPage.$eval("#snoozed", (n) => !n.hidden), { timeout: 5000 });
+        const count = await appPage.$eval("#snoozed-count", (n) => n.textContent);
+        await appPage.click("#snoozed-toggle");
+        await appPage.waitForSelector(`#snoozed-list [data-snooze="${g.id}"]`);
+        const wakeText = await appPage.$eval(`#snoozed-list [data-snooze="${g.id}"] .wake`, (n) => n.textContent);
+        await appPage.click(`#snoozed-list [data-snooze="${g.id}"] .z-wake`);
+        step = "the grouped tab wakes";
+        await waitFor(async () => (await tabsOf(winId)).length === 2, { timeout: 10000 });
+        await appPage.waitForSelector(`#snoozed-list [data-snooze="${p.id}"]`);
+        await appPage.click(`#snoozed-list [data-snooze="${p.id}"] .z-wake`);
+        step = "the pinned tab wakes";
+        const back = await waitFor(async () => {
+          const ts = await tabsOf(winId);
+          const has = (k) => ts.some((t) => String(t.url || t.pendingUrl).includes(k));
+          return ts.length === 3 && has("ta=grouped") && has("ta=pinned") && ts.every((t) => t.groupId !== -1 || !String(t.url || t.pendingUrl).includes("ta=grouped")) ? ts : null;
+        }, { timeout: 10000 });
+        const gBack = back.find((t) => String(t.url || t.pendingUrl).includes("ta=grouped"));
+        const pBack = back.find((t) => String(t.url || t.pendingUrl).includes("ta=pinned"));
+        const group = await ev((id) => chrome.tabGroups.get(id), gBack.groupId);
+        assert(group.title === "TA Grp" && group.color === "green", `group after wake: ${JSON.stringify(group)}`);
+        assert(pBack.pinned === true, "the pinned tab came back unpinned");
+        const after = (await snoozedList()).filter((e) => String(e.url).includes("ta="));
+        assert(after.every((e) => e.wokeAt && typeof e.tabId === "number"), `entries after wake: ${JSON.stringify(after)}`);
+        step = "the Snoozed section hides";
+        await waitFor(() => appPage.$eval("#snoozed", (n) => n.hidden), { timeout: 5000 });
+        record("TA", "PASS", `2 tabs snoozed from the selection bar (Later today, ${ahead.toFixed(2)} h ahead) and closed at once; entries keep group "TA Grp" green, pinned and window ${winId}; Recently closed tagged ${recent.length} with the wake time; Snoozed listed ${count} ("${wakeText}"); Wake now brought both back into window ${winId}: the group made again "TA Grp" green, the pin kept; both entries marked woken with the new tab ids; the section hid.`);
+      } catch (e) {
+        record("TA", "FAIL", `${step}: ${e.message}`);
+      } finally {
+        if (winId !== null) await ev((id) => chrome.windows.remove(id), winId).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // TC. Group rules (1.7): a rule written in the Group rules dialog (site 127.0.0.1, group
+    // "TC Local", purple) groups a new tab of that site; a tab of another site (localhost) stays
+    // ungrouped; a tab taken out of the group is left alone, also after it goes to another page of
+    // the same site, and comes back under the rule only after it went to a different site; with the
+    // rule off a new tab stays out, then "Run rules on open tabs now" previews it, Apply groups it
+    // and Undo puts it back where it was.
+    // ---------------------------------------------------------------
+    if (want("TC")) {
+      let winId = null;
+      const LOCAL = `http://127.0.0.1:${PORT}/test-pages`;
+      const groupOf = async (tabId) => {
+        const t = await ev((id) => chrome.tabs.get(id), tabId);
+        if (t.groupId === -1) return null;
+        return ev((id) => chrome.tabGroups.get(id), t.groupId);
+      };
+      const navigate = async (tabId, url) => {
+        await ev(({ id, u }) => chrome.tabs.update(id, { url: u }), { id: tabId, u: url });
+        await waitFor(async () => { const t = await ev((id) => chrome.tabs.get(id), tabId); return t.url === url && t.status === "complete"; }, { timeout: 10000 });
+        await new Promise((r) => setTimeout(r, 800)); // let the worker's rule run
+      };
+      try {
+        await resetUi();
+        await openMenuItem("#btn-group-rules");
+        await appPage.waitForSelector("#grules-add");
+        const emptyText = await appPage.$eval("#grules-list", (n) => n.textContent);
+        await appPage.click("#grules-add");
+        await appPage.fill("#grule-site", "127.0.0.1");
+        await appPage.fill("#grule-group", "TC Local");
+        await appPage.selectOption("#grule-color", "purple");
+        await appPage.click("#grule-save");
+        const rules = await waitFor(async () => { const s = await ev(() => chrome.storage.local.get("settings").then((r) => r.settings.groupRules || [])); return s.length === 1 ? s : null; }, { timeout: 5000 });
+        assert(rules[0].site === "127.0.0.1" && rules[0].group === "TC Local" && rules[0].color === "purple", `rule: ${JSON.stringify(rules[0])}`);
+        await resetUi();
+
+        const tabs = await makeWindow([`${LOCAL}/one.html?tc=1`, `${BASE}/two.html?tc=other`]);
+        winId = tabs[0].windowId;
+        const [ruled, other] = tabs;
+        const g1 = await waitFor(() => groupOf(ruled.id), { timeout: 8000 });
+        assert(g1.title === "TC Local" && g1.color === "purple", `group: ${JSON.stringify(g1)}`);
+        assert((await groupOf(other.id)) === null, "the localhost tab was grouped");
+
+        // The user takes it out of the group.
+        await ev((id) => chrome.tabs.ungroup(id), ruled.id);
+        await new Promise((r) => setTimeout(r, 800));
+        const alone = await ev(() => chrome.storage.session.get("groupRulesLeftAlone").then((r) => r.groupRulesLeftAlone || {}));
+        assert(alone[String(ruled.id)] === "127.0.0.1", `left alone: ${JSON.stringify(alone)}`);
+        assert((await groupOf(ruled.id)) === null, "regrouped right after being taken out");
+        await navigate(ruled.id, `${LOCAL}/three.html?tc=same-site`);
+        assert((await groupOf(ruled.id)) === null, "regrouped after a navigation inside the same site");
+        await navigate(ruled.id, `${BASE}/three.html?tc=elsewhere`);
+        assert((await groupOf(ruled.id)) === null, "grouped on another site");
+        await navigate(ruled.id, `${LOCAL}/two.html?tc=back`);
+        const g2 = await waitFor(() => groupOf(ruled.id), { timeout: 8000 });
+        assert(g2.title === "TC Local", `regrouped into ${JSON.stringify(g2)}`);
+
+        // Rule off: a new tab stays out; Run now previews it, Apply groups it, Undo puts it back.
+        await openMenuItem("#btn-group-rules");
+        await appPage.waitForSelector("#grules-list .grule-on");
+        await appPage.click("#grules-list .grule-on");
+        await waitFor(async () => (await ev(() => chrome.storage.local.get("settings").then((r) => r.settings.groupRules[0].enabled))) === false, { timeout: 5000 });
+        const late = await ev(({ w, u }) => chrome.tabs.create({ windowId: w, url: u, active: false, index: 1 }), { w: winId, u: `${LOCAL}/one.html?tc=late` });
+        await waitFor(async () => (await ev((id) => chrome.tabs.get(id), late.id)).status === "complete", { timeout: 10000 });
+        await new Promise((r) => setTimeout(r, 800));
+        assert((await groupOf(late.id)) === null, "grouped while the rule was off");
+        const lateIndex = (await ev((id) => chrome.tabs.get(id), late.id)).index;
+        await appPage.click("#grules-list .grule-on");
+        await waitFor(async () => (await ev(() => chrome.storage.local.get("settings").then((r) => r.settings.groupRules[0].enabled))) === true, { timeout: 5000 });
+        await appPage.click("#grules-run");
+        await appPage.waitForSelector("#grules-preview-line");
+        const previewIds = await appPage.$$eval("#grules-preview .crow", (rows) => rows.map((r) => Number(r.dataset.tab)));
+        const previewLine = await appPage.$eval("#grules-preview-line", (n) => n.textContent);
+        assert(previewIds.includes(late.id), `preview: ${JSON.stringify(previewIds)} (${previewLine})`);
+        assert((await groupOf(late.id)) === null, "the preview moved the tab");
+        await appPage.click("#grules-apply");
+        await appPage.waitForSelector("#grules-result");
+        const resultText = await appPage.$eval("#grules-result", (n) => n.textContent);
+        const g3 = await groupOf(late.id);
+        assert(g3 && g3.title === "TC Local", `after Apply: ${JSON.stringify(g3)}`);
+        await appPage.click("#grules-undo");
+        await waitFor(async () => (await groupOf(late.id)) === null, { timeout: 5000 });
+        const undoneIndex = (await ev((id) => chrome.tabs.get(id), late.id)).index;
+        assert(undoneIndex === lateIndex, `index after undo ${undoneIndex}, before ${lateIndex}`);
+        record("TC", "PASS", `the dialog started empty ("${emptyText.slice(0, 40)}"); the rule saved (127.0.0.1 -> "TC Local", purple); a new 127.0.0.1 tab joined "TC Local" purple, the localhost tab stayed out; taken out of the group it was left alone (session map {${ruled.id}: "127.0.0.1"}), also after a page of the same site, and went back into "TC Local" only after a visit to another site; with the rule off a new tab stayed out; Run now previewed ${previewIds.length} ("${previewLine}"), Apply: "${resultText}", Undo put it back ungrouped at index ${undoneIndex}.`);
+      } catch (e) {
+        record("TC", "FAIL", e.message);
+      } finally {
+        await ev(async () => {
+          const { settings = {} } = await chrome.storage.local.get("settings");
+          settings.groupRules = [];
+          await chrome.storage.local.set({ settings });
+        }).catch(() => {});
+        if (winId !== null) await ev((id) => chrome.windows.remove(id), winId).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // TD. The weekly tidy (1.7): a week after the last tidy the worker's check marks it due and the
+    // page shows the bar; Open tidy lists a duplicate, a group with one tab and (with the tidy
+    // clock 20 days on) tabs not visited for 14 days, each tab once; Close into the vault puts the
+    // ticked duplicate on the shelf "Tidy <date>" and closes it; Restore brings it back and takes
+    // it off the shelf; Keep hides the lonely group's tab; the week's line counts both; Done for
+    // this week starts a new week and hides the bar.
+    // ---------------------------------------------------------------
+    if (want("TD")) {
+      let winId = null;
+      const extra = [];
+      try {
+        await resetUi();
+        // The lonely group tab first: the active tab of its window is never "not visited", so with the
+        // clock 20 days on it stays in its own section.
+        const tabs = await makeWindow([`${BASE}/two.html?td=solo`, `${BASE}/one.html?td=dup`, `${BASE}/one.html?td=dup`]);
+        winId = tabs[0].windowId;
+        const solo = tabs[0];
+        await ev(async ({ id, w }) => {
+          const gid = await chrome.tabs.group({ tabIds: [id], createProperties: { windowId: w } });
+          await chrome.tabGroups.update(gid, { title: "TD Solo", color: "orange" });
+        }, { id: solo.id, w: winId });
+        const DAY = 24 * 3600000;
+        await ev((at) => chrome.storage.local.set({ tidyState: { lastAt: at } }), Date.now() - 8 * DAY);
+        const check = await ev(() => self.tidyCheck());
+        assert(check.due === true && typeof check.state.dueAt === "number", `check: ${JSON.stringify(check)}`);
+        await appPage.bringToFront();
+        await waitFor(() => appPage.$eval("#tidy-bar", (n) => !n.hidden), { timeout: 5000 });
+        await appPage.evaluate((ms) => { window.tidyClockOffset = ms; }, 20 * DAY);
+        await appPage.click("#tidy-open");
+        await appPage.waitForSelector('#dialog .tidy-sec[data-section="duplicates"]');
+        const ids = (sec) => appPage.$$eval(`#dialog .tidy-sec[data-section="${sec}"] .crow`, (rows) => rows.map((r) => Number(r.dataset.tab)));
+        const dupIds = (await ids("duplicates")).filter((id) => tabs.some((t) => t.id === id));
+        const lonelyIds = (await ids("lonely")).filter((id) => tabs.some((t) => t.id === id));
+        const staleIds = await ids("stale");
+        assert(dupIds.length === 1, `duplicates of ours: ${JSON.stringify(dupIds)}`);
+        if (!(lonelyIds.length === 1 && lonelyIds[0] === solo.id)) {
+          const dump = await appPage.$$eval("#dialog .tidy-sec", (secs) => secs.map((x) => `${x.dataset.section}: ${[...x.querySelectorAll(".crow")].map((r) => r.dataset.tab + " " + r.title).join(", ")}`));
+          const sess = await appPage.evaluate((id) => window.TabVaultApp.getSession().windows.flatMap((w) => w.tabs).filter((t) => t.id === id), solo.id);
+          throw new Error(`lonely: ${JSON.stringify(lonelyIds)}; solo ${solo.id}; ${dump.join(" | ")}; session tab ${JSON.stringify(sess)}`);
+        }
+        const all = [...(await ids("woken")), ...(await ids("duplicates")), ...staleIds, ...(await ids("lonely"))];
+        assert(new Set(all).size === all.length, `a tab listed twice: ${JSON.stringify(all)}`);
+        const keptCopy = tabs.find((t) => t.url.includes("td=dup") && t.id !== dupIds[0]);
+        assert(staleIds.includes(keptCopy.id), `the other copy is not in "not visited": ${JSON.stringify(staleIds)}`);
+
+        const dupUrl = tabs.find((t) => t.id === dupIds[0]).url;
+        await appPage.click(`#dialog .tidy-sec[data-section="duplicates"] .crow[data-tab="${dupIds[0]}"] input`);
+        await appPage.click('#dialog .tidy-sec[data-section="duplicates"] .t-close');
+        await appPage.waitForSelector("#tidy-restore", { timeout: 10000 });
+        await waitFor(async () => !(await tabsOf(winId)).some((t) => t.id === dupIds[0]), { timeout: 5000 });
+        const shelf = await ev(async (url) => {
+          const index = (await chrome.storage.local.get("shelfIndex")).shelfIndex || [];
+          const s = index.find((x) => x.name.startsWith("Tidy "));
+          if (!s) return null;
+          const keys = Array.from({ length: s.chunks }, (_, n) => `shelf:${s.id}:${n}`);
+          const got = await chrome.storage.local.get(keys);
+          return { name: s.name, items: keys.flatMap((k) => got[k] || []).filter((i) => i.url === url).length };
+        }, dupUrl);
+        assert(shelf && shelf.items === 1, `shelf: ${JSON.stringify(shelf)}`);
+        const appWindow = await appPage.evaluate(() => chrome.tabs.getCurrent().then((x) => x.windowId));
+        await appPage.click("#tidy-restore");
+        const restored = await waitFor(async () => (await tabsOf(appWindow)).find((t) => t.url === dupUrl) || null, { timeout: 10000 });
+        extra.push(restored.id);
+        const left = await ev(async (url) => {
+          const index = (await chrome.storage.local.get("shelfIndex")).shelfIndex || [];
+          const s = index.find((x) => x.name.startsWith("Tidy "));
+          const keys = Array.from({ length: s.chunks }, (_, n) => `shelf:${s.id}:${n}`);
+          const got = await chrome.storage.local.get(keys);
+          return keys.flatMap((k) => got[k] || []).filter((i) => i.url === url).length;
+        }, dupUrl);
+        assert(left === 0, `still on the shelf after Restore: ${left}`);
+
+        await appPage.waitForSelector(`#dialog .tidy-sec[data-section="lonely"] .crow[data-tab="${solo.id}"]`);
+        await appPage.click(`#dialog .tidy-sec[data-section="lonely"] .crow[data-tab="${solo.id}"] input`);
+        await appPage.click('#dialog .tidy-sec[data-section="lonely"] .t-keep');
+        await waitFor(async () => !(await ids("lonely")).includes(solo.id), { timeout: 5000 });
+        const kept = await ev(() => chrome.storage.local.get("tidyKept").then((r) => Object.keys(r.tidyKept || {})));
+        assert(kept.some((k) => k.includes("td=solo")), `kept: ${JSON.stringify(kept)}`);
+        const week = await appPage.$eval("#tidy-week", (n) => n.textContent);
+        assert(week.includes("1 closed into the vault") && week.includes("1 kept"), `week line: ${week}`);
+        await appPage.click("#tidy-done");
+        await waitFor(() => appPage.$eval("#tidy-bar", (n) => n.hidden), { timeout: 5000 });
+        const state = await ev(() => chrome.storage.local.get("tidyState").then((r) => r.tidyState));
+        assert(state && typeof state.lastAt === "number" && state.dueAt === undefined && Date.now() - state.lastAt < 60000, `state: ${JSON.stringify(state)}`);
+        record("TD", "PASS", `due a week on (dueAt set by the worker's check) and the bar showed; the dialog listed our duplicate once, the lonely group's tab, and the other copy under "not visited" (clock +20 days), no tab twice (${all.length} rows); Close into the vault put it on "${shelf.name}" and closed it; Restore reopened it in TabVault's window and took it off the shelf; Keep hid the lonely tab (tidyKept); the week's line: "${week}"; Done for this week started a new week and hid the bar.`);
+      } catch (e) {
+        record("TD", "FAIL", e.message);
+      } finally {
+        await appPage.evaluate(() => { window.tidyClockOffset = 0; }).catch(() => {});
+        for (const id of extra) await ev((tid) => chrome.tabs.remove(tid), id).catch(() => {});
+        if (winId !== null) await ev((id) => chrome.windows.remove(id), winId).catch(() => {});
+        await appPage.bringToFront().catch(() => {});
+        await resetUi().catch(() => {});
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // TB. Snooze across a restart (1.7): a tab snoozed for two minutes, its wake time moved to a
+    // few seconds on (as if the clock ran), the browser closed and the wake time passed while it
+    // was closed; the relaunched browser's worker wakes it at start (in a new window: the old
+    // window ids belong to the run that ended) and the list holds it as woken. Runs last of the T
+    // scenarios: the relaunch closes every fixture window.
+    // ---------------------------------------------------------------
+    if (want("TB")) {
+      try {
+        await resetUi();
+        const tabs = await makeWindow([`${BASE}/one.html?tb=keep`, `${BASE}/two.html?tb=sleep`]);
+        const sleeper = tabs[1];
+        const r = await appPage.evaluate((id) => chrome.runtime.sendMessage({ type: "snoozeTabs", tabIds: [id], wakeAt: Date.now() + 120000 }), sleeper.id);
+        assert(r && r.ok && r.snoozed === 1, `snooze: ${JSON.stringify(r)}`);
+        await waitFor(async () => !(await tabsOf(tabs[0].windowId)).some((t) => t.id === sleeper.id), { timeout: 5000 });
+        const entry = (await snoozedList()).find((e) => e.url.includes("tb=sleep"));
+        assert(entry && !entry.wokeAt, `entry: ${JSON.stringify(entry)}`);
+        await ev(async (id) => {
+          const { snoozed = [] } = await chrome.storage.local.get("snoozed");
+          await chrome.storage.local.set({ snoozed: snoozed.map((e) => (e.id === id ? { ...e, wakeAt: Date.now() + 2500 } : e)) });
+        }, entry.id);
+        await context.close();
+        await new Promise((res) => setTimeout(res, 4000)); // the wake time passes while the browser is closed
+        await launchAndOpenApp();
+        const woke = await waitFor(async () => {
+          const all = await ev(() => chrome.tabs.query({}));
+          return all.find((t) => String(t.url || t.pendingUrl).includes("tb=sleep")) || null;
+        }, { timeout: 15000 });
+        const after = await waitFor(async () => { const e = (await snoozedList()).find((x) => x.id === entry.id); return e && e.wokeAt ? e : null; }, { timeout: 5000 });
+        assert(after.tabId === woke.id, `entry tab ${after.tabId}, woken tab ${woke.id}`);
+        const keepAlive = (await ev(() => chrome.tabs.query({}))).some((t) => String(t.url).includes("tb=keep"));
+        record("TB", "PASS", `snoozed for 2 minutes and closed; the wake time moved to 2.5 s on, the browser closed for 4 s and relaunched; the new worker woke it at start (tab ${woke.id} in window ${woke.windowId}; the old window ${keepAlive ? "is back too" : "did not come back"}), and the entry is marked woken with that tab; nothing was dropped.`);
+      } catch (e) {
+        record("TB", "FAIL", e.message);
+      } finally {
         await resetUi().catch(() => {});
       }
     }
