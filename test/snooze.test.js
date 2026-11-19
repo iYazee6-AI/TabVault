@@ -154,3 +154,108 @@ test("a write is read back before anything may close; a failed write throws and 
 test("a stored list that is not an array reads as empty", async () => {
   assert.deepEqual(await S.readSnoozes(fakeArea({ [S.SNOOZE_KEY]: "junk" })), []);
 });
+
+// ---- review fixes of 1.7.0 --------------------------------------------------------------
+
+test("a wake marks its entries waking first; the mark is cleared when the tab is woken or failed", () => {
+  let list = S.markWaking([entry("a"), entry("b"), entry("c")], ["a", "b"], 777);
+  assert.equal(list[0].waking, 777);
+  assert.equal(list[1].waking, 777);
+  assert.equal(list[2].waking, undefined);
+  list = S.markWoken(list, [{ id: "a", tabId: 5 }], 800);
+  list = S.markFailed(list, ["b"], "No window", 800);
+  assert.equal("waking" in list[0], false);
+  assert.equal("waking" in list[1], false);
+  assert.equal(list[0].wokeAt, 800);
+  assert.equal(list[1].attempts, 1);
+});
+
+test("an entry still waking at the next pass is woken when its tab is open, else counted as a failed try", () => {
+  const list = [
+    entry("a", { waking: 50 }),
+    entry("b", { waking: 50 }),
+    entry("c", { waking: 50, attempts: 2 }),
+    entry("d"),
+    entry("e", { waking: 50, url: "https://a.com/" }), // the same address as a: one tab is claimed once
+  ];
+  const open = [{ id: 31, url: "https://a.com/" }, { id: 32, url: "", pendingUrl: "https://d.com/" }, { id: 33, url: "https://x.com/", incognito: true }];
+  const r = S.resolveWaking(list, open, 900);
+  assert.deepEqual(r.woke, [{ id: "a", tabId: 31 }]);
+  assert.deepEqual(r.failed.sort(), ["b", "c", "e"]);
+  const by = Object.fromEntries(r.list.map((e) => [e.id, e]));
+  assert.equal(by.a.wokeAt, 900);
+  assert.equal(by.a.tabId, 31);
+  assert.equal("waking" in by.a, false);
+  assert.equal(by.b.attempts, 1);
+  assert.equal("waking" in by.b, false);
+  assert.match(by.b.error, /interrupted/);
+  assert.equal(by.c.attempts, 3); // the retry cap holds: it now waits for Wake now
+  assert.deepEqual(S.dueEntries(r.list, 99999).map((e) => e.id).sort(), ["b", "d", "e"]);
+  assert.equal(r.changed, true);
+  assert.equal(S.resolveWaking([entry("z")], open, 900).changed, false);
+});
+
+test("a wake opens nothing when the waking mark cannot be written", async () => {
+  const area = fakeArea({ [S.SNOOZE_KEY]: [entry("a"), entry("b")] }, { failSetOnce: true });
+  let opened = 0;
+  const list = await S.readSnoozes(area);
+  await assert.rejects(() => S.wakeEntries(area, list, list, async (es) => { opened += es.length; return { woke: [], failed: [], error: "" }; }, 1000), /quota/);
+  assert.equal(opened, 0);
+  const after = await S.readSnoozes(area);
+  assert.ok(after.every((e) => !e.waking && !e.wokeAt), JSON.stringify(after));
+
+  // A store that keeps the list but drops the mark: nothing opens either.
+  let kept = { [S.SNOOZE_KEY]: [entry("a")] };
+  const dropper = {
+    get: async () => JSON.parse(JSON.stringify(kept)),
+    set: async (items) => { kept = { [S.SNOOZE_KEY]: items[S.SNOOZE_KEY].map((e) => { const c = { ...e }; delete c.waking; return c; }) }; },
+  };
+  const l2 = await S.readSnoozes(dropper);
+  const r2 = await S.wakeEntries(dropper, l2, l2, async (es) => { opened += es.length; return { woke: es.map((e) => ({ id: e.id, tabId: 1 })), failed: [], error: "" }; }, 1000);
+  assert.equal(opened, 0);
+  assert.equal(r2.woke.length, 0);
+  assert.equal(r2.unmarked, 1);
+});
+
+test("a wake writes the mark, opens, then marks woken; a failed last write leaves the mark for the next pass", async () => {
+  const area = fakeArea({ [S.SNOOZE_KEY]: [entry("a"), entry("b"), entry("c")] });
+  const list = await S.readSnoozes(area);
+  let seenMarked = null;
+  const r = await S.wakeEntries(area, list, [list[0], list[1]], async (es) => {
+    seenMarked = (await S.readSnoozes(area)).filter((e) => e.waking).map((e) => e.id);
+    return { woke: [{ id: es[0].id, tabId: 41 }], failed: [es[1].id], error: "No window" };
+  }, 1000);
+  assert.deepEqual(seenMarked, ["a", "b"]); // the mark was stored before any tab opened
+  const by = Object.fromEntries((await S.readSnoozes(area)).map((e) => [e.id, e]));
+  assert.equal(by.a.tabId, 41);
+  assert.equal(by.b.attempts, 1);
+  assert.ok(!by.a.waking && !by.b.waking && !by.c.waking);
+  assert.equal(r.woke.length, 1);
+  assert.equal(r.failed.length, 1);
+
+  // The tab opened but the worker could not record it: the entry stays waking, and the next
+  // pass finds its tab open instead of opening it again.
+  let sets = 0;
+  const base = fakeArea({ [S.SNOOZE_KEY]: [entry("d")] });
+  const flaky = { get: base.get, set: async (items) => { sets++; if (sets === 2) throw new Error("worker gone"); return base.set(items); } };
+  const l3 = await S.readSnoozes(flaky);
+  await assert.rejects(() => S.wakeEntries(flaky, l3, l3, async (es) => ({ woke: [{ id: es[0].id, tabId: 51 }], failed: [], error: "" }), 1000), /worker gone/);
+  const stuck = await S.readSnoozes(flaky);
+  assert.equal(stuck[0].waking, 1000);
+  assert.deepEqual(S.dueEntries(S.resolveWaking(stuck, [{ id: 51, url: "https://d.com/" }], 2000).list, 99999), []);
+});
+
+test("a snooze skips tab ids already being snoozed and repeats in one call", () => {
+  assert.deepEqual(S.freshSnoozeIds([1, 2, 2, 3, "x", 4.5], new Set([3])), [1, 2]);
+  assert.deepEqual(S.freshSnoozeIds([5], new Set([5])), []);
+  assert.deepEqual(S.freshSnoozeIds(null, new Set()), []);
+});
+
+test("Cancel can promise a Recently closed copy only when one is really there", () => {
+  const e = entry("a", { url: "https://a.com/p", snoozedAt: 5000 });
+  assert.equal(S.inRecentlyClosed(e, [{ id: "r1", url: "https://a.com/p", closedAt: 5100, snooze: { wakeAt: 1000 } }]), true);
+  assert.equal(S.inRecentlyClosed(e, [{ id: "r1", url: "https://a.com/p", closedAt: 4000 }]), false); // an older close of the page
+  assert.equal(S.inRecentlyClosed(e, [{ id: "r1", url: "https://a.com/other", closedAt: 5100 }]), false);
+  assert.equal(S.inRecentlyClosed(e, []), false); // recording off, or pushed out past the cap
+  assert.equal(S.inRecentlyClosed(e, null), false);
+});
