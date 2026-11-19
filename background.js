@@ -1,4 +1,4 @@
-importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js", "lib/shelves.js", "lib/focus.js", "lib/bookmarks.js");
+importScripts("lib/session.js", "lib/snapshots.js", "lib/settings.js", "lib/snapstore.js", "lib/badge.js", "lib/discard-rule.js", "lib/recent.js", "lib/save-close.js", "lib/shelves.js", "lib/focus.js", "lib/bookmarks.js", "lib/dedupe.js", "lib/snooze.js", "lib/group-rules.js", "lib/tidy.js");
 
 const PAGE_URL = chrome.runtime.getURL("app/index.html");
 const OWN_PREFIX = chrome.runtime.getURL("");
@@ -379,6 +379,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== IDLE_ALARM) return;
   scheduleBadge();
   runAutoDiscard().catch((e) => console.warn("TabVault idle rules failed", e));
+  // 1.7: the same tick is the snooze fallback (a lost or missed snooze alarm wakes here) and the
+  // weekly tidy's check.
+  wakeDue().catch((e) => console.warn("TabVault snooze wake failed", e));
+  tidyCheck().catch((e) => console.warn("TabVault tidy check failed", e));
 });
 ensureIdleAlarm().catch(() => {});
 
@@ -459,7 +463,7 @@ function flushClosingWindow(windowId) {
   const closedAt = Date.now();
   Promise.all(bucket.items).then((infos) => {
     const batch = `w${windowId}-${closedAt}`;
-    return appendRecent(infos.filter(Boolean).map((info) => TV.closedEntry(info, { groupTitle: info.groupTitle, closedAt, batch, shelf: info.shelf })));
+    return appendRecent(infos.filter(Boolean).map((info) => TV.closedEntry(info, { groupTitle: info.groupTitle, closedAt, batch, shelf: info.shelf, snooze: info.snooze })));
   }).catch((e) => console.warn("TabVault recently-closed failed", e));
 }
 
@@ -469,7 +473,10 @@ chrome.tabs.onRemoved.addListener((tabId, info) => {
   // A tab an idle rule or "Move to shelf" just saved: its entry says which shelf (1.3).
   const shelf = shelvedTabs.get(tabId) || null;
   shelvedTabs.delete(tabId);
-  const described = describeClosed(tabId, cached).catch(() => null).then((d) => (d && shelf ? { ...d, shelf } : d));
+  // A tab just snoozed (1.7): its entry says until when.
+  const snooze = snoozedTabs.get(tabId) || null;
+  snoozedTabs.delete(tabId);
+  const described = describeClosed(tabId, cached).catch(() => null).then((d) => (d && shelf ? { ...d, shelf } : d)).then((d) => (d && snooze ? { ...d, snooze } : d));
   if (info && info.isWindowClosing) {
     let bucket = closingWindows.get(info.windowId);
     if (!bucket) {
@@ -480,7 +487,7 @@ chrome.tabs.onRemoved.addListener((tabId, info) => {
     bucket.items.push(described);
     return;
   }
-  described.then((d) => (d ? appendRecent([TV.closedEntry(d, { groupTitle: d.groupTitle, closedAt: Date.now(), shelf: d.shelf })]) : null))
+  described.then((d) => (d ? appendRecent([TV.closedEntry(d, { groupTitle: d.groupTitle, closedAt: Date.now(), shelf: d.shelf, snooze: d.snooze })]) : null))
     .catch((e) => console.warn("TabVault recently-closed failed", e));
 });
 chrome.windows.onRemoved.addListener((windowId) => flushClosingWindow(windowId));
@@ -735,6 +742,375 @@ function onActionMenu(info, tab) {
 self.onActionMenu = onActionMenu;
 chrome.contextMenus.onClicked.addListener(onActionMenu);
 
+// ---- snooze (1.7) -------------------------------------------------------------------
+// A tab put away until a time (lib/snooze.js). The list lives in storage.local "snoozed" and
+// every write goes through snoozeWrite; the entries are written and read back before any tab is
+// closed. One alarm is set to the earliest wake time; the worker also wakes what is due at every
+// start, at browser startup and on the 5-minute idle tick, so a wake missed while the browser
+// was closed or an alarm that was lost still happens. An entry is marked woken only after its
+// tab exists; a failed wake stays listed with its error and is tried again.
+const SNOOZE_ALARM = "tabvault-snooze";
+let snoozeQueue = Promise.resolve();
+function snoozeWrite(fn) {
+  const run = snoozeQueue.then(fn);
+  snoozeQueue = run.catch(() => {});
+  return run;
+}
+// The e2e harness moves the snooze clock forward through this; nothing in the extension sets it.
+self.snoozeClockOffset = 0;
+function snoozeNow() { return Date.now() + (Number(self.snoozeClockOffset) || 0); }
+// tab id -> { wakeAt } of a tab just snoozed: onRemoved tags its Recently closed entry.
+const snoozedTabs = new Map();
+// Tabs a wake just created: Chrome may report them activated (the first tab of a new window),
+// which is not the user looking at them.
+const wakingTabs = new Set();
+// Tab ids of woken entries, so tabs.onActivated reads storage only when it matters.
+let wokenTabIds = new Set();
+function rememberWoken(list) { wokenTabIds = new Set(TV.woken(list).map((e) => e.tabId)); }
+
+async function armSnoozeAlarm(list) {
+  const next = TV.nextWakeAt(list);
+  if (next === null) { await chrome.alarms.clear(SNOOZE_ALARM).catch(() => {}); return; }
+  const when = Math.max(Date.now() + 1000, next - (Number(self.snoozeClockOffset) || 0));
+  await chrome.alarms.create(SNOOZE_ALARM, { when });
+}
+
+async function snoozeTabs({ tabIds, wakeAt }) {
+  const ids = (Array.isArray(tabIds) ? tabIds : []).map(Number).filter(Number.isInteger);
+  if (!ids.length) return { ok: false, error: "no tab chosen" };
+  const at = Number(wakeAt);
+  const err = TV.wakeError(at, snoozeNow());
+  if (err) return { ok: false, error: err };
+  const tabs = (await Promise.all(ids.map((id) => chrome.tabs.get(id).catch(() => null)))).filter(Boolean);
+  const groups = chrome.tabGroups ? await chrome.tabGroups.query({}) : [];
+  const made = TV.snoozeEntries(tabs, new Map(groups.map((g) => [g.id, g])), { wakeAt: at, now: Date.now(), ownPrefix: OWN_PREFIX });
+  const skipped = made.skipped + (ids.length - tabs.length);
+  if (!made.entries.length) return { ok: true, snoozed: 0, skipped };
+  // Written and read back first: a failed write closes nothing.
+  await snoozeWrite(async () => {
+    const list = await TV.appendSnoozes(chrome.storage.local, made.entries);
+    await armSnoozeAlarm(list);
+  });
+  made.tabIds.forEach((id) => snoozedTabs.set(id, { wakeAt: at }));
+  setTimeout(() => { for (const id of made.tabIds) snoozedTabs.delete(id); }, 10000);
+  await closeShelved(made.tabIds);
+  return { ok: true, snoozed: made.entries.length, skipped, wakeAt: at };
+}
+
+// Opens one bucket of the wake plan: into its window, or (windowId null) into one new window.
+// Pinned and group state come back; a group of the same name and colour is joined.
+async function openSnoozeBucket(bucket) {
+  const out = { woke: [], failed: [], error: "" };
+  let windowId = bucket.windowId;
+  const groups = windowId !== null && chrome.tabGroups ? await chrome.tabGroups.query({ windowId }).catch(() => []) : [];
+  const made = new Map();
+  for (const e of bucket.entries) {
+    let tab;
+    try {
+      if (windowId === null) {
+        const w = await chrome.windows.create({ url: e.url, focused: false });
+        windowId = w.id;
+        tab = (w.tabs && w.tabs[0]) || (await chrome.tabs.query({ windowId }))[0];
+        if (e.pinned) await chrome.tabs.update(tab.id, { pinned: true }).catch(() => {});
+      } else {
+        tab = await chrome.tabs.create({ windowId, url: e.url, active: false, pinned: e.pinned });
+      }
+    } catch (err) {
+      out.failed.push(e.id);
+      out.error = String((err && err.message) || err);
+      continue;
+    }
+    wakingTabs.add(tab.id);
+    setTimeout(() => wakingTabs.delete(tab.id), 5000);
+    out.woke.push({ id: e.id, tabId: tab.id });
+    if (!e.group || e.pinned || !chrome.tabGroups) continue;
+    // The tab is back; a group that cannot be made is not a reason to open it twice.
+    try {
+      const key = `${e.group.title}|${e.group.color}`;
+      let gid = made.get(key);
+      if (gid === undefined) {
+        const hit = groups.find((g) => (g.title || "") === e.group.title && g.color === e.group.color);
+        gid = hit ? hit.id : null;
+      }
+      if (gid !== null) await chrome.tabs.group({ tabIds: [tab.id], groupId: gid });
+      else {
+        gid = await chrome.tabs.group({ tabIds: [tab.id], createProperties: { windowId } });
+        await chrome.tabGroups.update(gid, { title: e.group.title, color: e.group.color });
+      }
+      made.set(key, gid);
+    } catch (err) {
+      console.warn("TabVault snooze: the group could not be made again", err);
+    }
+  }
+  return out;
+}
+
+// ids: wake these now (Wake now, the palette); otherwise every entry that is due.
+function wakeDue({ ids = null, now = snoozeNow() } = {}) {
+  return snoozeWrite(async () => {
+    const area = chrome.storage.local;
+    const stored = await TV.readSnoozes(area);
+    let list = TV.pruneWoken(stored, now);
+    const want = Array.isArray(ids) ? new Set(ids.map(String)) : null;
+    const pick = want ? TV.sleeping(list).filter((e) => want.has(e.id)) : TV.dueEntries(list, now);
+    if (pick.length) {
+      const windows = await chrome.windows.getAll({ windowTypes: ["normal"] }).catch(() => []);
+      const live = new Set(windows.filter((w) => !w.incognito).map((w) => w.id));
+      const woke = [];
+      const failed = [];
+      let error = "";
+      for (const bucket of TV.wakePlan(pick, live)) {
+        const r = await openSnoozeBucket(bucket);
+        woke.push(...r.woke);
+        failed.push(...r.failed);
+        if (r.error) error = r.error;
+      }
+      list = TV.markWoken(list, woke, Date.now());
+      if (failed.length) list = TV.markFailed(list, failed, error, Date.now());
+      await TV.writeSnoozes(area, list);
+      rememberWoken(list);
+      await armSnoozeAlarm(list);
+      return { ok: true, woke: woke.length, failed: failed.length, error };
+    }
+    if (list.length !== stored.length) await TV.writeSnoozes(area, list);
+    rememberWoken(list);
+    await armSnoozeAlarm(list);
+    return { ok: true, woke: 0, failed: 0 };
+  });
+}
+self.wakeDueSnoozes = wakeDue;
+
+function snoozeEdit(change) {
+  return snoozeWrite(async () => {
+    const area = chrome.storage.local;
+    const list = change(await TV.readSnoozes(area));
+    if (list.error) return { ok: false, error: list.error };
+    const back = await TV.writeSnoozes(area, list);
+    rememberWoken(back);
+    await armSnoozeAlarm(back);
+    return { ok: true };
+  });
+}
+function snoozeReschedule({ ids, wakeAt }) {
+  const at = Number(wakeAt);
+  const err = TV.wakeError(at, snoozeNow());
+  if (err) return Promise.resolve({ ok: false, error: err });
+  return snoozeEdit((list) => TV.reschedule(list, (Array.isArray(ids) ? ids : []).map(String), at));
+}
+// Cancel forgets the snooze without opening the tab (it is still in Recently closed).
+function snoozeCancel({ ids }) {
+  return snoozeEdit((list) => TV.removeEntries(list, (Array.isArray(ids) ? ids : []).map(String)));
+}
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  if (!wokenTabIds.has(tabId) || wakingTabs.has(tabId)) return;
+  snoozeWrite(async () => {
+    const r = TV.markSeen(await TV.readSnoozes(chrome.storage.local), tabId);
+    if (r.changed) await TV.writeSnoozes(chrome.storage.local, r.list);
+    rememberWoken(r.list);
+  }).catch(() => {});
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === SNOOZE_ALARM) wakeDue().catch((e) => console.warn("TabVault snooze wake failed", e));
+});
+chrome.runtime.onStartup.addListener(() => { wakeDue().catch(() => {}); });
+// Every worker start (install, update, browser start, a wake from sleep): what is due wakes now.
+wakeDue().catch((e) => console.warn("TabVault snooze wake failed", e));
+
+// ---- group rules (1.7) -------------------------------------------------------------------
+// settings.groupRules (lib/group-rules.js): a tab that navigates to a matching page and is in no
+// group, not pinned, not incognito and in a normal window goes into the group of the rule's
+// name in its window. A tab the user takes out of a group is left alone (storage.session
+// groupRulesLeftAlone, tab id to its host then) until it navigates to another site.
+let leftAloneCache = null;
+async function getLeftAlone() {
+  if (leftAloneCache) return leftAloneCache;
+  const r = await chrome.storage.session.get(TV.LEFT_ALONE_KEY).catch(() => ({}));
+  leftAloneCache = r[TV.LEFT_ALONE_KEY] && typeof r[TV.LEFT_ALONE_KEY] === "object" ? r[TV.LEFT_ALONE_KEY] : {};
+  return leftAloneCache;
+}
+async function setLeftAlone(map) {
+  leftAloneCache = map;
+  await chrome.storage.session.set({ [TV.LEFT_ALONE_KEY]: map }).catch(() => {});
+}
+let rulesQueue = Promise.resolve();
+function rulesWrite(fn) {
+  const run = rulesQueue.then(fn);
+  rulesQueue = run.catch(() => {});
+  return run;
+}
+
+async function groupInto(tab, rule) {
+  const groups = await chrome.tabGroups.query({ windowId: tab.windowId });
+  const gid = TV.groupIdFor(groups, tab.windowId, rule.group);
+  if (gid !== null) { await chrome.tabs.group({ tabIds: [tab.id], groupId: gid }); return gid; }
+  const made = await chrome.tabs.group({ tabIds: [tab.id], createProperties: { windowId: tab.windowId } });
+  await chrome.tabGroups.update(made, { title: rule.group, color: rule.color });
+  return made;
+}
+
+// Reads the tab again (it may have moved or been grouped since the event) and groups it when a
+// rule says so. Chrome refuses edits while the user drags a tab: one more try a moment later.
+async function applyGroupRule(tabId, rules, leftAlone, retry = true) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) return null;
+  const win = await chrome.windows.get(tab.windowId).catch(() => null);
+  if (!win) return null;
+  const rule = TV.ruleTargetFor({ ...tab, incognito: tab.incognito || win.incognito }, rules, { leftAlone, windowType: win.type });
+  if (!rule) return null;
+  try {
+    return await groupInto(tab, rule);
+  } catch (e) {
+    if (!retry) throw e;
+    await new Promise((r) => setTimeout(r, 1500));
+    return applyGroupRule(tabId, rules, await getLeftAlone(), false);
+  }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.groupId === undefined && !info.url) return;
+  rulesWrite(async () => {
+    let map = await getLeftAlone();
+    const r = TV.leftAloneAfter(map, tabId, info, tab);
+    if (r.changed) { map = r.map; await setLeftAlone(map); }
+    if (!info.url || !chrome.tabGroups) return;
+    const settings = await getSettings();
+    if (!settings.groupRules.length) return;
+    await applyGroupRule(tabId, settings.groupRules, map);
+  }).catch((e) => console.warn("TabVault group rule failed", e));
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  rulesWrite(async () => {
+    const map = await getLeftAlone();
+    if (Object.prototype.hasOwnProperty.call(map, String(tabId))) await setLeftAlone(TV.forgetTab(map, tabId));
+  }).catch(() => {});
+});
+
+async function groupRulesPlan() {
+  const [settings, windows, leftAlone] = await Promise.all([getSettings(), chrome.windows.getAll({ populate: true }), getLeftAlone()]);
+  const own = windows.map((w) => ({ ...w, tabs: (w.tabs || []).filter((t) => !String(t.url || "").startsWith(OWN_PREFIX)) }));
+  return { settings, leftAlone, plan: TV.planGroupRules(own, settings.groupRules, { leftAlone }) };
+}
+// Apply moves exactly the previewed tabs that still match; the undo list puts them back.
+function groupRulesApply({ tabIds }) {
+  return rulesWrite(async () => {
+    const want = new Set((Array.isArray(tabIds) ? tabIds : []).map(Number));
+    const { settings, plan } = await groupRulesPlan();
+    const undo = [];
+    const groups = new Set();
+    let failed = 0;
+    for (const m of plan.moves.filter((x) => want.has(x.tabId))) {
+      const rule = settings.groupRules.find((r) => r.id === m.ruleId);
+      try {
+        const gid = await groupInto({ id: m.tabId, windowId: m.windowId }, rule);
+        groups.add(gid);
+        undo.push({ tabId: m.tabId, windowId: m.windowId, index: m.index });
+      } catch {
+        failed++;
+      }
+    }
+    return { ok: true, moved: undo.length, groups: groups.size, failed, undo };
+  });
+}
+async function groupRulesUndo({ undo }) {
+  const list = (Array.isArray(undo) ? undo : []).filter((u) => u && Number.isInteger(u.tabId));
+  const alive = [];
+  for (const u of list) if (await chrome.tabs.get(u.tabId).catch(() => null)) alive.push(u);
+  if (!alive.length) return { ok: true, restored: 0 };
+  await chrome.tabs.ungroup(alive.map((u) => u.tabId));
+  for (const u of alive.slice().sort((a, b) => a.index - b.index)) {
+    await chrome.tabs.move(u.tabId, { windowId: u.windowId, index: u.index }).catch(() => {});
+  }
+  return { ok: true, restored: alive.length };
+}
+
+// ---- weekly tidy (1.7) ----------------------------------------------------------------------
+// The review itself runs in the page (lib/tidy.js tidySections). The worker keeps tidyState
+// (when the last tidy was, when the next one became due), the kept list and the log, and on its
+// 5-minute tick marks the tidy due a week after the last one; the page shows a calm bar. A
+// notification only when the user turned it on in the Tidy dialog AND Chrome granted the
+// optional notifications permission; it names no tab.
+const TIDY_NOTIFICATION = "tabvault-tidy";
+let tidyQueue = Promise.resolve();
+function tidyWrite(fn) {
+  const run = tidyQueue.then(fn);
+  tidyQueue = run.catch(() => {});
+  return run;
+}
+async function notificationsGranted() {
+  if (!chrome.notifications) return false;
+  return chrome.permissions.contains({ permissions: ["notifications"] }).catch(() => false);
+}
+function tidyCheck(now = Date.now()) {
+  return tidyWrite(async () => {
+    const area = chrome.storage.local;
+    const [settings, got] = await Promise.all([getSettings(), area.get(TV.TIDY_STATE_KEY)]);
+    const r = TV.tidyDue(got[TV.TIDY_STATE_KEY], settings, now);
+    let state = r.state;
+    if (r.changed) await area.set({ [TV.TIDY_STATE_KEY]: state });
+    if (TV.shouldNotify(state, settings, await notificationsGranted())) {
+      await chrome.notifications.create(TIDY_NOTIFICATION, { type: "basic", iconUrl: "icons/icon128.png", title: "TabVault", message: "Your weekly tidy is ready. Click to look at it." });
+      state = { ...state, notifiedAt: now };
+      await area.set({ [TV.TIDY_STATE_KEY]: state });
+    }
+    return { ok: true, due: r.due, state };
+  });
+}
+self.tidyCheck = tidyCheck;
+function tidyReset() {
+  return tidyWrite(async () => {
+    await chrome.storage.local.set({ [TV.TIDY_STATE_KEY]: TV.tidyReset(Date.now()) });
+    if (chrome.notifications) chrome.notifications.clear(TIDY_NOTIFICATION).catch(() => {});
+    return { ok: true };
+  });
+}
+function tidyLogAdd(counts) {
+  return tidyWrite(async () => {
+    const { [TV.TIDY_LOG_KEY]: log = [] } = await chrome.storage.local.get(TV.TIDY_LOG_KEY);
+    await chrome.storage.local.set({ [TV.TIDY_LOG_KEY]: TV.appendTidyLog(log, counts || {}, Date.now()) });
+    return { ok: true };
+  });
+}
+// Close into the vault: the shelf "Tidy <date>" (found by name, else made), then the shelving
+// path (written, read back, then closed).
+async function tidyClose({ tabIds }) {
+  const name = TV.tidyShelfName(Date.now());
+  const shelf = await shelfWrite(async () => {
+    const found = (await TV.listShelves(chrome.storage.local)).find((s) => s.name === name);
+    return found || TV.createShelf(chrome.storage.local, name);
+  });
+  const r = await shelveTabs({ tabIds, shelfId: shelf.id });
+  if (r.ok && r.shelved) await tidyLogAdd({ closed: r.shelved });
+  return { ...r, shelfId: shelf.id, shelfName: shelf.name };
+}
+// Keep: the pages stay out of the tidy for 30 days; a woken snooze among them counts as seen.
+async function tidyKeep({ urls, entryIds }) {
+  const settings = await getSettings();
+  const list = (Array.isArray(urls) ? urls : []).map(String);
+  await tidyWrite(async () => {
+    const { [TV.TIDY_KEPT_KEY]: kept = {} } = await chrome.storage.local.get(TV.TIDY_KEPT_KEY);
+    await chrome.storage.local.set({ [TV.TIDY_KEPT_KEY]: TV.addKept(TV.pruneKept(kept, Date.now()), list, Date.now(), settings.ignoreHash !== false) });
+  });
+  const ids = (Array.isArray(entryIds) ? entryIds : []).map(String);
+  if (ids.length) await snoozeEdit((cur) => TV.removeEntries(cur, ids.filter((id) => cur.some((e) => e.id === id && e.wokeAt))));
+  await tidyLogAdd({ kept: list.length });
+  return { ok: true, kept: list.length };
+}
+function onTidyNotificationClick(id) {
+  if (id !== TIDY_NOTIFICATION) return;
+  chrome.notifications.clear(id).catch(() => {});
+  chrome.tabs.create({ url: `${PAGE_URL}?tidy=1` }).catch(() => {});
+}
+let tidyClickWired = false;
+function wireTidyNotifications() {
+  if (tidyClickWired || !chrome.notifications || !chrome.notifications.onClicked) return;
+  chrome.notifications.onClicked.addListener(onTidyNotificationClick);
+  tidyClickWired = true;
+}
+wireTidyNotifications();
+chrome.permissions.onAdded.addListener(() => wireTidyNotifications());
+tidyCheck().catch(() => {});
+
 // ---- messages from the page ------------------------------------------------
 function safeRespond(sendResponse, payload) { try { sendResponse(payload); } catch { /* page closed */ } }
 
@@ -778,6 +1154,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }).then(reply, fail);
       return true;
     case "saveAndClose": saveAndClose(msg).then(reply, fail); return true;
+    case "snoozeTabs": snoozeTabs(msg).then(reply, fail); return true;
+    case "snoozeWake": wakeDue({ ids: Array.isArray(msg.ids) ? msg.ids : [] }).then(reply, fail); return true;
+    case "snoozeReschedule": snoozeReschedule(msg).then(reply, fail); return true;
+    case "snoozeCancel": snoozeCancel(msg).then(reply, fail); return true;
+    case "groupRulesPlan": groupRulesPlan().then((r) => reply({ ok: true, ...r.plan }), fail); return true;
+    case "groupRulesApply": groupRulesApply(msg).then(reply, fail); return true;
+    case "groupRulesUndo": groupRulesUndo(msg).then(reply, fail); return true;
+    case "tidyClose": tidyClose(msg).then(reply, fail); return true;
+    case "tidyKeep": tidyKeep(msg).then(reply, fail); return true;
+    case "tidyLog": tidyLogAdd(msg.counts).then(reply, fail); return true;
+    case "tidyDone": tidyReset().then(reply, fail); return true;
     case "bmMoveToDeleted":
     case "bmSaveFolder":
     case "bmBackup":

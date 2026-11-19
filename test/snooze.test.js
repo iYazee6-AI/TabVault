@@ -58,6 +58,7 @@ test("snoozeEntries keeps the url, title, pinned state, group and window; skips 
   const { entries, skipped } = S.snoozeEntries(tabs, groups, { wakeAt: now + HOUR, now, ownPrefix: own });
   assert.equal(entries.length, 3);
   assert.equal(skipped, 3);
+  assert.deepEqual(S.snoozeEntries(tabs, groups, { wakeAt: now + HOUR, now, ownPrefix: own }).tabIds, [1, 2, 6]);
   const [a, b, f] = entries;
   assert.equal(a.url, "https://a.com/x");
   assert.equal(a.pinned, true);

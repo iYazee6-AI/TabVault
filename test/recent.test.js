@@ -45,3 +45,9 @@ test("a shelved tab is recorded once, tagged with its shelf (1.3)", () => {
   assert.deepEqual(e.shelf, { id: "s1", name: "Reading later" });
   assert.equal("shelf" in closedEntry({ url: "https://b.com/" }), false);
 });
+
+test("a snoozed tab's entry (1.7) carries its wake time", () => {
+  const e = closedEntry({ url: "https://a.com/", windowId: 1 }, { closedAt: 5, snooze: { wakeAt: 99 } });
+  assert.deepEqual(e.snooze, { wakeAt: 99 });
+  assert.equal(closedEntry({ url: "https://a.com/" }, { snooze: { wakeAt: "x" } }).snooze, undefined);
+});

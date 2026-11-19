@@ -146,6 +146,12 @@
       return { session, title: "TabVault session", now: Date.now() };
     }
 
+    // The JSON export of this session is TabVault's backup: it carries the group rules (1.7).
+    function withRules(s) {
+      const rules = App.getSettings().groupRules || [];
+      return what === "session" && rules.length ? { ...s, groupRules: rules } : s;
+    }
+
     async function prepare() {
       const mine = ++token;
       ready = null;
@@ -157,7 +163,7 @@
         if (!tabs) { info.textContent = "Nothing to export."; return; }
         ready = format === "markdown"
           ? { filename: TV.markdownFilename(src.now), text: TV.toMarkdown(src.session, { title: src.title }), type: "text/markdown" }
-          : { ...TV.toJsonFile(src.session, { now: src.now, version: VERSION }), type: "application/json" };
+          : { ...TV.toJsonFile(withRules(src.session), { now: src.now, version: VERSION }), type: "application/json" };
         info.textContent = `${src.session.windows.length} window${src.session.windows.length === 1 ? "" : "s"}, ${tabs} tab${tabs === 1 ? "" : "s"} · file ${ready.filename}`;
         dl.disabled = false; copy.disabled = false;
       } catch (e) {
@@ -333,7 +339,7 @@
       let session;
       try { session = TV.parseImportText(t); }
       catch (e) { preview.replaceChildren(el("p", { class: "muted", id: "import-summary" }, e.message)); return; }
-      preview.replaceChildren(...chooserNodes(box, session, "Import"));
+      preview.replaceChildren(...rulesImportNodes(session), ...chooserNodes(box, session, "Import"));
     };
     area.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(update, 250); });
     box.replaceChildren(
@@ -345,7 +351,23 @@
   };
 
   function showRestore(box, session, title) {
-    box.replaceChildren(el("h2", {}, `${title}: choose windows to restore`), ...chooserNodes(box, session, title));
+    box.replaceChildren(el("h2", {}, `${title}: choose windows to restore`), ...rulesImportNodes(session), ...chooserNodes(box, session, title));
+  }
+
+  // A JSON export carrying group rules (1.7): one button adds the ones not already there.
+  function rulesImportNodes(session) {
+    const incoming = Array.isArray(session.groupRules) ? session.groupRules : [];
+    if (!incoming.length) return [];
+    const n = incoming.length;
+    const add = el("button", { type: "button", id: "import-rules" }, `Add ${n} group rule${n === 1 ? "" : "s"}`);
+    const out = el("span", { class: "muted" }, "This file also holds group rules.");
+    add.addEventListener("click", async () => {
+      const r = TV.mergeGroupRules(App.getSettings().groupRules, incoming);
+      await App.saveSettings({ groupRules: r.rules });
+      add.disabled = true;
+      out.textContent = r.added ? `Added ${r.added} group rule${r.added === 1 ? "" : "s"}${r.added < n ? `; ${n - r.added} were already there` : ""}.` : "Every rule in this file is already there.";
+    });
+    return [el("div", { class: "row" }, add, out)];
   }
 
   // The window chooser: the summary, one tick per window, Restore and Cancel. Above 100 tabs the

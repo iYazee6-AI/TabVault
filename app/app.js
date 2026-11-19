@@ -185,6 +185,7 @@
       el("span", { class: "gcount mono", title: `${tabs.length} tabs` }, String(tabs.length)),
       iconButton("✎", "Rename group", () => renameGroup(g, title)),
       state.bm.on ? iconButton("☆", "Save group as a bookmark folder", () => askSaveBookmarks(g.title || "Tab group", tabs), "bm-save") : null,
+      iconButton("⏾", "Snooze group: close it now, open it again later", () => openDialog("snooze", { tabIds: tabs.map((t) => t.id), label: `the group "${g.title || "(unnamed group)"}"` }), "g-snooze"),
       iconButton("⊟", "Ungroup", () => chrome.tabs.ungroup(tabs.map((t) => t.id)).catch((e) => toast(`Could not ungroup: ${e.message || e}`))),
       iconButton(g.collapsed ? "▸" : "▾", g.collapsed ? "Expand group" : "Collapse group", () => chrome.tabGroups.update(g.id, { collapsed: !g.collapsed }).catch((e) => toast(`Could not collapse: ${e.message || e}`))));
     sec.append(head);
@@ -430,6 +431,7 @@
       el("span", { class: "rtitle" }, e.title || e.url),
       e.groupTitle ? el("span", { class: "when", title: "Group" }, e.groupTitle) : null,
       e.shelf ? el("span", { class: "when shelved", title: "Saved to this shelf, then closed" }, `shelved to ${e.shelf.name}`) : null,
+      e.snooze ? el("span", { class: "when shelved", title: "Snoozed: it opens again by itself" }, `snoozed until ${new Date(e.snooze.wakeAt).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}`) : null,
       el("span", { class: "domain mono" }, domain),
       el("span", { class: "when mono", title: new Date(e.closedAt).toLocaleString() }, clockTime(e.closedAt)),
       el("button", { type: "button", class: "reopen", title: "Reopen in this window", onclick: () => reopenEntries([e], false) }, "Reopen"));
@@ -871,6 +873,10 @@
     { id: "bmBackup", label: "Back up bookmarks now (download and keep a copy)", when: () => state.bm.on, run: () => window.TabVaultApp.backupBookmarksNow() },
     { id: "bmDupes", label: "Find duplicate bookmarks", when: () => state.bm.on, run: () => openDialog("bmDupes") },
     { id: "bmDialog", label: "Bookmarks: backups and export", when: () => state.bm.on, run: () => openDialog("bookmarks") },
+    { id: "snooze", label: "Snooze selected tabs (open them again later)", run: () => (state.selected.size ? openDialog("snooze", { tabIds: selection() }) : toast("Select the tabs to snooze first")) },
+    { id: "snoozed", label: "Show snoozed tabs", run: () => window.TabVaultApp.showSnoozed() },
+    { id: "tidy", label: "Tidy now (stale tabs, duplicates, lonely groups)", run: () => openDialog("tidy") },
+    { id: "groupRules", label: "Group rules (put new tabs into groups by site)", run: () => openDialog("groupRules") },
     { id: "shelves", label: "Show shelves", run: () => { state.shelvesOpen = true; renderShelves(); if (state.shelves.length) $("shelves").scrollIntoView({ block: "nearest" }); else toast("No shelves yet: add one with Move to shelf or an idle rule in Settings"); } },
   ];
   const palette = { open: false, rows: [], index: 0, returnFocus: null, confirmAll: false, confirmFolder: -1 };
@@ -947,7 +953,8 @@
     const snapshots = metas.map((m) => got[TV.snapshotKey(m.id)]).filter(Boolean);
     const shelves = [];
     for (const sh of await TV.listShelves(area).catch(() => [])) shelves.push({ ...sh, items: await TV.readShelf(area, sh.id).catch(() => []) });
-    saved.index = TV.buildSavedIndex({ snapshots, shelves, recent: state.recent }, { ignoreHash: state.settings.ignoreHash !== false });
+    const snoozed = await TV.readSnoozes(area).catch(() => []);
+    saved.index = TV.buildSavedIndex({ snapshots, shelves, recent: state.recent, snoozed }, { ignoreHash: state.settings.ignoreHash !== false });
     saved.dirty = false;
   }
   function ensureSaved() {
@@ -1185,6 +1192,8 @@
   async function openSaved(entry, newWindow) {
     // Only web pages are ever opened (a bookmark could hold javascript: or data:).
     if (!TV.isWebPage(entry.url)) { toast("Not opened: that address is not a web page"); return; }
+    // A snoozed tab (1.7) is woken, not opened a second time beside its later wake.
+    if (entry.where && entry.where.kind === "snooze") { await window.TabVaultApp.wakeSnoozes([entry.where.id]); return; }
     const ignoreHash = state.settings.ignoreHash !== false;
     const key = TV.normalizeUrl(entry.url, { ignoreHash });
     if (!newWindow) {
@@ -1301,6 +1310,7 @@
       else moveToShelf(selection(), item.dataset.shelf).catch((err) => toast(`Could not shelve: ${err.message || err}`));
     });
     $("shelves-toggle").addEventListener("click", () => { state.shelvesOpen = !state.shelvesOpen; renderShelves(); });
+    $("sel-snooze").addEventListener("click", () => openDialog("snooze", { tabIds: selection() }));
     $("sel-close").addEventListener("click", () => chrome.tabs.remove(selection()).catch((e) => toast(`Could not close: ${e.message || e}`)));
     $("sel-clear").addEventListener("click", clearSelection);
     $("btn-dupes").addEventListener("click", () => openDialog("duplicates"));
@@ -1331,7 +1341,7 @@
       // Settings written elsewhere (the worker's 1.3 migration, another TabVault page) are taken
       // over, so a later save here never writes back a stale copy.
       if (changes.settings) { state.settings = TV.withDefaults(changes.settings.newValue); applySettings(); renderShelves(); updateBookmarksOn().catch(console.error); }
-      if (Object.keys(changes).some((k) => k === TV.RECENT_KEY || k === TV.SNAP_INDEX_KEY || k.startsWith("snap:") || k === TV.SHELF_INDEX_KEY || k.startsWith("shelf:"))) savedChanged();
+      if (Object.keys(changes).some((k) => k === TV.RECENT_KEY || k === TV.SNAP_INDEX_KEY || k.startsWith("snap:") || k === TV.SHELF_INDEX_KEY || k.startsWith("shelf:") || k === TV.SNOOZE_KEY)) savedChanged();
     });
     $("recent-toggle").addEventListener("click", () => { state.recentOpen = !state.recentOpen; renderRecent(); });
     $("recent-clear").addEventListener("click", () => chrome.runtime.sendMessage({ type: "recentClear" }).then(() => toast("Recently closed cleared"), (e) => toast("Could not clear: " + (e.message || e))));
@@ -1354,7 +1364,8 @@
   window.TabVaultApp = {
     getSession: () => state.session, getSettings: () => state.settings, saveSettings, refresh, openDialog, closeDialog, toast, selection, dialogs, el, focusTab, windowLabel, openPalette,
     selectTabs: (ids) => { for (const id of ids) state.selected.add(id); render(); },
-    moveToShelf, getShelves: () => state.shelves,
+    moveToShelf, getShelves: () => state.shelves, openShelfItems, removeShelfItems, clearSelection, iconButton, favicon,
+    forgetSelected: (ids) => { for (const id of ids) state.selected.delete(id); render(); },
     bookmarksOn: () => state.bm.on, bookmarkApi, moveBookmarksToDeleted, updateBookmarksOn,
   };
 
